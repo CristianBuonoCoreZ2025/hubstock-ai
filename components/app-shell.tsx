@@ -14,6 +14,10 @@ import {
   Menu,
   Search,
   CircleUser,
+  List,
+  Store,
+  FileText,
+  ClipboardCheck,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -39,11 +43,12 @@ export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
 
   const navItems = [
-    { href: "/", icon: Home, label: "Dashboard" },
-    { href: "/orders", icon: ShoppingCart, label: "Orders", badge: 6 },
-    { href: "/products", icon: Package, label: "Products" },
-    { href: "/customers", icon: Users2, label: "Customers" },
-    { href: "/analytics", icon: LineChart, label: "Analytics" },
+    { href: "/dashboard", icon: Home, label: "Dashboard" },
+    { href: "/inventory", icon: Package, label: "Inventario" },
+    { href: "/shopping-list", icon: List, label: "Lista" },
+    { href: "/supermarket", icon: Store, label: "Supermercado" },
+    { href: "/receipts", icon: FileText, label: "Boletas" },
+    { href: "/stock-checks", icon: ClipboardCheck, label: "Stock" },
   ];
 
   return (
@@ -52,7 +57,7 @@ export function AppShell({ children }: AppShellProps) {
       <div className="hidden border-r bg-muted/40 md:block">
         <div className="flex h-full max-h-screen flex-col gap-2">
           <div className="flex h-14 items-center border-b px-4 lg:h-[60px] lg:px-6">
-            <Link href="/" className="flex items-center gap-2 font-semibold">
+            <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
               <Package2 className="h-6 w-6" />
               <span className="">HubStock AI</span>
             </Link>
@@ -105,7 +110,7 @@ export function AppShell({ children }: AppShellProps) {
             <SheetContent side="left" className="flex flex-col">
               <nav className="grid gap-2 text-lg font-medium">
                 <Link
-                  href="#"
+                  href="/dashboard"
                   className="flex items-center gap-2 text-lg font-semibold"
                 >
                   <Package2 className="h-6 w-6" />
@@ -140,7 +145,7 @@ export function AppShell({ children }: AppShellProps) {
               <Search className="h-4 w-4" />
               <Input
                 type="search"
-                placeholder="Search products..."
+                placeholder="Buscar productos..."
                 className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[300px]"
               />
             </form>
@@ -153,12 +158,12 @@ export function AppShell({ children }: AppShellProps) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>My Account</DropdownMenuLabel>
+              <DropdownMenuLabel>Mi Cuenta</DropdownMenuLabel>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Settings</DropdownMenuItem>
-              <DropdownMenuItem>Support</DropdownMenuItem>
+              <DropdownMenuItem>Ajustes</DropdownMenuItem>
+              <DropdownMenuItem>Soporte</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem>Logout</DropdownMenuItem>
+              <DropdownMenuItem>Cerrar sesión</DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </header>
@@ -176,14 +181,19 @@ export function AppShell({ children }: AppShellProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex flex-col items-center gap-1 text-xs font-medium",
+                  "flex flex-col items-center justify-center gap-1",
                   pathname === item.href
                     ? "text-primary"
                     : "text-muted-foreground"
                 )}
               >
                 <item.icon className="h-5 w-5" />
-                {item.label}
+                <span className="text-xs">{item.label}</span>
+                {item.badge && (
+                  <Badge className="absolute top-0 right-0 h-5 w-5 rounded-full text-xs">
+                    {item.badge}
+                  </Badge>
+                )}
               </Link>
             ))}
           </div>
