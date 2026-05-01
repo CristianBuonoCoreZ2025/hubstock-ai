@@ -7,10 +7,7 @@ import {
   Package2,
   Bell,
   Home,
-  ShoppingCart,
   Package,
-  Users2,
-  LineChart,
   Menu,
   Search,
   CircleUser,
@@ -20,7 +17,7 @@ import {
   ClipboardCheck,
 } from "lucide-react";
 
-import { Badge } from "@/components/ui/badge";
+
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import {
@@ -56,7 +53,7 @@ export function AppShell({ children }: AppShellProps) {
       {/* Sidebar for Desktop */}
       <div className="hidden border-r bg-muted/40 md:block">
         <div className="flex h-full max-h-screen flex-col gap-2">
-          <div className="flex h-14 items-center border-b px-4 lg:h-[60px] lg:px-6">
+          <div className="flex h-14 items-center border-b px-4 lg:h-15 lg:px-6">
             <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
               <Package2 className="h-6 w-6" />
               <span className="">HubStock AI</span>
@@ -81,11 +78,6 @@ export function AppShell({ children }: AppShellProps) {
                 >
                   <item.icon className="h-4 w-4" />
                   {item.label}
-                  {item.badge && (
-                    <Badge className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                      {item.badge}
-                    </Badge>
-                  )}
                 </Link>
               ))}
             </nav>
@@ -95,7 +87,7 @@ export function AppShell({ children }: AppShellProps) {
 
       <div className="flex flex-col">
         {/* Header */}
-        <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-4 lg:h-[60px] lg:px-6">
+        <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-4 lg:h-15 lg:px-6">
           <Sheet open={isOpen} onOpenChange={setIsOpen}>
             <SheetTrigger asChild>
               <Button
@@ -130,11 +122,6 @@ export function AppShell({ children }: AppShellProps) {
                   >
                     <item.icon className="h-5 w-5" />
                     {item.label}
-                    {item.badge && (
-                      <Badge className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full">
-                        {item.badge}
-                      </Badge>
-                    )}
                   </Link>
                 ))}
               </nav>
@@ -146,7 +133,7 @@ export function AppShell({ children }: AppShellProps) {
               <Input
                 type="search"
                 placeholder="Buscar productos..."
-                className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[300px]"
+                className="w-full rounded-lg bg-background pl-8 md:w-50 lg:w-75"
               />
             </form>
           </div>
@@ -189,11 +176,6 @@ export function AppShell({ children }: AppShellProps) {
               >
                 <item.icon className="h-5 w-5" />
                 <span className="text-xs">{item.label}</span>
-                {item.badge && (
-                  <Badge className="absolute top-0 right-0 h-5 w-5 rounded-full text-xs">
-                    {item.badge}
-                  </Badge>
-                )}
               </Link>
             ))}
           </div>

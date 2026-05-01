@@ -1,5 +1,6 @@
 import { Menu, Package2, Search } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,7 +17,7 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 
 export function Header() {
   return (
-    <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-4 lg:h-[60px] lg:px-6">
+    <header className="flex h-14 items-center gap-4 border-b bg-muted/40 px-4 lg:h-15 lg:px-6">
       <Sheet>
         <SheetTrigger asChild>
           <Button variant="outline" size="icon" className="shrink-0 md:hidden">
@@ -94,7 +95,7 @@ export function Header() {
           <Input
             type="search"
             placeholder="Search products..."
-            className="w-full rounded-lg bg-background pl-8 md:w-[200px] lg:w-[300px]"
+            className="w-full rounded-lg bg-background pl-8 md:w-50 lg:w-75"
           />
         </form>
       </div>

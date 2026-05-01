@@ -1,0 +1,22 @@
+
+> hub-stock-ai@0.1.0 build
+> next build
+
+Γû▓ Next.js 16.2.4 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Γ£ô Compiled successfully in 6.9s
+  Running TypeScript ...
+Failed to type check.
+
+./src/app/(app)/dashboard/page.tsx:2:22
+Type error: Cannot find module '@/components/dashboard/StatCard' or its corresponding type declarations.
+
+  1 | import React from 'react';
+> 2 | import StatCard from '@/components/dashboard/StatCard';
+    |                      ^
+  3 | import QuickActionCard from '@/components/dashboard/QuickActionCard';
+  4 | import { Package, ShoppingCart, Store, FileText, BarChart, Plus } from 'lucide-react';
+  5 |
+Next.js build worker exited with code: 1 and signal: null
