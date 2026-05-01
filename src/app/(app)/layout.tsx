@@ -1,12 +1,20 @@
-import React from 'react';
-import AppShell from '@/components/layout/AppShell';
+import AppShell from '@/components/layout/AppShell'
+import { getProfileContext } from '@/lib/profile/context'
 
 interface AppLayoutProps {
-  children: React.ReactNode;
+  children: React.ReactNode
 }
 
-const AppLayout: React.FC<AppLayoutProps> = ({ children }) => {
-  return <AppShell>{children}</AppShell>;
-};
+export default async function AppLayout({ children }: AppLayoutProps) {
+  const { profiles, activeProfileId } = await getProfileContext()
 
-export default AppLayout;
+  return (
+    <AppShell
+      profiles={profiles}
+      activeProfileId={activeProfileId}
+      needsProfileSetup={profiles.length === 0}
+    >
+      {children}
+    </AppShell>
+  )
+}

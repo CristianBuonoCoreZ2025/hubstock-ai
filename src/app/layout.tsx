@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'HubStock AI',
-  description: 'Gestión de inventario y compras',
+  title: 'StockCasa AI',
+  description: 'Inventario doméstico, compras y boletas con IA',
 };
 
 export default function RootLayout({

@@ -1,0 +1,32 @@
+
+> hub-stock-ai@0.1.0 build
+> next build
+
+Γû▓ Next.js 16.2.4 (Turbopack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+Γ£ô Compiled successfully in 6.9s
+  Running TypeScript ...
+  Finished TypeScript in 5.1s ...
+  Collecting page data using 10 workers ...
+  Generating static pages using 10 workers (0/9) ...
+  Generating static pages using 10 workers (2/9) 
+  Generating static pages using 10 workers (4/9) 
+  Generating static pages using 10 workers (6/9) 
+Γ£ô Generating static pages using 10 workers (9/9) in 2.3s
+  Finalizing page optimization ...
+
+Route (app)
+Γöî Γùï /
+Γö£ Γùï /_not-found
+Γö£ Γùï /dashboard
+Γö£ Γùï /inventory
+Γö£ Γùï /receipts
+Γö£ Γùï /shopping-list
+Γö£ Γùï /stock-checks
+Γöö Γùï /supermarket
+
+
+Γùï  (Static)  prerendered as static content
+
