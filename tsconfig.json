@@ -35,8 +35,6 @@
     "_legacy",
     ".next",
     "app",
-    "components",
-    "dashboard",
     "ui"
   ]
 }
