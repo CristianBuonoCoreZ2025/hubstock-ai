@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import { profileScopedImageBodySchema } from '@/lib/validators/ai'
 import { analyzeReceiptFromImage } from '@/server/gemini'
+import { enrichReceiptAnalysisPayload } from '@/server/product-enrichment'
 
 export async function POST(request: Request) {
   let json: unknown
@@ -29,10 +30,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const analysis = await analyzeReceiptFromImage({
+    const raw = await analyzeReceiptFromImage({
       imageBase64: parsed.data.imageBase64,
       mimeType: parsed.data.mimeType,
     })
+    const analysis = await enrichReceiptAnalysisPayload(raw)
     return NextResponse.json({
       profileId: parsed.data.profileId,
       analysis,
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
     })
   } catch (e) {
     const message = e instanceof Error ? e.message : 'gemini_error'
-    return NextResponse.json({ error: message }, { status: 502 })
+    const status = message === 'invalid_receipt_analysis' ? 400 : 502
+    return NextResponse.json({ error: message }, { status })
   }
 }

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import { profileScopedImageBodySchema } from '@/lib/validators/ai'
 import { analyzeProductFromImage } from '@/server/gemini'
+import { enrichProductImageAnalysis } from '@/server/product-enrichment'
 
 export async function POST(request: Request) {
   let json: unknown
@@ -29,10 +30,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const analysis = await analyzeProductFromImage({
+    const raw = await analyzeProductFromImage({
       imageBase64: parsed.data.imageBase64,
       mimeType: parsed.data.mimeType,
     })
+    const analysis = await enrichProductImageAnalysis(raw)
     return NextResponse.json({
       profileId: parsed.data.profileId,
       analysis,

@@ -14,7 +14,9 @@ export async function analyzeProductFromImage(input: {
 }): Promise<unknown> {
   const ai = getClient()
   const prompt = `Eres un asistente para inventario doméstico. Analiza la imagen de un producto y devuelve SOLO un JSON válido con esta forma exacta (sin markdown):
-{"name":"string","brand":"string|null","format":"string|null","unit":"string|null","categoryGuess":"string|null","notes":"string|null"}
+{"name":"string","brand":"string|null","format":"string|null","unit":"string|null","categoryGuess":"string|null","gtin":"string|null","notes":"string|null"}
+gtin: código de barras EAN-13/UPC solo dígitos si es legible en el empaque; si no, null.
+notes: observaciones breves; puede incluir texto crudo del código si ayuda.
 Usa español para textos visibles al usuario. Si no hay producto claro, name puede ser "Desconocido".`
 
   const res = await ai.models.generateContent({
@@ -45,7 +47,8 @@ export async function analyzeReceiptFromImage(input: {
 }): Promise<unknown> {
   const ai = getClient()
   const prompt = `Extrae datos de una boleta o ticket de compra. Devuelve SOLO JSON válido (sin markdown) con forma:
-{"storeName":"string|null","purchasedAt":"ISO8601 string|null","currency":"string","total":"number|null","items":[{"nameRaw":"string","quantity":"number|null","unitPrice":"number|null","lineTotal":"number|null"}]}
+{"storeName":"string|null","purchasedAt":"ISO8601 string|null","currency":"string","total":"number|null","items":[{"nameRaw":"string","gtin":"string|null","quantity":"number|null","unitPrice":"number|null","lineTotal":"number|null"}]}
+gtin por línea: solo si el ticket muestra código de barras o SKU numérico de 8-14 dígitos claramente asociado a esa línea; si no, null.
 Si no puedes leer la fecha, purchasedAt null.`
 
   const res = await ai.models.generateContent({
