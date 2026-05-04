@@ -1,58 +1,44 @@
 -- Create invitations table
-CREATE TABLE invitations (
+CREATE TABLE IF NOT EXISTS public.invitations (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID NOT NULL,
+  profile_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
   email TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (
-    role IN ('admin', 'editor', 'viewer')
-  ),
+  role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  invited_by UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (
-    status IN ('pending', 'accepted', 'rejected', 'expired', 'cancelled')
+    status IN ('pending', 'accepted', 'expired', 'revoked')
   ),
-  invited_by UUID,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  accepted_at TIMESTAMPTZ,
-  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-  FOREIGN KEY (invited_by) REFERENCES auth.users(id) ON DELETE SET NULL
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Create indexes
-CREATE INDEX idx_invitations_profile_id ON invitations(profile_id);
-CREATE INDEX idx_invitations_email ON invitations(email);
-CREATE INDEX idx_invitations_status ON invitations(status);
-CREATE INDEX idx_invitations_profile_id_email ON invitations(profile_id, email);
-CREATE INDEX idx_invitations_invited_by ON invitations(invited_by);
+CREATE INDEX IF NOT EXISTS idx_invitations_profile_id ON public.invitations(profile_id);
+CREATE INDEX IF NOT EXISTS idx_invitations_email ON public.invitations(email);
+CREATE INDEX IF NOT EXISTS idx_invitations_status ON public.invitations(status);
+CREATE INDEX IF NOT EXISTS idx_invitations_profile_id_email ON public.invitations(profile_id, email);
+CREATE INDEX IF NOT EXISTS idx_invitations_invited_by ON public.invitations(invited_by);
 
 -- Enable Row Level Security
-ALTER TABLE invitations ENABLE ROW LEVEL SECURITY;
-
--- Create trigger for updated_at
-CREATE TRIGGER update_invitations_updated_at
-BEFORE UPDATE ON invitations
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+ALTER TABLE public.invitations ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for invitations
-DROP POLICY IF EXISTS invitations_select_policy ON invitations;
-CREATE POLICY invitations_select_policy ON invitations
+DROP POLICY IF EXISTS invitations_select_policy ON public.invitations;
+DROP POLICY IF EXISTS "invitations_select_admin" ON public.invitations;
+CREATE POLICY "invitations_select_admin" ON public.invitations
   FOR SELECT
-  USING (
-    is_profile_admin(profile_id) OR
-    (auth.uid() IS NOT NULL AND email = auth.email())
-  );
+  TO authenticated
+  USING (private.has_profile_role(profile_id, ARRAY['admin']));
 
-DROP POLICY IF EXISTS invitations_insert_policy ON invitations;
-CREATE POLICY invitations_insert_policy ON invitations
-  FOR INSERT
-  WITH CHECK (is_profile_admin(profile_id));
+DROP POLICY IF EXISTS invitations_insert_policy ON public.invitations;
+DROP POLICY IF EXISTS invitations_update_policy ON public.invitations;
+DROP POLICY IF EXISTS invitations_delete_policy ON public.invitations;
+DROP POLICY IF EXISTS "invitations_write_admin" ON public.invitations;
+CREATE POLICY "invitations_write_admin" ON public.invitations
+  FOR ALL
+  TO authenticated
+  USING (private.has_profile_role(profile_id, ARRAY['admin']))
+  WITH CHECK (private.has_profile_role(profile_id, ARRAY['admin']));
 
-DROP POLICY IF EXISTS invitations_update_policy ON invitations;
-CREATE POLICY invitations_update_policy ON invitations
-  FOR UPDATE
-  USING (is_profile_admin(profile_id));
-
-DROP POLICY IF EXISTS invitations_delete_policy ON invitations;
-CREATE POLICY invitations_delete_policy ON invitations
-  FOR DELETE
-  USING (is_profile_admin(profile_id));
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.invitations TO authenticated, service_role;

@@ -187,13 +187,27 @@ create table if not exists public.stock_check_detected_items (
 -- ---------------------------------------------------------------------------
 -- Índices frecuentes
 -- ---------------------------------------------------------------------------
+create unique index if not exists idx_sections_name_unique on public.sections (name);
+create unique index if not exists idx_categories_section_name_unique on public.categories (section_id, name);
 create index if not exists idx_profile_members_user on public.profile_members (user_id);
 create index if not exists idx_profile_members_profile on public.profile_members (profile_id);
+create index if not exists idx_categories_section on public.categories (section_id);
 create index if not exists idx_products_profile on public.products (profile_id);
+create index if not exists idx_products_category on public.products (category_id);
+create index if not exists idx_product_images_profile on public.product_images (profile_id);
+create index if not exists idx_product_images_product on public.product_images (product_id);
 create index if not exists idx_stock_movements_profile on public.stock_movements (profile_id);
+create index if not exists idx_stock_movements_product on public.stock_movements (product_id);
 create index if not exists idx_shopping_trips_profile on public.shopping_trips (profile_id);
+create index if not exists idx_shopping_trip_items_trip on public.shopping_trip_items (trip_id);
+create index if not exists idx_shopping_trip_items_product on public.shopping_trip_items (product_id);
 create index if not exists idx_purchase_receipts_profile on public.purchase_receipts (profile_id);
+create index if not exists idx_purchase_receipt_items_receipt on public.purchase_receipt_items (receipt_id);
+create index if not exists idx_purchase_receipt_items_product on public.purchase_receipt_items (product_id);
 create index if not exists idx_stock_checks_profile on public.stock_checks (profile_id);
+create index if not exists idx_stock_check_photos_check on public.stock_check_photos (stock_check_id);
+create index if not exists idx_stock_check_detected_items_check on public.stock_check_detected_items (stock_check_id);
+create index if not exists idx_stock_check_detected_items_product on public.stock_check_detected_items (product_id);
 
 -- ---------------------------------------------------------------------------
 -- Triggers: membresía admin al crear perfil y updated_at
@@ -312,23 +326,86 @@ alter table public.stock_checks enable row level security;
 alter table public.stock_check_photos enable row level security;
 alter table public.stock_check_detected_items enable row level security;
 
+-- Helpers internos para evitar recursión de RLS en profile_members.
+create schema if not exists private;
+revoke all on schema private from public;
+grant usage on schema private to authenticated, service_role;
+
+create or replace function private.is_profile_member(p_profile_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.profile_members pm
+    where pm.profile_id = p_profile_id
+      and pm.user_id = auth.uid()
+      and pm.status = 'active'
+  );
+$$;
+
+create or replace function private.has_profile_role(
+  p_profile_id uuid,
+  allowed_roles text[]
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+  select exists (
+    select 1
+    from public.profile_members pm
+    where pm.profile_id = p_profile_id
+      and pm.user_id = auth.uid()
+      and pm.status = 'active'
+      and pm.role = any(allowed_roles)
+  );
+$$;
+
+revoke all on function private.is_profile_member(uuid) from public;
+revoke all on function private.has_profile_role(uuid, text[]) from public;
+grant execute on function private.is_profile_member(uuid) to authenticated, service_role;
+grant execute on function private.has_profile_role(uuid, text[]) to authenticated, service_role;
+
+-- Exposición explícita para Supabase Data API (PostgREST).
+grant select, insert, update, delete on
+  public.profiles,
+  public.profile_members,
+  public.invitations,
+  public.products,
+  public.product_images,
+  public.stock_movements,
+  public.shopping_trips,
+  public.shopping_trip_items,
+  public.purchase_receipts,
+  public.purchase_receipt_items,
+  public.stock_checks,
+  public.stock_check_photos,
+  public.stock_check_detected_items
+to authenticated;
+
+grant select on public.sections, public.categories to authenticated;
+
+grant select, insert, update, delete on all tables in schema public to service_role;
+grant usage, select on all sequences in schema public to authenticated, service_role;
+
 -- Helper: miembro activo de un perfil
 -- profiles
 drop policy if exists "profiles_select_member" on public.profiles;
 create policy "profiles_select_member"
   on public.profiles for select
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = profiles.id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-    )
-  );
+  to authenticated
+  using (private.is_profile_member(id));
 
 drop policy if exists "profiles_insert_authenticated" on public.profiles;
 create policy "profiles_insert_authenticated"
   on public.profiles for insert
+  to authenticated
   with check (
     auth.uid() is not null
     and created_by = auth.uid()
@@ -337,90 +414,48 @@ create policy "profiles_insert_authenticated"
 drop policy if exists "profiles_update_admin" on public.profiles;
 create policy "profiles_update_admin"
   on public.profiles for update
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = profiles.id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  );
+  to authenticated
+  using (private.has_profile_role(id, array['admin']));
 
 -- profile_members
 drop policy if exists "profile_members_select_same_profile" on public.profile_members;
 create policy "profile_members_select_same_profile"
   on public.profile_members for select
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = profile_members.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-    )
-  );
+  to authenticated
+  using (private.is_profile_member(profile_id));
 
 drop policy if exists "profile_members_insert_admin" on public.profile_members;
 create policy "profile_members_insert_admin"
   on public.profile_members for insert
-  with check (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = profile_members.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  );
+  to authenticated
+  with check (private.has_profile_role(profile_id, array['admin']));
 
 drop policy if exists "profile_members_update_admin" on public.profile_members;
 create policy "profile_members_update_admin"
   on public.profile_members for update
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = profile_members.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  );
+  to authenticated
+  using (private.has_profile_role(profile_id, array['admin']))
+  with check (private.has_profile_role(profile_id, array['admin']));
+
+drop policy if exists "profile_members_delete_admin" on public.profile_members;
+create policy "profile_members_delete_admin"
+  on public.profile_members for delete
+  to authenticated
+  using (private.has_profile_role(profile_id, array['admin']));
 
 -- invitations (solo admin)
 drop policy if exists "invitations_select_admin" on public.invitations;
 create policy "invitations_select_admin"
   on public.invitations for select
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = invitations.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  );
+  to authenticated
+  using (private.has_profile_role(profile_id, array['admin']));
 
 drop policy if exists "invitations_write_admin" on public.invitations;
 create policy "invitations_write_admin"
   on public.invitations for all
-  using (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = invitations.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  )
-  with check (
-    exists (
-      select 1 from public.profile_members pm
-      where pm.profile_id = invitations.profile_id
-        and pm.user_id = auth.uid()
-        and pm.status = 'active'
-        and pm.role = 'admin'
-    )
-  );
+  to authenticated
+  using (private.has_profile_role(profile_id, array['admin']))
+  with check (private.has_profile_role(profile_id, array['admin']));
 
 -- Catálogo global: lectura autenticada, sin escritura desde cliente (opcional: solo service_role en migraciones)
 drop policy if exists "sections_select_authenticated" on public.sections;
@@ -884,5 +919,6 @@ create policy "stock_check_detected_via_check"
     )
   );
 
--- Nota: en proyectos Supabase, el rol `authenticated` suele tener permisos por defecto.
--- Si alguna tabla nueva no responde en el cliente, revisa Data API y GRANT en el panel.
+-- Permisos explícitos para Supabase Data API.
+grant select, insert, update, delete on all tables in schema public to authenticated, service_role;
+grant usage, select on all sequences in schema public to authenticated, service_role;
