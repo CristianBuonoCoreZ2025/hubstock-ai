@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import { Button } from '@/components/ui/button'
 
 export default function RegisterPage() {
   const [email, setEmail] = useState('')
@@ -36,15 +37,16 @@ export default function RegisterPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="space-y-1 text-center">
-        <h1 className="text-2xl font-semibold tracking-tight">Crear cuenta</h1>
-        <p className="text-sm text-muted-foreground">StockCasa AI — inventario del hogar</p>
+    <div className="flex flex-col gap-8">
+      <div className="space-y-2">
+        <p className="auth-brand">Cuenta</p>
+        <h1 className="auth-title">Crea tu cuenta</h1>
+        <p className="auth-subtitle">Mismo estilo y claridad que el inicio de sesión.</p>
       </div>
 
-      <form onSubmit={onSubmit} className="flex flex-col gap-4">
+      <form onSubmit={onSubmit} className="flex flex-col gap-5">
         <div className="space-y-2">
-          <label htmlFor="email" className="text-sm font-medium">
+          <label htmlFor="email" className="app-field-label">
             Correo
           </label>
           <input
@@ -55,11 +57,11 @@ export default function RegisterPage() {
             required
             value={email}
             onChange={(ev) => setEmail(ev.target.value)}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="app-input"
           />
         </div>
         <div className="space-y-2">
-          <label htmlFor="password" className="text-sm font-medium">
+          <label htmlFor="password" className="app-field-label">
             Contraseña
           </label>
           <input
@@ -71,34 +73,30 @@ export default function RegisterPage() {
             minLength={8}
             value={password}
             onChange={(ev) => setPassword(ev.target.value)}
-            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="app-input"
           />
-          <p className="text-xs text-muted-foreground">Mínimo 8 caracteres.</p>
+          <p className="text-[12px] text-muted-foreground">Mínimo 8 caracteres.</p>
         </div>
 
         {error ? (
-          <p className="text-sm text-destructive" role="alert">
+          <p className="text-[13px] text-destructive" role="alert">
             {error}
           </p>
         ) : null}
         {info ? (
-          <p className="text-sm text-muted-foreground" role="status">
+          <p className="text-[13px] text-muted-foreground" role="status">
             {info}
           </p>
         ) : null}
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50"
-        >
+        <Button type="submit" disabled={loading} size="lg" className="h-11 w-full">
           {loading ? 'Creando…' : 'Registrarse'}
-        </button>
+        </Button>
       </form>
 
-      <p className="text-center text-sm text-muted-foreground">
+      <p className="text-center text-[13px] text-muted-foreground">
         ¿Ya tienes cuenta?{' '}
-        <Link href="/login" className="font-medium text-primary underline-offset-4 hover:underline">
+        <Link href="/login" className="font-semibold text-foreground underline-offset-4 hover:underline">
           Entrar
         </Link>
       </p>

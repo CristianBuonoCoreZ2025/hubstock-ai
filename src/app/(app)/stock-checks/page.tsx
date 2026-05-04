@@ -1,41 +1,81 @@
-import React from 'react';
+import { listProductsPicker } from '@/app/actions/receipts'
+import {
+  getStockChecksList,
+  listMeasureUnits,
+  listNetContentOptions,
+  listProfileBrands,
+  listProfilePresentations,
+  listProfileProductTypes,
+} from '@/app/actions/stock-checks'
+import { getProfileContext } from '@/lib/profile/context'
+import { StockChecksClient } from './StockChecksClient'
 
-const StockChecksPage: React.FC = () => {
-  const mockStockChecks = [
-    { id: 1, date: '2023-10-01', product: 'Manzanas', quantity: 50, status: 'Completado' },
-    { id: 2, date: '2023-10-02', product: 'Leche', quantity: 30, status: 'Pendiente' },
-    { id: 3, date: '2023-10-03', product: 'Pan', quantity: 20, status: 'Completado' },
-    { id: 4, date: '2023-10-04', product: 'Huevos', quantity: 100, status: 'Completado' },
-    { id: 5, date: '2023-10-05', product: 'Arroz', quantity: 40, status: 'Pendiente' },
-  ];
+export default async function StockChecksPage() {
+  const { activeProfileId, profiles } = await getProfileContext()
+
+  if (!activeProfileId || profiles.length === 0) {
+    return (
+      <div className="app-page">
+        <header className="app-page-header">
+          <h1 className="app-page-title">Chequeos de stock</h1>
+          <p className="app-page-lead">
+            Necesitas un perfil activo para usar esta sección.
+          </p>
+        </header>
+      </div>
+    )
+  }
+
+  const [
+    { data: checks, error: checksError },
+    { data: products },
+    { data: brands },
+    { data: measureUnitsData, error: measureUnitsError },
+    { data: netContentOptionsData, error: netContentOptionsError },
+    { data: productTypesData, error: productTypesError },
+    { data: presentationsData, error: presentationsError },
+  ] = await Promise.all([
+    getStockChecksList(),
+    listProductsPicker(),
+    listProfileBrands(),
+    listMeasureUnits(),
+    listNetContentOptions(),
+    listProfileProductTypes(),
+    listProfilePresentations(),
+  ])
+
+  const catalogHints = [
+    measureUnitsError,
+    netContentOptionsError,
+    productTypesError,
+    presentationsError,
+  ].filter(Boolean)
+  const catalogMerged =
+    catalogHints.length > 0 ? [...new Set(catalogHints)].join(' · ') : null
+  const listErrorMerged =
+    [checksError, catalogMerged].filter(Boolean).join(' · ') || null
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Cheques de stock</h1>
-      <div className="border rounded-lg p-4">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left p-2">Fecha</th>
-              <th className="text-left p-2">Producto</th>
-              <th className="text-left p-2">Cantidad</th>
-              <th className="text-left p-2">Estado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockStockChecks.map((check) => (
-              <tr key={check.id} className="border-b">
-                <td className="p-2">{check.date}</td>
-                <td className="p-2">{check.product}</td>
-                <td className="p-2">{check.quantity}</td>
-                <td className="p-2">{check.status}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
+    <div className="app-page app-page-stock-wide">
+      <header className="app-page-header">
+        <h1 className="app-page-title">Chequeos de stock</h1>
+        <p className="app-page-lead">
+          Fotos por zona con detección asistida; los resultados quedan en
+          estado pendiente de confirmación hasta que valides cantidades.
+        </p>
+      </header>
 
-export default StockChecksPage;
+      <StockChecksClient
+        profileId={activeProfileId}
+        initialChecks={[...checks]}
+        products={products ?? []}
+        brands={brands ?? []}
+        measureUnits={measureUnitsData ?? []}
+        netContentOptions={netContentOptionsData ?? []}
+        productTypes={productTypesData ?? []}
+        presentations={presentationsData ?? []}
+        listError={listErrorMerged}
+      />
+    </div>
+  )
+}

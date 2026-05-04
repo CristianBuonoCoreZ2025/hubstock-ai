@@ -1,61 +1,50 @@
--- Create products table
-CREATE TABLE products (
+-- Inventario: productos, imágenes y movimientos de stock (delta + movement_type).
+
+CREATE TABLE public.products (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID NOT NULL,
-  section_id UUID NOT NULL,
-  category_id UUID NOT NULL,
+  profile_id UUID NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+  section_id UUID NOT NULL REFERENCES public.sections (id) ON DELETE RESTRICT,
+  category_id UUID NOT NULL REFERENCES public.categories (id) ON DELETE RESTRICT,
   name TEXT NOT NULL,
   brand TEXT,
   format TEXT,
   unit TEXT,
   stock_current NUMERIC NOT NULL DEFAULT 0,
-  stock_min NUMERIC DEFAULT 0,
-  stock_ideal NUMERIC DEFAULT 0,
+  stock_min NUMERIC,
+  stock_ideal NUMERIC,
   reference_price NUMERIC,
   last_price NUMERIC,
   location TEXT,
   image_url TEXT,
   catalog_product_id UUID REFERENCES catalog_products(id) ON DELETE SET NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
-  created_by UUID NOT NULL,
+  created_by UUID NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-  FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE,
-  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create product_images table
-CREATE TABLE product_images (
+CREATE TABLE public.product_images (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID NOT NULL,
-  product_id UUID NOT NULL,
-  storage_path TEXT,
-  image_url TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+  profile_id UUID NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES public.products (id) ON DELETE CASCADE,
+  storage_path TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_by UUID NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Create stock_movements table
-CREATE TABLE stock_movements (
+CREATE TABLE public.stock_movements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID NOT NULL,
-  product_id UUID NOT NULL,
+  profile_id UUID NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES public.products (id) ON DELETE CASCADE,
+  delta NUMERIC NOT NULL,
   movement_type TEXT NOT NULL CHECK (
-    movement_type IN ('initial', 'purchase', 'consumption', 'manual_adjustment',
-    'stock_check_adjustment', 'receipt_import', 'correction')
+    movement_type IN ('consumption', 'purchase', 'adjustment', 'import', 'inventory_count')
   ),
-  quantity NUMERIC NOT NULL,
-  previous_stock NUMERIC,
-  new_stock NUMERIC,
-  notes TEXT,
-  created_by UUID NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-  FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
-  FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE
+  note TEXT,
+  reference_id UUID,
+  created_by UUID NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Create indexes
@@ -74,8 +63,6 @@ CREATE INDEX idx_stock_movements_profile_id ON stock_movements(profile_id);
 CREATE INDEX idx_stock_movements_product_id ON stock_movements(product_id);
 CREATE INDEX idx_stock_movements_created_at ON stock_movements(created_at);
 
--- Create trigger for updated_at in products
-CREATE TRIGGER update_products_updated_at
-BEFORE UPDATE ON products
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER set_products_updated_at
+  BEFORE UPDATE ON public.products
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();

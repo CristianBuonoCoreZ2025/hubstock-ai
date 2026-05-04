@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import { profileScopedImageBodySchema } from '@/lib/validators/ai'
-import { analyzeProductFromImage } from '@/server/gemini'
+import { analyzeProductFromImage } from '@/server/image-analysis'
+import { mapVisionFailure } from '@/server/vision-error-map'
 
 export async function POST(request: Request) {
   let json: unknown
@@ -29,17 +30,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const analysis = await analyzeProductFromImage({
+    const { analysis, vision } = await analyzeProductFromImage({
       imageBase64: parsed.data.imageBase64,
       mimeType: parsed.data.mimeType,
     })
     return NextResponse.json({
       profileId: parsed.data.profileId,
       analysis,
+      vision,
       persisted: false,
     })
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'gemini_error'
-    return NextResponse.json({ error: message }, { status: 502 })
+    const { status, payload } = mapVisionFailure(e)
+    return NextResponse.json(payload, { status })
   }
 }

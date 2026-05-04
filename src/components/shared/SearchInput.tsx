@@ -14,7 +14,7 @@ const SearchInput: React.FC<SearchInputProps> = ({ placeholder, value, onChange 
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-input bg-background px-4 py-2 text-sm shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+        className="glass-panel-subtle w-full rounded-xl border border-white/10 px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:border-sky-500/50 focus:outline-none focus:ring-2 focus:ring-sky-500/30"
       />
       <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
         <svg

@@ -16,6 +16,17 @@ export async function getProfileContext(): Promise<{
     return { profiles: [], activeProfileId: null }
   }
 
+  // Unir perfiles invitados (RPC SECURITY DEFINER; migración 20260509100000)
+  const { error: inviteRpcError } = await supabase.rpc(
+    'accept_pending_invitations_for_current_user'
+  )
+  if (
+    inviteRpcError &&
+    !/function .* does not exist|schema cache/i.test(inviteRpcError.message ?? '')
+  ) {
+    console.warn('accept_pending_invitations_for_current_user:', inviteRpcError.message)
+  }
+
   const { data: members } = await supabase
     .from('profile_members')
     .select('profile_id')

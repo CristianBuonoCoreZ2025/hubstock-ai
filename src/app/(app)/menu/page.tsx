@@ -1,5 +1,7 @@
 import Link from 'next/link'
 import { navigationItems } from '@/lib/navigation'
+import { appGlassCardClass } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
 
 export default function MenuPage() {
   return (
@@ -15,7 +17,10 @@ export default function MenuPage() {
           <li key={item.href}>
             <Link
               href={item.href}
-              className="flex items-center gap-3 rounded-lg border border-border bg-card px-4 py-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted"
+              className={cn(
+                appGlassCardClass,
+                'flex items-center gap-3 px-4 py-3 text-sm font-medium transition hover:border-white/15'
+              )}
             >
               <item.icon className="h-5 w-5 shrink-0 text-muted-foreground" />
               {item.name}

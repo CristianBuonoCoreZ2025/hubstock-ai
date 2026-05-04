@@ -1,11 +1,22 @@
-export default function UsersPage() {
+import { getTeamData } from '@/app/actions/team'
+import { TeamPageClient } from './TeamPageClient'
+
+export default async function UsersPage() {
+  const { members, invitations, error, isAdmin } = await getTeamData()
+
+  if (error) {
+    return (
+      <div className="app-page">
+        <p className="app-page-lead text-destructive">{error}</p>
+      </div>
+    )
+  }
+
   return (
-    <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-bold">Gestión de usuarios</h1>
-      <p className="text-sm text-muted-foreground">
-        Invitaciones y roles por perfil (<code className="rounded bg-muted px-1 py-0.5 text-xs">profile_members</code>,{' '}
-        <code className="rounded bg-muted px-1 py-0.5 text-xs">invitations</code>). Solo administradores.
-      </p>
-    </div>
+    <TeamPageClient
+      members={members as never}
+      invitations={invitations as never}
+      isAdmin={isAdmin}
+    />
   )
 }

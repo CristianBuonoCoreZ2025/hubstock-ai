@@ -1,140 +1,138 @@
--- Enable required extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- StockCasa: núcleo (perfiles, membresía, invitaciones, catálogo global).
+-- Referencia del modelo final (mismo resultado que la cadena en supabase/migrations).
+--
+-- Base NUEVA vacía: ejecutar 01 → 02 → 03 → 04 → 05 o supabase/schema-all.sql
+-- Base con DATOS (producción / dev con historial): NO ejecutar este script; aplicar
+--   migraciones con `supabase db push` o copiar el SQL de supabase/migrations/ al editor.
+--   La migración 20260508120000_ensure_canonical_forward.sql alinea lo que falte.
 
--- Function to automatically update timestamps
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- ---------------------------------------------------------------------------
+-- Tablas core
+-- ---------------------------------------------------------------------------
+CREATE TABLE public.profiles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL,
+  description TEXT,
+  created_by UUID NOT NULL REFERENCES auth.users (id) ON DELETE RESTRICT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.profile_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  profile_id UUID NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'pending')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (profile_id, user_id)
+);
+
+CREATE TABLE public.invitations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  profile_id UUID NOT NULL REFERENCES public.profiles (id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  invited_by UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'expired', 'revoked')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.sections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE public.categories (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  section_id UUID NOT NULL REFERENCES public.sections (id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (section_id, name)
+);
+
+CREATE INDEX idx_profile_members_user ON public.profile_members (user_id);
+CREATE INDEX idx_profile_members_profile ON public.profile_members (profile_id);
+
+-- ---------------------------------------------------------------------------
+-- Triggers: admin al crear perfil + updated_at
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.set_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
 BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
--- Create tables
-CREATE TABLE profiles (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  description TEXT,
-  created_by UUID NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE
-);
+CREATE OR REPLACE FUNCTION public.handle_new_profile()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.profile_members (profile_id, user_id, role, status)
+  VALUES (NEW.id, auth.uid(), 'admin', 'active');
+  RETURN NEW;
+END;
+$$;
 
-CREATE TABLE profile_members (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  profile_id UUID NOT NULL,
-  user_id UUID NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'editor', 'viewer')),
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'pending', 'removed')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (profile_id) REFERENCES profiles(id) ON DELETE CASCADE,
-  FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
-  UNIQUE (profile_id, user_id)
-);
+CREATE TRIGGER on_profile_created
+  AFTER INSERT ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_profile();
 
-CREATE TABLE sections (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL,
-  sort_order INT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (name)
-);
+CREATE TRIGGER set_profiles_updated_at
+  BEFORE UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
-CREATE TABLE categories (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  section_id UUID NOT NULL,
-  name TEXT NOT NULL,
-  sort_order INT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  FOREIGN KEY (section_id) REFERENCES sections(id) ON DELETE CASCADE,
-  UNIQUE (section_id, name)
-);
+CREATE TRIGGER set_profile_members_updated_at
+  BEFORE UPDATE ON public.profile_members
+  FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
 
--- Create indexes
-CREATE INDEX idx_profiles_created_by ON profiles(created_by);
-CREATE INDEX idx_profile_members_profile_id ON profile_members(profile_id);
-CREATE INDEX idx_profile_members_user_id ON profile_members(user_id);
-CREATE INDEX idx_categories_section_id ON categories(section_id);
-
--- Insert initial data for sections
-INSERT INTO sections (id, name, sort_order, created_at)
-VALUES
-  (gen_random_uuid(), 'Frutas y verduras', 1, NOW()),
-  (gen_random_uuid(), 'Carnes y pescados', 2, NOW()),
-  (gen_random_uuid(), 'Lácteos y refrigerados', 3, NOW()),
-  (gen_random_uuid(), 'Congelados', 4, NOW()),
-  (gen_random_uuid(), 'Despensa', 5, NOW()),
-  (gen_random_uuid(), 'Panadería', 6, NOW()),
-  (gen_random_uuid(), 'Bebidas', 7, NOW()),
-  (gen_random_uuid(), 'Aseo hogar', 8, NOW()),
-  (gen_random_uuid(), 'Higiene personal', 9, NOW()),
-  (gen_random_uuid(), 'Mascotas', 10, NOW()),
-  (gen_random_uuid(), 'Bebé', 11, NOW()),
-  (gen_random_uuid(), 'Farmacia hogar', 12, NOW()),
-  (gen_random_uuid(), 'Otros', 13, NOW())
-ON CONFLICT (name) DO NOTHING;
-
--- Insert initial data for categories
-INSERT INTO categories (id, section_id, name, sort_order, created_at)
-SELECT gen_random_uuid(), id, category_name, sort_order, NOW()
+-- ---------------------------------------------------------------------------
+-- Seed: secciones y categoría "General" por sección (idempotente por nombre)
+-- ---------------------------------------------------------------------------
+INSERT INTO public.sections (name, sort_order)
+SELECT v.name, v.sort_order
 FROM (
-  SELECT
-    s.id AS section_id,
-    CASE
-      WHEN s.name = 'Frutas y verduras' THEN 'Frutas'
-      WHEN s.name = 'Frutas y verduras' THEN 'Verduras'
-      WHEN s.name = 'Frutas y verduras' THEN 'Hortalizas'
-      WHEN s.name = 'Carnes y pescados' THEN 'Carnes'
-      WHEN s.name = 'Carnes y pescados' THEN 'Pescados'
-      WHEN s.name = 'Carnes y pescados' THEN 'Mariscos'
-      WHEN s.name = 'Lácteos y refrigerados' THEN 'Lácteos'
-      WHEN s.name = 'Lácteos y refrigerados' THEN 'Refrigerados'
-      WHEN s.name = 'Lácteos y refrigerados' THEN 'Huevos'
-      WHEN s.name = 'Congelados' THEN 'Congelados'
-      WHEN s.name = 'Congelados' THEN 'Pizzas'
-      WHEN s.name = 'Congelados' THEN 'Postres'
-      WHEN s.name = 'Despensa' THEN 'Enlatados'
-      WHEN s.name = 'Despensa' THEN 'Aceites'
-      WHEN s.name = 'Despensa' THEN 'Condimentos'
-      WHEN s.name = 'Panadería' THEN 'Pan'
-      WHEN s.name = 'Panadería' THEN 'Pastelería'
-      WHEN s.name = 'Panadería' THEN 'Repostería'
-      WHEN s.name = 'Bebidas' THEN 'Bebidas'
-      WHEN s.name = 'Bebidas' THEN 'Jugos'
-      WHEN s.name = 'Bebidas' THEN 'Bebidas alcohólicas'
-      WHEN s.name = 'Aseo hogar' THEN 'Limpieza'
-      WHEN s.name = 'Aseo hogar' THEN 'Desechables'
-      WHEN s.name = 'Aseo hogar' THEN 'Muebles'
-      WHEN s.name = 'Higiene personal' THEN 'Cuidado personal'
-      WHEN s.name = 'Higiene personal' THEN 'Cuidado bucal'
-      WHEN s.name = 'Higiene personal' THEN 'Cuidado corporal'
-      WHEN s.name = 'Mascotas' THEN 'Alimentos'
-      WHEN s.name = 'Mascotas' THEN 'Accesorios'
-      WHEN s.name = 'Mascotas' THEN 'Cuidado'
-      WHEN s.name = 'Bebé' THEN 'Alimentos'
-      WHEN s.name = 'Bebé' THEN 'Cuidado'
-      WHEN s.name = 'Bebé' THEN 'Accesorios'
-      WHEN s.name = 'Farmacia hogar' THEN 'Medicamentos'
-      WHEN s.name = 'Farmacia hogar' THEN 'Cuidado'
-      WHEN s.name = 'Farmacia hogar' THEN 'Equipos'
-      WHEN s.name = 'Otros' THEN 'Otros'
-    END AS category_name,
-    ROW_NUMBER() OVER (PARTITION BY s.id) AS sort_order
-  FROM sections s
-) AS data
-JOIN sections s ON data.section_id = s.id
-ON CONFLICT (section_id, name) DO NOTHING;
+  VALUES
+    ('Frutas y verduras', 10),
+    ('Carnes y pescados', 20),
+    ('Lácteos y refrigerados', 30),
+    ('Congelados', 40),
+    ('Despensa', 50),
+    ('Panadería', 60),
+    ('Bebidas', 70),
+    ('Aseo hogar', 80),
+    ('Higiene personal', 90),
+    ('Mascotas', 100),
+    ('Bebé', 110),
+    ('Farmacia hogar', 120),
+    ('Otros', 130)
+) AS v(name, sort_order)
+WHERE NOT EXISTS (
+  SELECT 1 FROM public.sections s WHERE s.name = v.name
+);
 
--- Create triggers for updated_at
-CREATE TRIGGER update_profiles_updated_at
-BEFORE UPDATE ON profiles
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TRIGGER update_profile_members_updated_at
-BEFORE UPDATE ON profile_members
-FOR EACH ROW
-EXECUTE FUNCTION update_updated_at_column();
+INSERT INTO public.categories (section_id, name, sort_order)
+SELECT s.id, 'General', 0
+FROM public.sections s
+WHERE s.name IN (
+  'Frutas y verduras','Carnes y pescados','Lácteos y refrigerados','Congelados',
+  'Despensa','Panadería','Bebidas','Aseo hogar','Higiene personal','Mascotas',
+  'Bebé','Farmacia hogar','Otros'
+)
+AND NOT EXISTS (
+  SELECT 1 FROM public.categories c WHERE c.section_id = s.id AND c.name = 'General'
+);

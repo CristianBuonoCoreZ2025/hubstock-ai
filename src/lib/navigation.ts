@@ -9,6 +9,7 @@ import {
   Menu,
   MinusCircle,
   Package,
+  Palette,
   Settings,
   ShoppingCart,
   Store,
@@ -37,6 +38,7 @@ export const navigationItems: NavItem[] = [
   { name: 'Historial', href: '/history', icon: History, mobilePrimary: false },
   { name: 'Equipo', href: '/users', icon: Users, mobilePrimary: false },
   { name: 'Menú', href: '/menu', icon: Menu, mobilePrimary: true },
+  { name: 'Estilos (demo)', href: '/style-lab', icon: Palette, mobilePrimary: false },
   { name: 'Configuración', href: '/settings', icon: Settings, mobilePrimary: false },
 ]
 
