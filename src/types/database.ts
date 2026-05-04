@@ -168,6 +168,9 @@ export interface Database {
           brand: string | null
           format: string | null
           unit: string | null
+          gtin: string | null
+          enrichment_source: 'open_food_facts' | 'manual' | null
+          enrichment_synced_at: string | null
           stock_current: number
           stock_min: number | null
           stock_ideal: number | null
@@ -189,6 +192,9 @@ export interface Database {
           brand?: string | null
           format?: string | null
           unit?: string | null
+          gtin?: string | null
+          enrichment_source?: 'open_food_facts' | 'manual' | null
+          enrichment_synced_at?: string | null
           stock_current?: number
           stock_min?: number | null
           stock_ideal?: number | null
@@ -210,6 +216,9 @@ export interface Database {
           brand?: string | null
           format?: string | null
           unit?: string | null
+          gtin?: string | null
+          enrichment_source?: 'open_food_facts' | 'manual' | null
+          enrichment_synced_at?: string | null
           stock_current?: number
           stock_min?: number | null
           stock_ideal?: number | null
@@ -402,6 +411,8 @@ export interface Database {
           unit_price: number | null
           line_total: number | null
           sort_order: number
+          gtin: string | null
+          enrichment: Json | null
         }
         Insert: {
           id?: string
@@ -412,6 +423,8 @@ export interface Database {
           unit_price?: number | null
           line_total?: number | null
           sort_order?: number
+          gtin?: string | null
+          enrichment?: Json | null
         }
         Update: {
           id?: string
@@ -422,6 +435,8 @@ export interface Database {
           unit_price?: number | null
           line_total?: number | null
           sort_order?: number
+          gtin?: string | null
+          enrichment?: Json | null
         }
       }
       stock_checks: {
