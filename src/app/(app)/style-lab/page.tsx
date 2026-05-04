@@ -1,32 +1,26 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import MiniSkinPreview from '@/components/style-lab/MiniSkinPreview'
 import ColorModeControl from '@/components/theme/ColorModeControl'
+import { UI_STYLE_IDS, UI_STYLE_META, type UiStyleId } from '@/lib/ui-styles'
 import {
-  DEFAULT_UI_STYLE,
-  UI_STYLE_IDS,
-  UI_STYLE_META,
-  UI_STYLE_STORAGE_KEY,
-  isUiStyleId,
-  type UiStyleId,
-} from '@/lib/ui-styles'
+  getUiStyleServerSnapshot,
+  getUiStyleSnapshot,
+  persistUiStyleChoice,
+  subscribeUiStyle,
+} from '@/lib/ui-style-client-store'
 
 export default function StyleLabPage() {
-  const [active, setActive] = useState<UiStyleId>(DEFAULT_UI_STYLE)
-
-  useEffect(() => {
-    const raw = localStorage.getItem(UI_STYLE_STORAGE_KEY)
-    if (isUiStyleId(raw)) {
-      setActive(raw)
-    }
-  }, [])
+  const active = useSyncExternalStore(
+    subscribeUiStyle,
+    getUiStyleSnapshot,
+    getUiStyleServerSnapshot,
+  )
 
   function applyStyle(id: UiStyleId) {
-    setActive(id)
-    document.documentElement.dataset.uiStyle = id
-    localStorage.setItem(UI_STYLE_STORAGE_KEY, id)
+    persistUiStyleChoice(id)
   }
 
   return (
@@ -34,9 +28,8 @@ export default function StyleLabPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Laboratorio de estilos</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground md:text-base">
-          Doce pieles distintas (tipografía, color y forma). Todas funcionan en modo claro y oscuro.
-          Elige una para aplicarla a toda la app; usa el interruptor de abajo para comparar el mismo
-          estilo de día y de noche.
+          Siete pieles (tipografía, color, modales y grillas). Funcionan en modo claro y oscuro.
+          Elige una para toda la app; el interruptor de abajo sirve para comparar día y noche.
         </p>
       </div>
 
@@ -67,8 +60,8 @@ export default function StyleLabPage() {
       </section>
 
       <section>
-        <h2 className="mb-4 text-sm font-semibold">12 propuestas (vista previa)</h2>
-        <div className="grid gap-6 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <h2 className="mb-4 text-sm font-semibold">7 propuestas (vista previa)</h2>
+        <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {UI_STYLE_IDS.map((id) => (
             <MiniSkinPreview key={id} styleId={id} selected={active === id} onSelect={() => applyStyle(id)} />
           ))}

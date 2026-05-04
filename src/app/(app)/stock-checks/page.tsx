@@ -27,13 +27,13 @@ export default async function StockChecksPage() {
   }
 
   const [
-    { data: checks, error },
+    { data: checks, error: checksError },
     { data: products },
     { data: brands },
-    { data: measureUnits },
-    { data: netContentOptions },
-    { data: productTypes },
-    { data: presentations },
+    { data: measureUnitsData, error: measureUnitsError },
+    { data: netContentOptionsData, error: netContentOptionsError },
+    { data: productTypesData, error: productTypesError },
+    { data: presentationsData, error: presentationsError },
   ] = await Promise.all([
     getStockChecksList(),
     listProductsPicker(),
@@ -45,15 +45,15 @@ export default async function StockChecksPage() {
   ])
 
   const catalogHints = [
-    measureUnits.error,
-    netContentOptions.error,
-    productTypes.error,
-    presentations.error,
+    measureUnitsError,
+    netContentOptionsError,
+    productTypesError,
+    presentationsError,
   ].filter(Boolean)
   const catalogMerged =
     catalogHints.length > 0 ? [...new Set(catalogHints)].join(' · ') : null
   const listErrorMerged =
-    [error, catalogMerged].filter(Boolean).join(' · ') || null
+    [checksError, catalogMerged].filter(Boolean).join(' · ') || null
 
   return (
     <div className="app-page app-page-stock-wide">
@@ -70,10 +70,10 @@ export default async function StockChecksPage() {
         initialChecks={[...checks]}
         products={products ?? []}
         brands={brands ?? []}
-        measureUnits={measureUnits ?? []}
-        netContentOptions={netContentOptions ?? []}
-        productTypes={productTypes ?? []}
-        presentations={presentations ?? []}
+        measureUnits={measureUnitsData ?? []}
+        netContentOptions={netContentOptionsData ?? []}
+        productTypes={productTypesData ?? []}
+        presentations={presentationsData ?? []}
         listError={listErrorMerged}
       />
     </div>

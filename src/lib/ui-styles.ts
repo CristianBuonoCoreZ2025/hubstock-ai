@@ -1,17 +1,12 @@
-/** Identificadores de pieles de interfaz (modo claro de referencia; modo oscuro mantiene la misma identidad). */
+/** Pieles de interfaz disponibles (modo claro de referencia; oscuro mantiene la identidad). */
 export const UI_STYLE_IDS = [
-  'soft-minimal',
   'nordic-air',
-  'editorial-luxe',
-  'kinetic-pop',
-  'bento-contrast',
-  'bubble-play',
-  'farmhouse-warm',
   'pastel-dream',
+  'bubble-play',
+  'kinetic-pop',
   'neo-playful',
-  'magazine-serif',
-  'mono-lab',
-  'kitchen-round',
+  'apple-liquid',
+  'arena-flash',
 ] as const
 
 export type UiStyleId = (typeof UI_STYLE_IDS)[number]
@@ -22,69 +17,44 @@ export const UI_STYLE_META: Record<
   UiStyleId,
   { label: string; tagline: string; mood: string }
 > = {
-  'soft-minimal': {
-    label: 'Soft minimal',
-    tagline: 'Espacio en blanco y grises suaves',
-    mood: 'Calma, productividad',
-  },
   'nordic-air': {
     label: 'Aire nórdico',
-    tagline: 'Frío, limpio, mucho aire',
+    tagline: 'Tipografía clara, mucho aire, rejillas amplias',
     mood: 'Orden escandinavo',
-  },
-  'editorial-luxe': {
-    label: 'Editorial',
-    tagline: 'Serif dramática y contraste fino',
-    mood: 'Revista, elegancia',
-  },
-  'kinetic-pop': {
-    label: 'Kinetic pop',
-    tagline: 'Tipografía display y acento neón',
-    mood: 'Energía, impacto',
-  },
-  'bento-contrast': {
-    label: 'Bento grid',
-    tagline: 'Bloques sólidos estilo dashboard 2025',
-    mood: 'Producto tech friendly',
-  },
-  'bubble-play': {
-    label: 'Bubble play',
-    tagline: 'Pill buttons, curvas extremas, candy',
-    mood: 'Juvenil, divertido',
-  },
-  'farmhouse-warm': {
-    label: 'Granero cálido',
-    tagline: 'Crema, terracota, serif orgánica',
-    mood: 'Hogar acogedor',
   },
   'pastel-dream': {
     label: 'Pastel dream',
-    tagline: 'Gradientes suaves y redondez',
+    tagline: 'Curvas suaves, texto redondeado, bloques separados',
     mood: 'Suave, familiar',
+  },
+  'bubble-play': {
+    label: 'Bubble play',
+    tagline: 'Pills, relleno generoso, modales tipo chicle',
+    mood: 'Juvenil, divertido',
+  },
+  'kinetic-pop': {
+    label: 'Kinetic pop',
+    tagline: 'Display apretada, rejilla densa, modal geométrico',
+    mood: 'Energía, impacto',
   },
   'neo-playful': {
     label: 'Neo playful',
-    tagline: 'Grotesque expresiva y color block',
+    tagline: 'Titulares expresivos, contraste y rejilla equilibrada',
     mood: 'Creativo, moderno',
   },
-  'magazine-serif': {
-    label: 'Magazine',
-    tagline: 'Sans + serif display de contraste',
-    mood: 'Look editorial mixto',
+  'apple-liquid': {
+    label: 'Apple liquid',
+    tagline: 'Grises cálidos, Inter, acento azul, paneles vidrio',
+    mood: 'macOS, sobrio, premium',
   },
-  'mono-lab': {
-    label: 'Mono lab',
-    tagline: 'Todo monoespaciado, estética dev',
-    mood: 'Datos, precisión',
-  },
-  'kitchen-round': {
-    label: 'Cocina redonda',
-    tagline: 'Formas muy redondeadas y tonos comida',
-    mood: 'App familiar, amable',
+  'arena-flash': {
+    label: 'Arena flash',
+    tagline: 'Oswald + Barlow, verde odds, sombras duras, rejilla apretada',
+    mood: 'Apuestas / deportes, impacto',
   },
 }
 
-export const DEFAULT_UI_STYLE: UiStyleId = 'soft-minimal'
+export const DEFAULT_UI_STYLE: UiStyleId = 'nordic-air'
 
 export function isUiStyleId(value: string | null | undefined): value is UiStyleId {
   return value != null && (UI_STYLE_IDS as readonly string[]).includes(value)

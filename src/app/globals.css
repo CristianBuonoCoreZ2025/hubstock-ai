@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "./ui-style-skins.css";
 
 /*
  * Sistema premium — día (por defecto) / noche.
@@ -66,7 +67,7 @@
 }
 
 @theme inline {
-  --font-sans: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-dm-sans), ui-sans-serif, system-ui, sans-serif;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -261,6 +262,57 @@ body {
   .app-input {
     @apply h-10 w-full rounded-xl border border-input bg-background px-3 text-[13px] text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/25;
   }
+
+  .sc-app main h1,
+  .sc-app .sc-page-title {
+    font-weight: 600;
+    letter-spacing: -0.03em;
+  }
+
+  .sc-app main h2 {
+    font-weight: 600;
+    letter-spacing: -0.025em;
+  }
+
+  /* Pieles UI: hereda tipografía y rejillas desde tokens en ui-style-skins.css */
+  html[data-ui-style] .sc-app {
+    font-family: var(--font-app-sans), ui-sans-serif, system-ui, sans-serif;
+    font-size: var(--ui-font-size-body, 0.875rem);
+    line-height: var(--ui-leading-body, 1.5);
+    letter-spacing: var(--ui-tracking-body, -0.01em);
+  }
+
+  html[data-ui-style] .sc-app :is(h1, .app-page-title, .sc-page-title) {
+    font-family: var(--font-app-heading), ui-sans-serif, system-ui, sans-serif;
+    font-weight: var(--ui-heading-weight, 600);
+    letter-spacing: var(--ui-heading-tracking, -0.03em);
+    line-height: var(--ui-heading-leading, 1.2);
+    font-size: var(--ui-heading-size, inherit);
+  }
+
+  html[data-ui-style] [data-slot='dialog-content'] {
+    border-radius: var(--ui-modal-radius, 1rem);
+    padding: var(--ui-modal-padding, 1.5rem);
+    font-size: var(--ui-modal-font-size, 0.8125rem);
+    line-height: var(--ui-modal-leading, 1.5);
+    letter-spacing: var(--ui-modal-tracking, inherit);
+    border-width: var(--ui-modal-border-width, 1px);
+    box-shadow: var(
+      --ui-modal-shadow,
+      0 24px 48px -12px rgb(0 0 0 / 0.18)
+    );
+  }
+
+  html[data-ui-style] [data-slot='dialog-overlay'] {
+    -webkit-backdrop-filter: var(--ui-modal-backdrop, blur(2px));
+    backdrop-filter: var(--ui-modal-backdrop, blur(2px));
+    background: var(--ui-modal-overlay-bg, rgb(0 0 0 / 0.4)) !important;
+  }
+
+  /* Sustituye el gap de utilidades Tailwind en grillas del contenido principal */
+  html[data-ui-style] main .grid {
+    gap: var(--app-main-grid-gap, 1rem) !important;
+  }
 }
 
 @keyframes app-progress-slide {
@@ -290,13 +342,8 @@ body {
   animation: app-progress-slide 1.15s ease-in-out infinite;
 }
 
-.sc-app main h1,
-.sc-app .sc-page-title {
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-
-.sc-app main h2 {
-  font-weight: 600;
-  letter-spacing: -0.025em;
+html[data-ui-style] .sc-app main h2 {
+  font-family: var(--font-app-heading), ui-sans-serif, system-ui, sans-serif;
+  font-weight: var(--ui-heading-weight, 600);
+  letter-spacing: var(--ui-heading-tracking, -0.025em);
 }

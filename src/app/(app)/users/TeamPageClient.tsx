@@ -117,7 +117,7 @@ export function TeamPageClient({ members, invitations, isAdmin }: Props) {
                 <td>
                   {isAdmin ? (
                     <select
-                      className="app-input h-9 min-w-[8rem]"
+                      className="app-input h-9 min-w-32"
                       defaultValue={m.role}
                       disabled={pending}
                       onChange={(e) => {

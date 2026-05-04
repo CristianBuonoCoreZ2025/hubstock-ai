@@ -2,11 +2,20 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
+import { useSyncExternalStore } from 'react'
 import type { ProfileOption } from '@/lib/profile/context'
 import { desktopNavItems, mobileBottomNavItems } from '@/lib/navigation'
 import { ProfileSwitcher } from '@/components/profile/ProfileSwitcher'
 import { MotionFadeIn } from '@/components/motion/motion-fade-in'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
+import { UiStyleDevSelect } from '@/components/layout/UiStyleDevSelect'
+import {
+  getUiStyleServerSnapshot,
+  getUiStyleSnapshot,
+  persistUiStyleChoice,
+  subscribeUiStyle,
+} from '@/lib/ui-style-client-store'
+import { isUiStyleDevToolbarEnabled } from '@/lib/ui-style-dev'
 
 type Props = {
   children: React.ReactNode
@@ -22,6 +31,11 @@ export default function AppShell({
   needsProfileSetup,
 }: Props) {
   const pathname = usePathname()
+  const activeUiStyle = useSyncExternalStore(
+    subscribeUiStyle,
+    getUiStyleSnapshot,
+    getUiStyleServerSnapshot,
+  )
 
   return (
     <div className="grid min-h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr]">
@@ -56,6 +70,24 @@ export default function AppShell({
               </Link>
             ))}
           </nav>
+          {isUiStyleDevToolbarEnabled ? (
+            <div className="mt-auto border-t border-border px-3 py-4 lg:px-4">
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Piel de UI (dev)
+              </p>
+              <p className="mb-2 text-[10px] leading-snug text-muted-foreground/90">
+                Las 7 pieles de{' '}
+                <Link href="/style-lab" className="font-medium text-primary underline-offset-2 hover:underline">
+                  Laboratorio
+                </Link>
+                .
+              </p>
+              <UiStyleDevSelect
+                value={activeUiStyle}
+                onValueChange={persistUiStyleChoice}
+              />
+            </div>
+          ) : null}
         </div>
       </aside>
 
@@ -67,6 +99,18 @@ export default function AppShell({
             <ProfileSwitcher profiles={profiles} activeProfileId={activeProfileId} />
           </div>
         </header>
+
+        {isUiStyleDevToolbarEnabled ? (
+          <div className="border-b border-border bg-muted/50 px-4 py-2 md:hidden">
+            <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Piel de UI (dev) · 7 estilos
+            </p>
+            <UiStyleDevSelect
+              value={activeUiStyle}
+              onValueChange={persistUiStyleChoice}
+            />
+          </div>
+        ) : null}
 
         <main className="flex flex-1 flex-col px-4 py-5 lg:px-8 lg:py-8">
           <MotionFadeIn className="flex flex-1 flex-col gap-6 lg:gap-8">
