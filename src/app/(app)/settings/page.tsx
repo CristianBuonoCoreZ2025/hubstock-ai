@@ -28,6 +28,19 @@ export default function SettingsPage() {
       </div>
 
       <section className="rounded-lg border border-border p-4">
+        <h2 className="text-sm font-semibold">Apariencia</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Prueba más de diez pieles de interfaz y el modo día / noche en el laboratorio.
+        </p>
+        <Link
+          href="/style-lab"
+          className="mt-3 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline"
+        >
+          Abrir laboratorio de estilos
+        </Link>
+      </section>
+
+      <section className="rounded-lg border border-border p-4">
         <h2 className="text-sm font-semibold">Cuenta</h2>
         <p className="mt-1 text-sm text-muted-foreground">
           Cierra sesión en este dispositivo.
