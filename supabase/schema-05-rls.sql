@@ -1,6 +1,8 @@
 -- Enable Row Level Security for all tables
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profile_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog_products ENABLE ROW LEVEL SECURITY;
+ALTER TABLE catalog_product_aliases ENABLE ROW LEVEL SECURITY;
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_images ENABLE ROW LEVEL SECURITY;
 ALTER TABLE stock_movements ENABLE ROW LEVEL SECURITY;
@@ -93,6 +95,17 @@ CREATE POLICY sections_select_policy ON sections
 -- Create policies for categories
 DROP POLICY IF EXISTS categories_select_policy ON categories;
 CREATE POLICY categories_select_policy ON categories
+  FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+-- Catálogo maestro global: solo lectura para usuarios autenticados
+DROP POLICY IF EXISTS catalog_products_select_policy ON catalog_products;
+CREATE POLICY catalog_products_select_policy ON catalog_products
+  FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+
+DROP POLICY IF EXISTS catalog_product_aliases_select_policy ON catalog_product_aliases;
+CREATE POLICY catalog_product_aliases_select_policy ON catalog_product_aliases
   FOR SELECT
   USING (auth.uid() IS NOT NULL);
 

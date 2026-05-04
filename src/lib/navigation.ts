@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react'
 import {
   BarChart,
+  BookMarked,
   Camera,
   FileText,
   History,
@@ -26,6 +27,7 @@ export type NavItem = {
 export const navigationItems: NavItem[] = [
   { name: 'Dashboard', href: '/dashboard', icon: Home, mobilePrimary: true },
   { name: 'Inventario', href: '/inventory', icon: Package, mobilePrimary: true },
+  { name: 'Catálogo', href: '/catalog', icon: BookMarked, mobilePrimary: false },
   { name: 'Consumo', href: '/consumption', icon: MinusCircle, mobilePrimary: false },
   { name: 'Lista', href: '/shopping-list', icon: ShoppingCart, mobilePrimary: true },
   { name: 'Supermercado', href: '/supermarket', icon: Store, mobilePrimary: true },

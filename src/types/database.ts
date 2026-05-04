@@ -158,6 +158,70 @@ export interface Database {
           created_at?: string
         }
       }
+      catalog_products: {
+        Row: {
+          id: string
+          section_id: string
+          category_id: string
+          name: string
+          brand: string | null
+          format: string | null
+          unit: string | null
+          default_reference_price: number | null
+          sort_order: number
+          active: boolean
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          id?: string
+          section_id: string
+          category_id: string
+          name: string
+          brand?: string | null
+          format?: string | null
+          unit?: string | null
+          default_reference_price?: number | null
+          sort_order?: number
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          id?: string
+          section_id?: string
+          category_id?: string
+          name?: string
+          brand?: string | null
+          format?: string | null
+          unit?: string | null
+          default_reference_price?: number | null
+          sort_order?: number
+          active?: boolean
+          created_at?: string
+          updated_at?: string
+        }
+      }
+      catalog_product_aliases: {
+        Row: {
+          id: string
+          catalog_product_id: string
+          alias_normalized: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          catalog_product_id: string
+          alias_normalized: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          catalog_product_id?: string
+          alias_normalized?: string
+          created_at?: string
+        }
+      }
       products: {
         Row: {
           id: string
@@ -176,6 +240,7 @@ export interface Database {
           location: string | null
           image_url: string | null
           active: boolean
+          catalog_product_id: string | null
           created_by: string
           created_at: string
           updated_at: string
@@ -197,6 +262,7 @@ export interface Database {
           location?: string | null
           image_url?: string | null
           active?: boolean
+          catalog_product_id?: string | null
           created_by: string
           created_at?: string
           updated_at?: string
@@ -218,6 +284,7 @@ export interface Database {
           location?: string | null
           image_url?: string | null
           active?: boolean
+          catalog_product_id?: string | null
           created_by?: string
           created_at?: string
           updated_at?: string
@@ -513,7 +580,13 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      copy_catalog_products_to_profile: {
+        Args: {
+          p_profile_id: string
+          p_created_by: string
+        }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never

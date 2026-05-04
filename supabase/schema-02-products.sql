@@ -15,6 +15,7 @@ CREATE TABLE products (
   last_price NUMERIC,
   location TEXT,
   image_url TEXT,
+  catalog_product_id UUID REFERENCES catalog_products(id) ON DELETE SET NULL,
   active BOOLEAN NOT NULL DEFAULT TRUE,
   created_by UUID NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -63,6 +64,8 @@ CREATE INDEX idx_products_profile_id_active ON products(profile_id, active);
 CREATE INDEX idx_products_profile_id_name ON products(profile_id, name);
 CREATE INDEX idx_products_section_id ON products(section_id);
 CREATE INDEX idx_products_category_id ON products(category_id);
+CREATE UNIQUE INDEX idx_products_profile_catalog_unique ON products (profile_id, catalog_product_id) WHERE catalog_product_id IS NOT NULL;
+CREATE INDEX idx_products_catalog_product_id ON products(catalog_product_id);
 
 CREATE INDEX idx_product_images_profile_id ON product_images(profile_id);
 CREATE INDEX idx_product_images_product_id ON product_images(product_id);
