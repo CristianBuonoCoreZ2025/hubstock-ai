@@ -75,6 +75,7 @@ create policy "profiles_update_admin"
   using (private.has_profile_role(id, array['admin']))
   with check (private.has_profile_role(id, array['admin']));
 
+drop policy if exists "profiles_delete_admin" on public.profiles;
 drop policy if exists profiles_delete_policy on public.profiles;
 create policy "profiles_delete_admin"
   on public.profiles for delete

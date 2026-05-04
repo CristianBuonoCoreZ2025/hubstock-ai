@@ -415,7 +415,8 @@ drop policy if exists "profiles_update_admin" on public.profiles;
 create policy "profiles_update_admin"
   on public.profiles for update
   to authenticated
-  using (private.has_profile_role(id, array['admin']));
+  using (private.has_profile_role(id, array['admin']))
+  with check (private.has_profile_role(id, array['admin']));
 
 -- profile_members
 drop policy if exists "profile_members_select_same_profile" on public.profile_members;
