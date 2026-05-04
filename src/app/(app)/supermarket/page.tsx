@@ -1,38 +1,75 @@
-import React from 'react';
+import Link from 'next/link'
+import { createClient } from '@/lib/supabase/server'
+import { getProfileContext } from '@/lib/profile/context'
+import { TRIP_PHASE_SHOPPING } from '@/lib/shopping-phase'
+import { SupermarketClient, type SupermarketRow } from './SupermarketClient'
 
-const SupermarketPage: React.FC = () => {
-  const mockSupermarkets = [
-    { id: 1, name: 'Supermercado A', location: 'Calle 123', products: 150 },
-    { id: 2, name: 'Supermercado B', location: 'Avenida 456', products: 200 },
-    { id: 3, name: 'Supermercado C', location: 'Plaza 789', products: 180 },
-    { id: 4, name: 'Supermercado D', location: 'Callejón 101', products: 120 },
-  ];
+export default async function SupermarketPage() {
+  const { activeProfileId, profiles } = await getProfileContext()
 
-  return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Supermercado</h1>
-      <div className="border rounded-lg p-4">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left p-2">Nombre</th>
-              <th className="text-left p-2">Ubicación</th>
-              <th className="text-left p-2">Productos</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockSupermarkets.map((supermarket) => (
-              <tr key={supermarket.id} className="border-b">
-                <td className="p-2">{supermarket.name}</td>
-                <td className="p-2">{supermarket.location}</td>
-                <td className="p-2">{supermarket.products}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+  if (!activeProfileId || profiles.length === 0) {
+    return (
+      <div className="app-page">
+        <header className="app-page-header">
+          <h1 className="app-page-title">Supermercado</h1>
+          <p className="app-page-lead">Necesitas un perfil activo.</p>
+        </header>
       </div>
-    </div>
-  );
-};
+    )
+  }
 
-export default SupermarketPage;
+  const supabase = await createClient()
+
+  const { data: trip } = await supabase
+    .from('shopping_trips')
+    .select('id, notes')
+    .eq('profile_id', activeProfileId)
+    .is('completed_at', null)
+    .maybeSingle()
+
+  if (!trip || trip.notes !== TRIP_PHASE_SHOPPING) {
+    return (
+      <div className="app-page">
+        <header className="app-page-header">
+          <h1 className="app-page-title">Supermercado</h1>
+          <p className="app-page-lead">
+            Inicia el modo supermercado desde la lista de compras para ver ítems agrupados por pasillo.
+          </p>
+        </header>
+        <Link href="/shopping-list" className="text-primary underline-offset-4 hover:underline">
+          Ir a lista de compras
+        </Link>
+      </div>
+    )
+  }
+
+  const { data: rawItems } = await supabase
+    .from('shopping_trip_items')
+    .select(
+      `
+      id,
+      quantity_planned,
+      quantity_bought,
+      unit_price_paid,
+      is_checked,
+      products ( name, sections ( name ) )
+    `
+    )
+    .eq('trip_id', trip.id)
+    .order('sort_order', { ascending: true })
+
+  const rows = (rawItems ?? []) as unknown as SupermarketRow[]
+
+  const map = new Map<string, SupermarketRow[]>()
+  for (const row of rows) {
+    const sec = row.products?.sections?.name ?? 'Sin pasillo'
+    if (!map.has(sec)) map.set(sec, [])
+    map.get(sec)!.push(row)
+  }
+
+  const grouped = Array.from(map.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([sectionName, r]) => ({ sectionName, rows: r }))
+
+  return <SupermarketClient tripId={trip.id} grouped={grouped} />
+}

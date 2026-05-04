@@ -1,4 +1,6 @@
--- StockCasa AI: esquema base, seeds de secciones y RLS por profile_id
+-- StockCasa AI: esquema base (historial migraciones CLI).
+-- Para una base nueva desde cero, prefiera los scripts modulares en la carpeta
+-- supabase/ (schema-01-core.sql … schema-05-rls.sql o schema-all.sql).
 -- Ejecutar en Supabase SQL Editor o con: supabase db push (con CLI vinculado)
 
 -- ---------------------------------------------------------------------------
@@ -808,15 +810,16 @@ create policy "stock_checks_select_member"
 drop policy if exists "stock_checks_write_editor" on public.stock_checks;
 create policy "stock_checks_write_editor"
   on public.stock_checks for insert
+  to authenticated
   with check (
-    exists (
+    created_by = auth.uid()
+    and exists (
       select 1 from public.profile_members pm
-      where pm.profile_id = stock_checks.profile_id
+      where pm.profile_id = profile_id
         and pm.user_id = auth.uid()
         and pm.status = 'active'
         and pm.role in ('admin', 'editor')
     )
-    and created_by = auth.uid()
   );
 
 drop policy if exists "stock_checks_update_editor" on public.stock_checks;

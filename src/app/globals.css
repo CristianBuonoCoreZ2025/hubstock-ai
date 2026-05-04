@@ -1,8 +1,94 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
+/*
+ * Sistema premium — día (por defecto) / noche.
+ * Referencia: superficies claras, tipografía refinada, tarjetas blancas con borde sutil, acento cálido.
+ */
 :root {
-  --background: #f8fafc;
-  --foreground: #020617;
+  color-scheme: light;
+  --background: #fafafa;
+  --foreground: #0a0a0a;
+  --card: #ffffff;
+  --card-foreground: #0a0a0a;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0a;
+  /* Botón primario sólido (estilo producto claro) */
+  --primary: #0a0a0a;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #fff7ed;
+  --accent-foreground: #9a3412;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #a1a1aa;
+  --radius: 0.75rem;
+  /* Acento cálido (coral / durazno) */
+  --accent-warm-start: #fb923c;
+  --accent-warm-end: #f472b6;
+  /* Fondos de capa */
+  --surface-canvas: #fafafa;
+  --surface-elevated: #ffffff;
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 12px rgb(0 0 0 / 0.04);
+}
+
+.dark {
+  color-scheme: dark;
+  --background: #0c0c0e;
+  --foreground: #fafafa;
+  --card: #141416;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #0a0a0a;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fed7aa;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: rgb(255 255 255 / 0.1);
+  --input: rgb(255 255 255 / 0.12);
+  --ring: #52525b;
+  --surface-canvas: #0c0c0e;
+  --surface-elevated: #141416;
+  --shadow-card: 0 4px 24px rgb(0 0 0 / 0.45);
+  --accent-warm-start: #fb923c;
+  --accent-warm-end: #f472b6;
+}
+
+@theme inline {
+  --font-sans: var(--font-plus-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
 html,
@@ -12,6 +98,205 @@ body {
 
 body {
   margin: 0;
-  background: var(--background);
+  background-color: transparent;
   color: var(--foreground);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+}
+
+@layer components {
+  /* Capas de fondo (claro: rejilla + velo cálido muy suave; oscuro: más profundo) */
+  .premium-bg-base {
+    background-color: var(--surface-canvas);
+  }
+
+  .premium-bg-mesh {
+    background-image:
+      radial-gradient(ellipse 120% 80% at 50% -30%, rgb(251 146 60 / 0.06), transparent 55%),
+      radial-gradient(ellipse 80% 50% at 100% 0%, rgb(244 114 182 / 0.05), transparent 50%);
+  }
+
+  .dark .premium-bg-mesh {
+    background-image:
+      radial-gradient(ellipse 100% 60% at 50% -20%, rgb(251 146 60 / 0.08), transparent 55%),
+      radial-gradient(ellipse 70% 40% at 80% 100%, rgb(96 165 250 / 0.06), transparent 45%);
+  }
+
+  .premium-grid-lines {
+    opacity: 0.4;
+    background-image:
+      linear-gradient(rgb(0 0 0 / 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(0 0 0 / 0.04) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .dark .premium-grid-lines {
+    opacity: 0.15;
+    background-image:
+      linear-gradient(rgb(255 255 255 / 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  }
+
+  /* Tarjetas / paneles: tema claro = blanco sólido; noche = elevación oscura */
+  .glass-panel {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+    background-color: var(--surface-elevated);
+    box-shadow: var(--shadow-card);
+  }
+
+  .glass-panel-subtle {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+    background-color: var(--muted);
+  }
+
+  .dark .glass-panel-subtle {
+    background-color: rgb(39 39 42 / 0.5);
+  }
+
+  /* Auth & bloques de marca */
+  .auth-shell {
+    @apply relative flex min-h-dvh w-full flex-col items-center justify-center px-4 py-12 sm:px-6;
+  }
+
+  .auth-card {
+    @apply w-full max-w-[400px] rounded-2xl border border-border bg-card p-8 shadow-[var(--shadow-card)];
+  }
+
+  .auth-brand {
+    @apply text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground;
+  }
+
+  .auth-title {
+    @apply text-xl font-semibold tracking-tight text-foreground sm:text-[1.35rem];
+  }
+
+  .auth-subtitle {
+    @apply mt-1 text-[13px] leading-relaxed text-muted-foreground;
+  }
+
+  .text-gradient-warm {
+    background: linear-gradient(
+      105deg,
+      var(--accent-warm-start) 0%,
+      var(--accent-warm-end) 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Layout de aplicación */
+  .app-page {
+    @apply mx-auto flex w-full max-w-6xl flex-col gap-8 px-0;
+  }
+
+  /* Chequeos de stock: tabla ancha + modal de revisión */
+  .app-page-stock-wide {
+    @apply max-w-[min(96rem,calc(100%-1rem))] px-2 sm:px-4;
+  }
+
+  .app-page-header {
+    @apply flex max-w-2xl flex-col gap-1.5;
+  }
+
+  .app-page-title {
+    @apply text-lg font-semibold tracking-tight text-foreground sm:text-xl;
+  }
+
+  .app-page-lead {
+    @apply text-[13px] font-medium leading-relaxed text-muted-foreground;
+  }
+
+  .app-panel {
+    @apply rounded-xl border border-border bg-card p-4 text-card-foreground shadow-[var(--shadow-card)] sm:p-6;
+  }
+
+  .app-toolbar {
+    @apply flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between;
+  }
+
+  .app-data-table-wrap {
+    @apply overflow-x-auto rounded-xl border border-border bg-card shadow-[var(--shadow-card)];
+  }
+
+  .app-data-table {
+    @apply w-full min-w-[520px] border-collapse text-[13px] text-foreground;
+  }
+
+  .app-data-table thead tr {
+    @apply border-b border-border text-left;
+  }
+
+  .app-data-table th {
+    @apply px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  .app-data-table td {
+    @apply border-b border-border/60 px-3 py-2.5;
+  }
+
+  .app-data-table tbody tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .app-inline-code {
+    @apply rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground/80;
+  }
+
+  .app-alert-warn {
+    @apply rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-100;
+  }
+
+  .app-form-actions {
+    @apply mt-4 flex flex-wrap gap-2;
+  }
+
+  .app-field-label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground;
+  }
+
+  .app-input {
+    @apply h-10 w-full rounded-xl border border-input bg-background px-3 text-[13px] text-foreground shadow-sm transition-colors placeholder:text-muted-foreground focus:border-ring focus:outline-none focus:ring-2 focus:ring-ring/25;
+  }
+}
+
+@keyframes app-progress-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+.app-progress-indeterminate {
+  position: relative;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--muted);
+}
+
+.app-progress-indeterminate::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  width: 35%;
+  border-radius: 9999px;
+  background: var(--primary);
+  animation: app-progress-slide 1.15s ease-in-out infinite;
+}
+
+.sc-app main h1,
+.sc-app .sc-page-title {
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.sc-app main h2 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
 }

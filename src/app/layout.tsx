@@ -1,8 +1,15 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import { Plus_Jakarta_Sans } from 'next/font/google';
 import './globals.css';
+import { Providers } from '@/components/providers';
+import { NodusAppLayout } from '@/components/layout/NodusAppLayout';
 
-const inter = Inter({ subsets: ['latin'] });
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700'],
+  variable: '--font-plus-jakarta',
+  display: 'swap',
+});
 
 export const metadata: Metadata = {
   title: 'StockCasa AI',
@@ -15,8 +22,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es">
-      <body className={inter.className}>{children}</body>
+    <html lang="es" className={plusJakarta.variable} suppressHydrationWarning>
+      <body className={`${plusJakarta.className} font-sans font-medium`}>
+        <Providers>
+          <NodusAppLayout>{children}</NodusAppLayout>
+        </Providers>
+      </body>
     </html>
   );
 }

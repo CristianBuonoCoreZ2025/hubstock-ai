@@ -1,39 +1,44 @@
-import React from 'react';
+import { getPurchaseReceipts, listProductsPicker } from '@/app/actions/receipts'
+import { getProfileContext } from '@/lib/profile/context'
+import { ReceiptsClient } from './ReceiptsClient'
 
-const ReceiptsPage: React.FC = () => {
-  const mockReceipts = [
-    { id: 1, date: '2023-10-01', total: 50.0, items: 5 },
-    { id: 2, date: '2023-10-02', total: 75.5, items: 7 },
-    { id: 3, date: '2023-10-03', total: 30.2, items: 3 },
-    { id: 4, date: '2023-10-04', total: 120.0, items: 12 },
-    { id: 5, date: '2023-10-05', total: 45.75, items: 4 },
-  ];
+export default async function ReceiptsPage() {
+  const { activeProfileId, profiles } = await getProfileContext()
+
+  if (!activeProfileId || profiles.length === 0) {
+    return (
+      <div className="app-page">
+        <header className="app-page-header">
+          <h1 className="app-page-title">Boletas</h1>
+          <p className="app-page-lead">
+            Necesitas un perfil activo para gestionar boletas.
+          </p>
+        </header>
+      </div>
+    )
+  }
+
+  const [{ data: receipts, error }, { data: products }] = await Promise.all([
+    getPurchaseReceipts(),
+    listProductsPicker(),
+  ])
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Boletas</h1>
-      <div className="border rounded-lg p-4">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b">
-              <th className="text-left p-2">Fecha</th>
-              <th className="text-left p-2">Total</th>
-              <th className="text-left p-2">Artículos</th>
-            </tr>
-          </thead>
-          <tbody>
-            {mockReceipts.map((receipt) => (
-              <tr key={receipt.id} className="border-b">
-                <td className="p-2">{receipt.date}</td>
-                <td className="p-2">${receipt.total.toFixed(2)}</td>
-                <td className="p-2">{receipt.items}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-};
+    <div className="app-page">
+      <header className="app-page-header">
+        <h1 className="app-page-title">Boletas</h1>
+        <p className="app-page-lead">
+          Digitaliza tickets de compra con IA y guarda borradores para
+          emparejar ítems con el inventario cuando lo revises.
+        </p>
+      </header>
 
-export default ReceiptsPage;
+      <ReceiptsClient
+        profileId={activeProfileId}
+        initialReceipts={[...receipts]}
+        products={products ?? []}
+        listError={error}
+      />
+    </div>
+  )
+}

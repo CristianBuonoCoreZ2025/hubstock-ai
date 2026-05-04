@@ -433,6 +433,7 @@ export interface Database {
           created_by: string
           created_at: string
           updated_at: string
+          ai_meta: Json | null
         }
         Insert: {
           id?: string
@@ -442,6 +443,7 @@ export interface Database {
           created_by: string
           created_at?: string
           updated_at?: string
+          ai_meta?: Json | null
         }
         Update: {
           id?: string
@@ -451,6 +453,7 @@ export interface Database {
           created_by?: string
           created_at?: string
           updated_at?: string
+          ai_meta?: Json | null
         }
       }
       stock_check_photos: {
@@ -476,15 +479,125 @@ export interface Database {
           created_at?: string
         }
       }
+      profile_brands: {
+        Row: {
+          id: string
+          profile_id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          name?: string
+          created_at?: string
+        }
+      }
+      profile_presentations: {
+        Row: {
+          id: string
+          profile_id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          name?: string
+          created_at?: string
+        }
+      }
+      profile_product_types: {
+        Row: {
+          id: string
+          profile_id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          profile_id: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          profile_id?: string
+          name?: string
+          created_at?: string
+        }
+      }
+      stock_measure_units: {
+        Row: {
+          id: string
+          code: string
+          label: string
+          sort_order: number
+        }
+        Insert: {
+          id?: string
+          code: string
+          label: string
+          sort_order?: number
+        }
+        Update: {
+          id?: string
+          code?: string
+          label?: string
+          sort_order?: number
+        }
+      }
+      stock_net_content_options: {
+        Row: {
+          id: string
+          label: string
+          net_quantity: number
+          unit_code: string
+          sort_order: number
+        }
+        Insert: {
+          id?: string
+          label: string
+          net_quantity: number
+          unit_code: string
+          sort_order?: number
+        }
+        Update: {
+          id?: string
+          label?: string
+          net_quantity?: number
+          unit_code?: string
+          sort_order?: number
+        }
+      }
       stock_check_detected_items: {
         Row: {
           id: string
           stock_check_id: string
           product_id: string | null
           name_guess: string
+          brand_guess: string | null
+          product_type_guess: string | null
+          presentation_guess: string | null
+          net_quantity: number | null
+          net_unit: string | null
+          notes: string | null
           quantity_guess: number | null
           confidence: number | null
           accepted: boolean | null
+          marked_invalid: boolean
           created_at: string
         }
         Insert: {
@@ -492,9 +605,16 @@ export interface Database {
           stock_check_id: string
           product_id?: string | null
           name_guess: string
+          brand_guess?: string | null
+          product_type_guess?: string | null
+          presentation_guess?: string | null
+          net_quantity?: number | null
+          net_unit?: string | null
+          notes?: string | null
           quantity_guess?: number | null
           confidence?: number | null
           accepted?: boolean | null
+          marked_invalid?: boolean
           created_at?: string
         }
         Update: {
@@ -502,9 +622,16 @@ export interface Database {
           stock_check_id?: string
           product_id?: string | null
           name_guess?: string
+          brand_guess?: string | null
+          product_type_guess?: string | null
+          presentation_guess?: string | null
+          net_quantity?: number | null
+          net_unit?: string | null
+          notes?: string | null
           quantity_guess?: number | null
           confidence?: number | null
           accepted?: boolean | null
+          marked_invalid?: boolean
           created_at?: string
         }
       }
@@ -513,7 +640,10 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      accept_pending_invitations_for_current_user: {
+        Args: Record<string, never>
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never

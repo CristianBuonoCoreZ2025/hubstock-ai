@@ -5,6 +5,8 @@ import { usePathname } from 'next/navigation'
 import type { ProfileOption } from '@/lib/profile/context'
 import { desktopNavItems, mobileBottomNavItems } from '@/lib/navigation'
 import { ProfileSwitcher } from '@/components/profile/ProfileSwitcher'
+import { MotionFadeIn } from '@/components/motion/motion-fade-in'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 
 type Props = {
   children: React.ReactNode
@@ -22,66 +24,69 @@ export default function AppShell({
   const pathname = usePathname()
 
   return (
-    <div className="grid min-h-screen w-full md:grid-cols-[220px_1fr] lg:grid-cols-[260px_1fr]">
-      <div className="hidden border-r border-border bg-muted/30 md:block">
-        <div className="flex h-full max-h-screen flex-col gap-2">
-          <div className="flex h-14 flex-col gap-2 border-b px-4 py-3 lg:h-auto lg:px-6">
-            <Link href="/dashboard" className="font-semibold tracking-tight">
-              StockCasa AI
-            </Link>
+    <div className="grid min-h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr]">
+      <aside className="glass-panel hidden flex-col border-r border-border md:flex">
+        <div className="flex h-full max-h-screen flex-col">
+          <div className="flex flex-col gap-3 border-b border-border px-5 py-5">
+            <div className="flex items-center justify-between gap-2">
+              <Link href="/dashboard" className="text-[13px] font-semibold tracking-tight text-foreground">
+                StockCasa
+              </Link>
+              <ThemeToggle />
+            </div>
             <ProfileSwitcher
               profiles={profiles}
               activeProfileId={activeProfileId}
               className="w-full"
             />
           </div>
-          <nav className="flex flex-1 flex-col gap-0.5 px-2 text-sm font-medium lg:px-3">
+          <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3 text-[13px] font-medium lg:px-3">
             {desktopNavItems.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-muted hover:text-foreground ${
+                className={`flex items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted hover:text-foreground ${
                   pathname === item.href
-                    ? 'bg-muted text-foreground'
+                    ? 'bg-muted font-semibold text-foreground'
                     : 'text-muted-foreground'
                 }`}
               >
-                <item.icon className="h-4 w-4 shrink-0" />
+                <item.icon className="h-4 w-4 shrink-0 opacity-80" />
                 {item.name}
               </Link>
             ))}
           </nav>
         </div>
-      </div>
+      </aside>
 
       <div className="flex min-h-screen flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">
-        <header className="sticky top-0 z-30 flex min-h-14 flex-wrap items-center justify-between gap-2 border-b bg-background/95 px-4 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:static md:border-0 md:bg-transparent md:px-6 md:py-4">
-          <span className="text-lg font-semibold md:hidden">StockCasa AI</span>
-          <div className="flex items-center gap-2 md:hidden">
+        <header className="sticky top-0 z-30 flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border bg-background/90 px-4 py-3 backdrop-blur-md md:static md:border-0 md:bg-transparent md:px-6 md:py-5">
+          <span className="text-[13px] font-semibold tracking-tight md:hidden">StockCasa</span>
+          <div className="flex flex-1 items-center justify-end gap-2 md:hidden">
+            <ThemeToggle />
             <ProfileSwitcher profiles={profiles} activeProfileId={activeProfileId} />
           </div>
         </header>
 
-        <main className="flex flex-1 flex-col gap-4 p-4 lg:gap-6 lg:p-6">
-          {needsProfileSetup ? (
-            <div
-              className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100"
-              role="status"
-            >
-              <p className="font-medium">Crea tu primer hogar (perfil)</p>
-              <p className="mt-1 text-amber-900/80 dark:text-amber-100/80">
-                Los datos de inventario se separan por perfil.{' '}
-                <Link href="/profiles/new" className="font-semibold underline underline-offset-2">
-                  Crear perfil
-                </Link>
-              </p>
-            </div>
-          ) : null}
-          {children}
+        <main className="flex flex-1 flex-col px-4 py-5 lg:px-8 lg:py-8">
+          <MotionFadeIn className="flex flex-1 flex-col gap-6 lg:gap-8">
+            {needsProfileSetup ? (
+              <div className="app-alert-warn" role="status">
+                <p className="font-semibold">Crea tu primer hogar (perfil)</p>
+                <p className="mt-1 text-[13px] opacity-90">
+                  Los datos de inventario se separan por perfil.{' '}
+                  <Link href="/profiles/new" className="font-semibold underline underline-offset-2">
+                    Crear perfil
+                  </Link>
+                </p>
+              </div>
+            ) : null}
+            {children}
+          </MotionFadeIn>
         </main>
 
         <nav
-          className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-background/95 pb-[env(safe-area-inset-bottom)] pt-1 backdrop-blur md:hidden"
+          className="glass-panel fixed inset-x-0 bottom-0 z-40 rounded-none border-x-0 border-b-0 pb-[env(safe-area-inset-bottom)] pt-1 md:hidden"
           aria-label="Navegación principal"
         >
           <ul className="flex items-stretch justify-around">
@@ -89,7 +94,7 @@ export default function AppShell({
               <li key={item.href} className="flex-1">
                 <Link
                   href={item.href}
-                  className={`flex flex-col items-center gap-0.5 px-1 py-2 text-[11px] font-medium ${
+                  className={`flex flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide ${
                     pathname === item.href ? 'text-primary' : 'text-muted-foreground'
                   }`}
                 >

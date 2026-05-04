@@ -1,71 +1,64 @@
-"use client";
+import { createClient } from '@/lib/supabase/server'
+import { getProfileContext } from '@/lib/profile/context'
+import { ShoppingListClient } from './ShoppingListClient'
 
-import React, { useState } from 'react';
-import SearchInput from '@/components/shared/SearchInput';
+export default async function ShoppingListPage() {
+  const { activeProfileId, profiles } = await getProfileContext()
 
-interface ShoppingItem {
-  id: number;
-  name: string;
-  category: string;
-  quantity: number;
-  supermarket: string;
-}
+  if (!activeProfileId || profiles.length === 0) {
+    return (
+      <div className="app-page">
+        <header className="app-page-header">
+          <h1 className="app-page-title">Lista de compras</h1>
+          <p className="app-page-lead">Selecciona un perfil activo para planificar compras.</p>
+        </header>
+      </div>
+    )
+  }
 
-const mockShoppingItems: ShoppingItem[] = [
-  { id: 1, name: 'Arroz', category: 'Granos', quantity: 2, supermarket: 'Supermercado A' },
-  { id: 2, name: 'Frijoles', category: 'Granos', quantity: 1, supermarket: 'Supermercado B' },
-  { id: 3, name: 'Leche', category: 'Lácteos', quantity: 3, supermarket: 'Supermercado A' },
-  { id: 4, name: 'Pan', category: 'Panadería', quantity: 1, supermarket: 'Supermercado C' },
-  { id: 5, name: 'Huevos', category: 'Proteínas', quantity: 6, supermarket: 'Supermercado B' },
-];
+  const supabase = await createClient()
 
-const ShoppingListPage: React.FC = () => {
-  const [searchTerm, setSearchTerm] = useState('');
+  const { data: trip } = await supabase
+    .from('shopping_trips')
+    .select('id, notes')
+    .eq('profile_id', activeProfileId)
+    .is('completed_at', null)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
-  const filteredItems = mockShoppingItems.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.category.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.supermarket.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const tripId = trip?.id ?? null
+
+  const [{ data: items }, { data: products }] = await Promise.all([
+    tripId
+      ? supabase
+          .from('shopping_trip_items')
+          .select(
+            `
+            id,
+            quantity_planned,
+            product_id,
+            products ( name, sections ( name ) )
+          `
+          )
+          .eq('trip_id', tripId)
+          .order('sort_order', { ascending: true })
+      : Promise.resolve({ data: [] as never[] }),
+    supabase
+      .from('products')
+      .select('id, name')
+      .eq('profile_id', activeProfileId)
+      .eq('active', true)
+      .order('name')
+      .limit(500),
+  ])
 
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Lista de compras</h1>
-      <p className="text-muted-foreground">Gestión de tu lista de compras</p>
-
-      <SearchInput
-        placeholder="Buscar productos..."
-        value={searchTerm}
-        onChange={setSearchTerm}
-      />
-
-      <div className="rounded-lg border bg-card text-card-foreground shadow-sm">
-        <div className="border-b p-4">
-          <h3 className="text-sm font-medium">Productos en lista</h3>
-        </div>
-        <div className="p-4">
-          <div className="grid gap-4">
-            {filteredItems.length > 0 ? (
-              filteredItems.map(item => (
-                <div key={item.id} className="flex justify-between items-center p-2 border-b last:border-b-0">
-                  <div>
-                    <span className="font-medium">{item.name}</span>
-                    <span className="text-sm text-muted-foreground ml-2">{item.category}</span>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <span className="text-sm">Cantidad: {item.quantity}</span>
-                    <span className="text-sm text-muted-foreground">{item.supermarket}</span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="text-muted-foreground">No se encontraron productos</p>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-export default ShoppingListPage;
+    <ShoppingListClient
+      tripId={tripId}
+      phaseNotes={trip?.notes ?? null}
+      items={(items ?? []) as never}
+      products={products ?? []}
+    />
+  )
+}
