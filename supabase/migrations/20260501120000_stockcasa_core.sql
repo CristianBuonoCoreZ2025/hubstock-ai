@@ -155,6 +155,28 @@ create table if not exists public.purchase_receipt_items (
   sort_order int not null default 0
 );
 
+-- Si la tabla ya existía (por despliegues previos) puede faltar receipt_id.
+-- Aseguramos la columna y el FK antes de crear índices/policies.
+alter table if exists public.purchase_receipt_items
+  add column if not exists receipt_id uuid;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'purchase_receipt_items_receipt_id_fkey'
+      and conrelid = 'public.purchase_receipt_items'::regclass
+  ) then
+    alter table public.purchase_receipt_items
+      add constraint purchase_receipt_items_receipt_id_fkey
+      foreign key (receipt_id)
+      references public.purchase_receipts (id)
+      on delete cascade;
+  end if;
+end;
+$$;
+
 create table if not exists public.stock_checks (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid not null references public.profiles (id) on delete cascade,

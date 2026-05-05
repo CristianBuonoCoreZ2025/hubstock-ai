@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:push": "node scripts/supabase-db-push.mjs",
+    "db:push:debug": "node scripts/supabase-db-push.mjs --debug"
   },
   "dependencies": {
     "@google/genai": "^1.51.0",

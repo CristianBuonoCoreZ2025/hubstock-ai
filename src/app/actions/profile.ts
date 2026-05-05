@@ -21,9 +21,8 @@ export async function createProfile(formData: FormData): Promise<void> {
     redirect('/login?next=/profiles/new')
   }
 
-  // Insert con sesión del usuario: el trigger handle_new_profile usa auth.uid()
-  // y crea la fila en profile_members (admin). Un segundo insert manual chocaba
-  // con UNIQUE (profile_id, user_id) y hacía fallar toda la creación.
+  // Insert + .select('id'): RLS debe permitir SELECT al creador (policy profiles_select_creator),
+  // porque is_profile_member aún puede ser false hasta que exista profile_members / trigger.
   const { data: profile, error: profileError } = await supabase
     .from('profiles')
     .insert({
@@ -35,7 +34,11 @@ export async function createProfile(formData: FormData): Promise<void> {
     .single()
 
   if (profileError || !profile) {
-    console.error('Error creando perfil:', profileError)
+    console.error(
+      'Error creando perfil:',
+      profileError?.code ?? profileError?.message,
+      profileError,
+    )
     redirect('/profiles/new?error=insert_failed')
   }
 
@@ -49,19 +52,39 @@ export async function createProfile(formData: FormData): Promise<void> {
     .maybeSingle()
 
   if (!existingMember) {
-    const { createServiceRoleClient } = await import('@/server/supabase-admin')
-    const adminSupabase = createServiceRoleClient()
-    const { error: memberError } = await adminSupabase
-      .from('profile_members')
-      .insert({
-        profile_id: profileId,
-        user_id: user.id,
-        role: 'admin',
-        status: 'active',
-      } as never)
-    if (memberError) {
-      console.error('Error creando membresía (sin trigger en BD):', memberError)
-      redirect('/profiles/new?error=insert_failed')
+    const memberRow = {
+      profile_id: profileId,
+      user_id: user.id,
+      role: 'admin' as const,
+      status: 'active' as const,
+    }
+
+    // Primero como usuario autenticado (necesita policy creator_bootstrap en BD).
+    const { error: selfMemberError } = await supabase.from('profile_members').insert(memberRow)
+
+    if (selfMemberError) {
+      try {
+        const { createServiceRoleClient } = await import('@/server/supabase-admin')
+        const adminSupabase = createServiceRoleClient()
+        const { error: memberError } = await adminSupabase
+          .from('profile_members')
+          .insert(memberRow as never)
+        if (memberError) {
+          console.error(
+            'Error creando membresía (usuario + service_role):',
+            selfMemberError,
+            memberError,
+          )
+          redirect('/profiles/new?error=insert_failed')
+        }
+      } catch (adminErr) {
+        console.error(
+          'Error creando membresía (sin policy bootstrap y sin service role válido):',
+          selfMemberError,
+          adminErr,
+        )
+        redirect('/profiles/new?error=insert_failed')
+      }
     }
   }
 

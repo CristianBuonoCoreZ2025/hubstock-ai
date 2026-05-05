@@ -13,3 +13,4 @@ comment on column public.stock_check_detected_items.presentation_guess is 'Prese
 comment on column public.stock_check_detected_items.net_quantity is 'Contenido neto numérico';
 comment on column public.stock_check_detected_items.net_unit is 'Unidad del contenido neto (g, ml, L)';
 comment on column public.stock_check_detected_items.notes is 'Notas del modelo sobre el ítem';
+

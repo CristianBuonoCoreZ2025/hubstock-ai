@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,9 +21,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { addProduct, updateProduct, deleteProduct } from '@/app/actions/inventory'
-
-type Category = { id: string; name: string }
-type Section = { id: string; name: string }
+import type { TaxonomyCategory, TaxonomySection } from '@/types/taxonomy'
 type Product = {
   id: string
   name: string
@@ -35,8 +33,8 @@ type Product = {
 }
 
 interface ProductDialogProps {
-  categories: Category[]
-  sections: Section[]
+  categories: TaxonomyCategory[]
+  sections: TaxonomySection[]
   product?: Product
   trigger?: React.ReactNode
   open?: boolean
@@ -54,8 +52,23 @@ export function ProductDialog({
   const router = useRouter()
   const [internalOpen, setInternalOpen] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [categoryId, setCategoryId] = useState(product?.category_id ?? categories[0]?.id ?? '')
-  const [sectionId, setSectionId] = useState(product?.section_id ?? sections[0]?.id ?? '')
+  const [sectionId, setSectionId] = useState(() => {
+    if (product) {
+      const cat = categories.find((c) => c.id === product.category_id)
+      return cat?.section_id ?? product.section_id
+    }
+    return sections[0]?.id ?? ''
+  })
+  const [categoryId, setCategoryId] = useState(() => {
+    if (product) return product.category_id
+    const sid = sections[0]?.id ?? ''
+    return categories.find((c) => c.section_id === sid)?.id ?? ''
+  })
+
+  const categoriesInSection = useMemo(
+    () => categories.filter((c) => c.section_id === sectionId),
+    [categories, sectionId]
+  )
 
   const isControlled = controlledOpen !== undefined
   const open = isControlled ? controlledOpen : internalOpen
@@ -64,14 +77,27 @@ export function ProductDialog({
   const isEditing = !!product
 
   useEffect(() => {
+    if (!open) return
     if (product) {
+      const cat = categories.find((c) => c.id === product.category_id)
+      const sec = cat?.section_id ?? product.section_id
+      setSectionId(sec)
       setCategoryId(product.category_id)
-      setSectionId(product.section_id)
-    } else {
-      setCategoryId(categories[0]?.id ?? '')
-      setSectionId(sections[0]?.id ?? '')
+      return
     }
+    const firstSection = sections[0]?.id ?? ''
+    setSectionId(firstSection)
+    const firstCat = categories.find((c) => c.section_id === firstSection)?.id ?? ''
+    setCategoryId(firstCat)
   }, [product, categories, sections, open])
+
+  useEffect(() => {
+    if (!open) return
+    const allowed = categories.filter((c) => c.section_id === sectionId)
+    if (!allowed.some((c) => c.id === categoryId)) {
+      setCategoryId(allowed[0]?.id ?? '')
+    }
+  }, [sectionId, categories, categoryId, open])
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -140,22 +166,6 @@ export function ProductDialog({
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label>Categoría</Label>
-              <Select value={categoryId} onValueChange={setCategoryId} required>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Seleccionar..." />
-                </SelectTrigger>
-                <SelectContent>
-                  {categories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
               <Label>Sección</Label>
               <Select value={sectionId} onValueChange={setSectionId} required>
                 <SelectTrigger className="w-full">
@@ -165,6 +175,22 @@ export function ProductDialog({
                   {sections.map((s) => (
                     <SelectItem key={s.id} value={s.id}>
                       {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Categoría</Label>
+              <Select value={categoryId} onValueChange={setCategoryId} required>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Seleccionar..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {categoriesInSection.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
                     </SelectItem>
                   ))}
                 </SelectContent>

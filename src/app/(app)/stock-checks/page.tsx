@@ -7,6 +7,7 @@ import {
   listProfilePresentations,
   listProfileProductTypes,
 } from '@/app/actions/stock-checks'
+import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
 import { StockChecksClient } from './StockChecksClient'
 
@@ -59,10 +60,7 @@ export default async function StockChecksPage() {
     <div className="app-page app-page-stock-wide">
       <header className="app-page-header">
         <h1 className="app-page-title">Chequeos de stock</h1>
-        <p className="app-page-lead">
-          Fotos por zona con detección asistida; los resultados quedan en
-          estado pendiente de confirmación hasta que valides cantidades.
-        </p>
+        <p className="app-page-lead">{PAGE_LEADS.stockChecks}</p>
       </header>
 
       <StockChecksClient

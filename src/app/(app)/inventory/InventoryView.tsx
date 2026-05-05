@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -10,27 +10,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { ProductDialog } from './ProductDialog'
-
-export type InventoryRow = {
-  id: string
-  name: string
-  categoryId: string
-  sectionId: string
-  categoryLabel: string
-  sectionLabel: string
-  quantity: number
-  stockMin: number | null
-  price: number | null
-  status: 'normal' | 'low' | 'critical'
-}
-
-type Category = { id: string; name: string }
-type Section = { id: string; name: string }
+import type { InventoryRow } from './inventory-rows'
+import type { TaxonomyCategory, TaxonomySection } from '@/types/taxonomy'
 
 type Props = {
-  categories: Category[]
-  sections: Section[]
+  categories: TaxonomyCategory[]
+  sections: TaxonomySection[]
   rows: InventoryRow[]
+  /** Ayuda alineada con docs/DOMAIN.md (taxonomía sección/categoría vs inventario). */
+  lead?: string
 }
 
 function statusLabel(s: InventoryRow['status']) {
@@ -55,10 +43,23 @@ function statusClass(s: InventoryRow['status']) {
   }
 }
 
-export function InventoryView({ categories, sections, rows }: Props) {
+export function InventoryView({ categories, sections, rows, lead }: Props) {
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [sectionFilter, setSectionFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
+
+  const categoriesForSectionFilter = useMemo(() => {
+    if (sectionFilter === 'all') return categories
+    return categories.filter((c) => c.section_id === sectionFilter)
+  }, [categories, sectionFilter])
+
+  useEffect(() => {
+    if (sectionFilter === 'all') return
+    const allowed = new Set(categoriesForSectionFilter.map((c) => c.id))
+    if (categoryFilter !== 'all' && !allowed.has(categoryFilter)) {
+      setCategoryFilter('all')
+    }
+  }, [sectionFilter, categoriesForSectionFilter, categoryFilter])
 
   const hasProducts = rows.length > 0
 
@@ -81,6 +82,10 @@ export function InventoryView({ categories, sections, rows }: Props) {
           trigger={<Button>Nuevo producto</Button>}
         />
       </div>
+
+      {lead ? (
+        <p className="app-page-lead mb-4 max-w-3xl text-muted-foreground">{lead}</p>
+      ) : null}
 
       {!hasProducts ? (
         <p className="app-page-lead">
@@ -115,7 +120,7 @@ export function InventoryView({ categories, sections, rows }: Props) {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Todas</SelectItem>
-                {categories.map((c) => (
+                {categoriesForSectionFilter.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
                     {c.name}
                   </SelectItem>
@@ -208,40 +213,4 @@ export function InventoryView({ categories, sections, rows }: Props) {
       ) : null}
     </div>
   )
-}
-
-function computeStatus(
-  qty: number,
-  stockMin: number | null
-): InventoryRow['status'] {
-  if (qty <= 0) return 'critical'
-  if (stockMin != null && stockMin > 0 && qty <= stockMin) return 'low'
-  return 'normal'
-}
-
-export function buildInventoryRows(
-  products: {
-    id: string
-    name: string
-    category_id: string
-    section_id: string
-    stock_current: number
-    stock_min: number | null
-    reference_price: number | null
-  }[],
-  categoryById: Map<string, string>,
-  sectionById: Map<string, string>
-): InventoryRow[] {
-  return products.map((p) => ({
-    id: p.id,
-    name: p.name,
-    categoryId: p.category_id,
-    sectionId: p.section_id,
-    categoryLabel: categoryById.get(p.category_id) ?? '—',
-    sectionLabel: sectionById.get(p.section_id) ?? '—',
-    quantity: Number(p.stock_current),
-    stockMin: p.stock_min != null ? Number(p.stock_min) : null,
-    price: p.reference_price != null ? Number(p.reference_price) : null,
-    status: computeStatus(Number(p.stock_current), p.stock_min != null ? Number(p.stock_min) : null),
-  }))
 }

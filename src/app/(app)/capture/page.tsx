@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
 import { CaptureView } from './CaptureView'
 
@@ -20,18 +21,15 @@ export default async function CapturePage() {
 
   const supabase = await createClient()
   const [{ data: categories }, { data: sections }] = await Promise.all([
-    supabase.from('categories').select('id, name').order('name'),
-    supabase.from('sections').select('id, name').order('name'),
+    supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
+    supabase.from('sections').select('id, name, sort_order').order('sort_order'),
   ])
 
   return (
     <div className="app-page">
       <header className="app-page-header">
         <h1 className="app-page-title">Captura de productos</h1>
-        <p className="app-page-lead">
-          Foto del producto → análisis con IA → confirmación y alta en el
-          inventario del hogar (tras revisar categoría y sección).
-        </p>
+        <p className="app-page-lead">{PAGE_LEADS.capture}</p>
       </header>
 
       <CaptureView

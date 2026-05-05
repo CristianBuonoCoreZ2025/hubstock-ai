@@ -1,5 +1,21 @@
--- Catálogo maestro global: plantilla fija de productos + copia al perfil del hogar.
--- Las filas de catalog_products no tienen stock; products sigue siendo la verdad por perfil.
+/*
+ * Catálogo maestro global: plantilla fija de productos + copia al perfil del hogar.
+ * Las filas de catalog_products no tienen stock; products sigue siendo la verdad por perfil.
+ *
+ * En PostgreSQL los comentarios válidos son: -- texto  o  bloques como este.
+ * No uses viñetas Markdown (- texto); eso produce: syntax error near "-".
+ */
+
+-- La migración core también define esto; aquí se repite para ejecutar solo esta migración si hace falta.
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- catalog_products: definición canónica (misma taxonomía que products)

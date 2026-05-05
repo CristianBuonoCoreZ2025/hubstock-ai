@@ -38,6 +38,21 @@ export default async function SettingsPage() {
         <p className="app-page-lead">Datos del hogar y sesión.</p>
       </header>
 
+      <section className="app-panel">
+        <h2 className="text-sm font-semibold">Perfiles</h2>
+        <p className="mt-1 text-[13px] text-muted-foreground">
+          Puedes crear más de un hogar/perfil y cambiar entre ellos desde el selector de perfil.
+        </p>
+        <div className="mt-3">
+          <Link
+            href="/profiles/new"
+            className="text-sm font-medium text-primary underline-offset-4 hover:underline"
+          >
+            Crear nuevo perfil
+          </Link>
+        </div>
+      </section>
+
       <ProfileForm name={name} description={description} canEdit={canEdit} />
 
       <SignOutPanel />

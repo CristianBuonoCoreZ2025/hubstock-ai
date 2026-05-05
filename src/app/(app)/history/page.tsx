@@ -1,4 +1,5 @@
 import { getStockMovements } from '@/app/actions/history'
+import { movementTypeLabel, PAGE_LEADS } from '@/lib/domain'
 
 export default async function HistoryPage() {
   const { data: moves, error } = await getStockMovements(200)
@@ -6,10 +7,8 @@ export default async function HistoryPage() {
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Historial de movimientos</h1>
-        <p className="app-page-lead">
-          Registro de entradas y salidas de stock en el perfil activo.
-        </p>
+        <h1 className="app-page-title">Historial de stock</h1>
+        <p className="app-page-lead">{PAGE_LEADS.history}</p>
       </header>
 
       {error ? (
@@ -44,7 +43,7 @@ export default async function HistoryPage() {
                     </td>
                     <td className="font-medium">{product?.name ?? '—'}</td>
                     <td>
-                      <span className="app-inline-code">{m.movement_type}</span>
+                      <span className="text-[13px] font-medium">{movementTypeLabel(m.movement_type)}</span>
                     </td>
                     <td className="text-right tabular-nums">
                       {m.delta > 0 ? `+${m.delta}` : m.delta}

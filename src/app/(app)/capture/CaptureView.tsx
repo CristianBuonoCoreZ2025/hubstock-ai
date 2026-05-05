@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { addProductFromCapture } from '@/app/actions/capture'
 import { Button } from '@/components/ui/button'
@@ -18,9 +18,7 @@ import { VisionAnalysisNote } from '@/components/vision-analysis-note'
 import { messageFromAiApiError } from '@/lib/ai-api-error'
 import { fileToBase64, resolveApiImageMimeType } from '@/lib/ai-mime'
 import type { VisionAnalysisMeta } from '@/types/vision-meta'
-
-type Category = { id: string; name: string }
-type Section = { id: string; name: string }
+import type { TaxonomyCategory, TaxonomySection } from '@/types/taxonomy'
 
 type ProductAnalysis = {
   name?: string
@@ -78,8 +76,8 @@ function buildNotesHint(a: ProductAnalysis): string | null {
 
 interface CaptureViewProps {
   profileId: string
-  categories: Category[]
-  sections: Section[]
+  categories: TaxonomyCategory[]
+  sections: TaxonomySection[]
 }
 
 export function CaptureView({
@@ -88,8 +86,22 @@ export function CaptureView({
   sections,
 }: CaptureViewProps) {
   const router = useRouter()
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? '')
-  const [sectionId, setSectionId] = useState(sections[0]?.id ?? '')
+  const [sectionId, setSectionId] = useState(() => sections[0]?.id ?? '')
+  const [categoryId, setCategoryId] = useState(() => {
+    const sid = sections[0]?.id ?? ''
+    return categories.find((c) => c.section_id === sid)?.id ?? ''
+  })
+
+  const categoriesInSection = useMemo(
+    () => categories.filter((c) => c.section_id === sectionId),
+    [categories, sectionId]
+  )
+
+  useEffect(() => {
+    if (!categoriesInSection.some((c) => c.id === categoryId)) {
+      setCategoryId(categoriesInSection[0]?.id ?? '')
+    }
+  }, [sectionId, categoriesInSection, categoryId])
   const [analyzing, setAnalyzing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
@@ -259,21 +271,6 @@ export function CaptureView({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
-            <span className="app-field-label">Categoría</span>
-            <Select value={categoryId} onValueChange={setCategoryId}>
-              <SelectTrigger className="app-input w-full border-input">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
             <span className="app-field-label">Sección</span>
             <Select value={sectionId} onValueChange={setSectionId}>
               <SelectTrigger className="app-input w-full border-input">
@@ -283,6 +280,21 @@ export function CaptureView({
                 {sections.map((s) => (
                   <SelectItem key={s.id} value={s.id}>
                     {s.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <span className="app-field-label">Categoría</span>
+            <Select value={categoryId} onValueChange={setCategoryId}>
+              <SelectTrigger className="app-input w-full border-input">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {categoriesInSection.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
                   </SelectItem>
                 ))}
               </SelectContent>

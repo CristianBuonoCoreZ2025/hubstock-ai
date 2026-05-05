@@ -115,6 +115,23 @@ export interface Database {
           created_at?: string
         }
       }
+      invitation_targets: {
+        Row: {
+          invitation_id: string
+          profile_id: string
+          created_at: string
+        }
+        Insert: {
+          invitation_id: string
+          profile_id: string
+          created_at?: string
+        }
+        Update: {
+          invitation_id?: string
+          profile_id?: string
+          created_at?: string
+        }
+      }
       sections: {
         Row: {
           id: string
@@ -158,6 +175,23 @@ export interface Database {
           created_at?: string
         }
       }
+      catalog_brands: {
+        Row: {
+          id: string
+          name: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          name: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          name?: string
+          created_at?: string
+        }
+      }
       catalog_products: {
         Row: {
           id: string
@@ -165,11 +199,14 @@ export interface Database {
           category_id: string
           name: string
           brand: string | null
+          brand_id: string | null
           format: string | null
           unit: string | null
           default_reference_price: number | null
           sort_order: number
           active: boolean
+          source_system: string | null
+          source_product_url: string | null
           created_at: string
           updated_at: string
         }
@@ -179,11 +216,14 @@ export interface Database {
           category_id: string
           name: string
           brand?: string | null
+          brand_id?: string | null
           format?: string | null
           unit?: string | null
           default_reference_price?: number | null
           sort_order?: number
           active?: boolean
+          source_system?: string | null
+          source_product_url?: string | null
           created_at?: string
           updated_at?: string
         }
@@ -193,13 +233,45 @@ export interface Database {
           category_id?: string
           name?: string
           brand?: string | null
+          brand_id?: string | null
           format?: string | null
           unit?: string | null
           default_reference_price?: number | null
           sort_order?: number
           active?: boolean
+          source_system?: string | null
+          source_product_url?: string | null
           created_at?: string
           updated_at?: string
+        }
+      }
+      catalog_product_media: {
+        Row: {
+          id: string
+          catalog_product_id: string
+          kind: string
+          bucket_id: string
+          object_path: string
+          public_url: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          catalog_product_id: string
+          kind?: string
+          bucket_id?: string
+          object_path: string
+          public_url: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          catalog_product_id?: string
+          kind?: string
+          bucket_id?: string
+          object_path?: string
+          public_url?: string
+          created_at?: string
         }
       }
       catalog_product_aliases: {

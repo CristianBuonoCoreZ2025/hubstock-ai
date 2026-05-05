@@ -1,6 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
+import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
-import { InventoryView, buildInventoryRows } from './InventoryView'
+import { InventoryView } from './InventoryView'
+import { buildInventoryRows } from './inventory-rows'
 
 export default async function InventoryPage() {
   const { activeProfileId, profiles } = await getProfileContext()
@@ -32,8 +34,8 @@ export default async function InventoryPage() {
       .eq('active', true)
       .order('name')
       .limit(500),
-    supabase.from('categories').select('id, name').order('name'),
-    supabase.from('sections').select('id, name').order('name'),
+    supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
+    supabase.from('sections').select('id, name, sort_order').order('sort_order'),
   ])
 
   if (productsError) {
@@ -53,6 +55,7 @@ export default async function InventoryPage() {
 
   return (
     <InventoryView
+      lead={PAGE_LEADS.inventory}
       categories={categories ?? []}
       sections={sections ?? []}
       rows={rows}

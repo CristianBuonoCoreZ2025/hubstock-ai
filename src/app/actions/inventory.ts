@@ -29,8 +29,8 @@ export async function getCategoriesAndSections() {
   const supabase = await createClient()
   
   const [categoriesRes, sectionsRes] = await Promise.all([
-    supabase.from('categories').select('id, name').order('name'),
-    supabase.from('sections').select('id, name').order('name')
+    supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
+    supabase.from('sections').select('id, name, sort_order').order('sort_order'),
   ])
 
   return {

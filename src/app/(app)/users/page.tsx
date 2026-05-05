@@ -1,8 +1,10 @@
 import { getTeamData } from '@/app/actions/team'
+import { getProfileContext } from '@/lib/profile/context'
 import { TeamPageClient } from './TeamPageClient'
 
 export default async function UsersPage() {
-  const { members, invitations, error, isAdmin } = await getTeamData()
+  const { profiles, activeProfileId } = await getProfileContext()
+  const { members, invitations, adminProfileIds, error, isAdmin } = await getTeamData()
 
   if (error) {
     return (
@@ -14,8 +16,11 @@ export default async function UsersPage() {
 
   return (
     <TeamPageClient
+      profiles={profiles as never}
+      activeProfileId={activeProfileId}
       members={members as never}
       invitations={invitations as never}
+      adminProfileIds={adminProfileIds}
       isAdmin={isAdmin}
     />
   )

@@ -1,36 +1,38 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hub Stock AI (StockCasa)
 
-## Getting Started
+Aplicación **Next.js** para inventario del hogar por **perfil**, con flujos asistidos por IA (captura de producto, boletas, chequeo de stock) y backend **Supabase** (Postgres + Auth + Storage).
 
-First, run the development server:
+## Documentación de dominio
+
+- **`docs/DOMAIN.md`** — Qué es sección, categoría, producto maestro vs producto del hogar, y cómo se relacionan **Inventario**, **Catálogo**, **Captura**, **Boletas**, **Historial de stock** y **Chequeo**.
+- **`src/lib/domain.ts`** — Párrafos de ayuda (`PAGE_LEADS`) y etiquetas de historial (`movementTypeLabel`) para no duplicar criterios entre pantallas.
+
+## Estructura útil
+
+| Ruta en repo | Contenido |
+|--------------|-----------|
+| `src/app/(app)/` | Páginas autenticadas (ver `src/app/(app)/README.md`) |
+| `src/app/actions/` | Server Actions (lectura/escritura Supabase) |
+| `src/lib/` | Utilidades, navegación, dominio, Supabase cliente |
+| `supabase/migrations/` | Esquema incremental (fuente de verdad DB) |
+
+## Desarrollo
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Variables de entorno: copiar `.env.example` si existe, o configurar `NEXT_PUBLIC_SUPABASE_*` y claves según tu proyecto Supabase.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Migraciones
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run db:push
+```
 
-## Learn More
+En redes con DNS problemático el script ya incluye `--dns-resolver https` (ver `package.json`).
 
-To learn more about Next.js, take a look at the following resources:
+## Nota
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Plantilla genérica de Create Next App debajo de esta sección fue reemplazada por documentación del proyecto; para tutoriales oficiales de Next.js ver [nextjs.org/docs](https://nextjs.org/docs).

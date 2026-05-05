@@ -1,4 +1,5 @@
 import { getPurchaseReceipts, listProductsPicker } from '@/app/actions/receipts'
+import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
 import { ReceiptsClient } from './ReceiptsClient'
 
@@ -27,10 +28,7 @@ export default async function ReceiptsPage() {
     <div className="app-page">
       <header className="app-page-header">
         <h1 className="app-page-title">Boletas</h1>
-        <p className="app-page-lead">
-          Digitaliza tickets de compra con IA y guarda borradores para
-          emparejar ítems con el inventario cuando lo revises.
-        </p>
+        <p className="app-page-lead">{PAGE_LEADS.receipts}</p>
       </header>
 
       <ReceiptsClient

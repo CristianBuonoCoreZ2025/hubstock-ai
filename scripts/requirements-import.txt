@@ -1,0 +1,4 @@
+# Importación Lider -> Supabase (solo para scripts/import_lider_sqlite.py)
+pillow>=10.0.0
+supabase>=2.0.0
+python-dotenv>=1.0.0
