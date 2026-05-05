@@ -4,6 +4,7 @@ import { assertProfileMembership } from '@/lib/profile/membership'
 import { profileScopedImageBodySchema } from '@/lib/validators/ai'
 import { analyzeProductFromImage } from '@/server/image-analysis'
 import { mapVisionFailure } from '@/server/vision-error-map'
+import { enrichProductImageAnalysis } from '@/server/product-enrichment'
 
 export async function POST(request: Request) {
   let json: unknown
@@ -34,9 +35,11 @@ export async function POST(request: Request) {
       imageBase64: parsed.data.imageBase64,
       mimeType: parsed.data.mimeType,
     })
+    const enriched = await enrichProductImageAnalysis(analysis).catch(() => null)
     return NextResponse.json({
       profileId: parsed.data.profileId,
       analysis,
+      enriched,
       vision,
       persisted: false,
     })

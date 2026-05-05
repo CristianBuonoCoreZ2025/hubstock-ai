@@ -16,7 +16,8 @@ Devuelve SOLO un JSON válido (sin markdown, sin texto fuera del JSON) con esta 
   "format": "string|null",
   "unit": "string|null",
   "categoryGuess": "string|null",
-  "notes": "string|null"
+  "notes": "string|null",
+  "gtin": "string|null"
 }
 
 Reglas obligatorias:
@@ -28,6 +29,7 @@ Reglas obligatorias:
 - "format": una línea resumen humano: tipo + presentación + peso/volumen si aplica (ej. "Pasta seca · bolsa · 400 g").
 - "unit": texto útil para inventario (ej. "400 g", "1 L", "6×330 ml").
 - "notes": solo datos extra útiles (ingredientes llamativos, país de origen en etiqueta, advertencias); no repitas lo mismo de arriba.
+- "gtin": código de barras (EAN/UPC/GTIN) si es visible en la imagen o etiqueta. Devuelve solo dígitos (8 a 14). Si no se ve, null.
 - Todo en español. Si no hay producto reconocible: "name": "Desconocido" y null en campos que no apliquen.`
 
 export const RECEIPT_ANALYSIS_PROMPT = `Extrae datos de una boleta o ticket de compra. Devuelve SOLO JSON válido (sin markdown) con forma:
