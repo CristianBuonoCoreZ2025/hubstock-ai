@@ -21,9 +21,8 @@ import {
   buildVisionAnalysisMeta,
   getOllamaVisionModel,
   getOpenRouterFreeVisionModels,
-  getOpenRouterVisionModel,
+  getOpenRouterPaidVisionModels,
   resolveStockCheckVisionChain,
-  resolveVisionChain,
 } from '@/server/vision-config'
 import type { OpenRouterStockCheckTier } from '@/types/open-router-stock-check-tier'
 import { shouldRetryVisionError } from '@/server/vision-retry'
@@ -76,11 +75,47 @@ async function tryOpenRouterFreeModels(input: {
     : new Error('Ningún modelo gratuito de OpenRouter respondió')
 }
 
-async function runProductAnalysisWithChain(input: {
+/** Intenta cada id en `OPENROUTER_VISION_MODEL` (pago) antes de fallar el paso. */
+async function tryOpenRouterPaidVisionModels(input: {
+  prompt: string
   imageBase64: string
   mimeType: string
 }): Promise<VisionAnalysisResult> {
-  const chain = resolveVisionChain()
+  const models = getOpenRouterPaidVisionModels()
+  let lastError: unknown
+  for (const model of models) {
+    try {
+      const text = await openRouterVisionText({
+        prompt: input.prompt,
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType,
+        model,
+      })
+      return {
+        analysis: parseModelJsonLoose(text),
+        vision: buildVisionAnalysisMeta('openrouter', model),
+      }
+    } catch (e) {
+      lastError = e
+      if (!shouldRetryVisionError(e)) {
+        throw e
+      }
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error('Ningún modelo de pago de OpenRouter respondió')
+}
+
+async function runProductAnalysisWithChain(input: {
+  imageBase64: string
+  mimeType: string
+  /** Misma lógica que Chequeo de stock: Gemini (si hay clave) + OpenRouter según modo. */
+  openRouterTier?: OpenRouterStockCheckTier
+}): Promise<VisionAnalysisResult> {
+  const chain = resolveStockCheckVisionChain(
+    input.openRouterTier ?? 'free_first'
+  )
   let lastError: unknown
   for (const provider of chain) {
     if (provider === 'gemini' && !hasGeminiKey()) continue
@@ -118,16 +153,12 @@ async function runProductAnalysisWithChain(input: {
           mimeType: input.mimeType,
         })
       }
-      const model = getOpenRouterVisionModel()
-      const text = await openRouterVisionText({
-        prompt: PRODUCT_ANALYSIS_PROMPT,
-        imageBase64: input.imageBase64,
-        mimeType: input.mimeType,
-        model,
-      })
-      return {
-        analysis: parseModelJsonLoose(text),
-        vision: buildVisionAnalysisMeta('openrouter', model),
+      if (provider === 'openrouter') {
+        return await tryOpenRouterPaidVisionModels({
+          prompt: PRODUCT_ANALYSIS_PROMPT,
+          imageBase64: input.imageBase64,
+          mimeType: input.mimeType,
+        })
       }
     } catch (e) {
       lastError = e
@@ -144,8 +175,11 @@ async function runProductAnalysisWithChain(input: {
 async function runReceiptAnalysisWithChain(input: {
   imageBase64: string
   mimeType: string
+  openRouterTier?: OpenRouterStockCheckTier
 }): Promise<VisionAnalysisResult> {
-  const chain = resolveVisionChain()
+  const chain = resolveStockCheckVisionChain(
+    input.openRouterTier ?? 'free_first'
+  )
   let lastError: unknown
   for (const provider of chain) {
     if (provider === 'gemini' && !hasGeminiKey()) continue
@@ -160,7 +194,10 @@ async function runReceiptAnalysisWithChain(input: {
         const analysis = await geminiAnalyzeReceiptFromImage(input)
         return {
           analysis,
-          vision: buildVisionAnalysisMeta('gemini', getGeminiVisionModel()),
+          vision: {
+            ...buildVisionAnalysisMeta('gemini', getGeminiVisionModel()),
+            analysisKind: 'image',
+          },
         }
       }
       if (provider === 'ollama') {
@@ -173,26 +210,33 @@ async function runReceiptAnalysisWithChain(input: {
         })
         return {
           analysis: parseModelJsonLoose(text),
-          vision: buildVisionAnalysisMeta('ollama', model),
+          vision: {
+            ...buildVisionAnalysisMeta('ollama', model),
+            analysisKind: 'image',
+          },
         }
       }
       if (provider === 'openrouter_free') {
-        return await tryOpenRouterFreeModels({
+        const r = await tryOpenRouterFreeModels({
           prompt: RECEIPT_ANALYSIS_PROMPT,
           imageBase64: input.imageBase64,
           mimeType: input.mimeType,
         })
+        return {
+          ...r,
+          vision: { ...r.vision, analysisKind: 'image' },
+        }
       }
-      const model = getOpenRouterVisionModel()
-      const text = await openRouterVisionText({
-        prompt: RECEIPT_ANALYSIS_PROMPT,
-        imageBase64: input.imageBase64,
-        mimeType: input.mimeType,
-        model,
-      })
-      return {
-        analysis: parseModelJsonLoose(text),
-        vision: buildVisionAnalysisMeta('openrouter', model),
+      if (provider === 'openrouter') {
+        const r = await tryOpenRouterPaidVisionModels({
+          prompt: RECEIPT_ANALYSIS_PROMPT,
+          imageBase64: input.imageBase64,
+          mimeType: input.mimeType,
+        })
+        return {
+          ...r,
+          vision: { ...r.vision, analysisKind: 'image' },
+        }
       }
     } catch (e) {
       lastError = e
@@ -254,16 +298,12 @@ async function runStockCheckAnalysisWithChain(input: {
           mimeType: input.mimeType,
         })
       }
-      const model = getOpenRouterVisionModel()
-      const text = await openRouterVisionText({
-        prompt,
-        imageBase64: input.imageBase64,
-        mimeType: input.mimeType,
-        model,
-      })
-      return {
-        analysis: parseModelJsonLoose(text),
-        vision: buildVisionAnalysisMeta('openrouter', model),
+      if (provider === 'openrouter') {
+        return await tryOpenRouterPaidVisionModels({
+          prompt,
+          imageBase64: input.imageBase64,
+          mimeType: input.mimeType,
+        })
       }
     } catch (e) {
       lastError = e
@@ -280,6 +320,7 @@ async function runStockCheckAnalysisWithChain(input: {
 export async function analyzeProductFromImage(input: {
   imageBase64: string
   mimeType: string
+  openRouterTier?: OpenRouterStockCheckTier
 }): Promise<VisionAnalysisResult> {
   return runProductAnalysisWithChain(input)
 }
@@ -287,6 +328,7 @@ export async function analyzeProductFromImage(input: {
 export async function analyzeReceiptFromImage(input: {
   imageBase64: string
   mimeType: string
+  openRouterTier?: OpenRouterStockCheckTier
 }): Promise<VisionAnalysisResult> {
   return runReceiptAnalysisWithChain(input)
 }

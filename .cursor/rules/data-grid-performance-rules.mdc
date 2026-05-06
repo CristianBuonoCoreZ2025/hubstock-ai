@@ -1,0 +1,186 @@
+---
+description: Reglas permanentes para grillas, inactivos, paginación y rendimiento
+alwaysApply: true
+---
+
+# Reglas permanentes de grillas y rendimiento
+
+Estas reglas aplican a toda pantalla con grillas, tablas, listados, selectores y combobox.
+
+## Inactivos
+
+Toda grilla debe tener un switch visible:
+
+Mostrar inactivos
+
+Regla:
+
+- Por defecto debe estar apagado.
+- Si está apagado, no se muestran registros inactivos.
+- Si está encendido, se muestran activos e inactivos.
+- Si la tabla tiene campo active, usar active.
+- Si la tabla tiene campo is_active, usar is_active.
+- Si la tabla tiene campo status, usar status para separar activos e inactivos.
+- Si no existe campo equivalente, documentar la limitación y no inventar columna.
+
+No cargar registros inactivos si el switch está apagado.
+
+El filtro debe aplicarse en la consulta al servidor, no después de traer todos los datos.
+
+## Paginación obligatoria
+
+Toda grilla debe cargar datos paginados.
+
+Regla base:
+
+- Tamaño por defecto: 100 registros.
+- No cargar todos los registros.
+- No traer 19.800 productos al cliente.
+- No filtrar grandes volúmenes solo en memoria.
+- No hacer select sin limit o range en tablas grandes.
+
+Cada grilla debe tener:
+
+- Página actual.
+- Botón anterior.
+- Botón siguiente.
+- Texto de cantidad visible.
+- Tamaño de página inicial 100.
+
+## Filtros y búsqueda
+
+Los filtros deben ejecutarse del lado servidor cuando la tabla sea grande.
+
+Aplica para:
+
+- productos
+- catálogo
+- marcas
+- categorías
+- inventario
+- consumo
+- compras
+- usuarios
+- cualquier tabla grande
+
+La búsqueda debe usar el helper común tipo Google:
+
+- normalizeSearchText
+- matchesSearch
+- filterBySearch
+
+Pero si la tabla es grande, la búsqueda debe usarse para construir filtros de consulta al servidor cuando sea viable.
+
+No traer toda la tabla para luego filtrar en el cliente.
+
+## Combobox
+
+Ningún combobox debe cargar miles de registros al abrir.
+
+Reglas:
+
+- Usar búsqueda remota.
+- Cargar máximo 50 resultados.
+- No buscar hasta tener al menos 2 caracteres, salvo listas pequeñas.
+- Usar debounce entre 250 ms y 400 ms.
+- Mostrar estado cargando.
+- Mostrar sin resultados.
+- Permitir limpiar selección.
+- No cargar todos los productos en memoria.
+
+## Orden alfabético y búsqueda obligatoria en controles
+
+Todo combobox, dropdown, selector, autocomplete o lista desplegable debe cumplir estas reglas:
+
+1. Debe estar ordenado alfabéticamente.
+2. Debe permitir búsqueda dentro del control.
+3. No debe mostrar opciones en desorden.
+4. No debe depender solo del scroll.
+5. No debe cargar miles de registros al abrir.
+6. Si la lista es grande, debe usar búsqueda remota.
+7. Si la lista es chica, igual debe tener búsqueda local.
+8. La búsqueda debe ignorar acentos, mayúsculas, minúsculas y posición del texto.
+9. La búsqueda debe usar el helper común del sistema.
+10. El orden alfabético debe aplicarse sobre el texto visible para el usuario.
+
+Aplica para:
+
+- productos
+- marcas
+- categorías
+- secciones
+- perfiles
+- personas
+- tiendas
+- unidades
+- estados
+- roles
+- cualquier selector del sistema
+
+Regla de experiencia:
+
+Una app moderna no debe obligar al usuario a recorrer listas manualmente.
+
+Todo selector debe permitir escribir y encontrar rápido.
+
+
+Aplica especialmente a:
+
+- productos
+- catálogo
+- marcas
+- categorías
+- personas
+- perfiles
+- tiendas
+
+## Listados masivos
+
+Para tablas grandes, priorizar este orden:
+
+1. Filtros server-side.
+2. Paginación server-side.
+3. Combobox async.
+4. Índices si ya existen.
+5. RPC o vista optimizada solo si el rendimiento no alcanza.
+6. Virtualización de filas solo como apoyo visual, nunca como reemplazo de paginación.
+
+## Supabase
+
+En Supabase usar consultas con rango:
+
+range(from, to)
+
+Ejemplo:
+
+- página 1: range(0, 99)
+- página 2: range(100, 199)
+
+Evitar:
+
+- select("*") sin límite en tablas grandes.
+- traer todos los productos para buscar en cliente.
+- cargar todos los registros para llenar combobox.
+
+## Mensajes de UI
+
+Si la búsqueda requiere texto mínimo:
+
+Escribe al menos 2 caracteres para buscar.
+
+Si no hay resultados:
+
+No se encontraron resultados.
+
+Si el listado está filtrado:
+
+Mostrando registros filtrados.
+
+## Prohibido
+
+- Grillas infinitas sin paginación.
+- Combobox con miles de opciones precargadas.
+- Filtros client-side sobre miles de registros.
+- Mostrar inactivos por defecto.
+- Ocultar el switch de inactivos.
+- Crear una grilla nueva sin paginación.

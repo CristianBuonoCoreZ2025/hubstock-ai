@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { extractPdfTextFromBase64 } from '@/lib/pdf-text'
 import { assertProfileMembership } from '@/lib/profile/membership'
-import { profileScopedImageBodySchema } from '@/lib/validators/ai'
+import { analyzeReceiptBodySchema } from '@/lib/validators/ai'
 import { analyzeReceiptFromImage } from '@/server/image-analysis'
+import { analyzeReceiptFromExtractedText } from '@/server/receipt-text-analysis'
 import { mapVisionFailure } from '@/server/vision-error-map'
 import { enrichReceiptAnalysisPayload } from '@/server/product-enrichment'
 
@@ -14,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
   }
 
-  const parsed = profileScopedImageBodySchema.safeParse(json)
+  const parsed = analyzeReceiptBodySchema.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'validation', details: parsed.error.flatten() },
@@ -30,12 +32,51 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: gate.reason }, { status: 403 })
   }
 
+  const tier = parsed.data.openRouterTier
+
   try {
-    const { analysis, vision } = await analyzeReceiptFromImage({
-      imageBase64: parsed.data.imageBase64,
-      mimeType: parsed.data.mimeType,
+    if (parsed.data.inputKind === 'image') {
+      const { analysis, vision } = await analyzeReceiptFromImage({
+        imageBase64: parsed.data.imageBase64,
+        mimeType: parsed.data.mimeType,
+        openRouterTier: tier,
+      })
+      const enriched = await enrichReceiptAnalysisPayload(analysis).catch(
+        () => null
+      )
+      return NextResponse.json({
+        profileId: parsed.data.profileId,
+        analysis,
+        enriched,
+        vision,
+        persisted: false,
+      })
+    }
+
+    let receiptText: string
+    if (parsed.data.inputKind === 'document_text') {
+      receiptText = parsed.data.plainText.trim()
+    } else {
+      receiptText = await extractPdfTextFromBase64(parsed.data.pdfBase64)
+    }
+
+    if (receiptText.length < 10) {
+      return NextResponse.json(
+        {
+          error: 'empty_document',
+          hint: 'No se pudo extraer texto suficiente del documento. Prueba otro PDF o pega el texto a mano.',
+        },
+        { status: 400 }
+      )
+    }
+
+    const { analysis, vision } = await analyzeReceiptFromExtractedText({
+      receiptText,
+      openRouterTier: tier,
     })
-    const enriched = await enrichReceiptAnalysisPayload(analysis).catch(() => null)
+    const enriched = await enrichReceiptAnalysisPayload(analysis).catch(
+      () => null
+    )
     return NextResponse.json({
       profileId: parsed.data.profileId,
       analysis,

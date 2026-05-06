@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { assertProfileMembership } from '@/lib/profile/membership'
-import { profileScopedImageBodySchema } from '@/lib/validators/ai'
+import { profileScopedVisionImageBodySchema } from '@/lib/validators/ai'
 import { analyzeProductFromImage } from '@/server/image-analysis'
 import { mapVisionFailure } from '@/server/vision-error-map'
-import { enrichProductImageAnalysis } from '@/server/product-enrichment'
+import {
+  enrichProductImageAnalysis,
+  mergeProductImageWithOff,
+} from '@/server/product-enrichment'
+import { normalizeMultiProductVisionJson } from '@/server/vision-product-multi'
 
 export async function POST(request: Request) {
   let json: unknown
@@ -14,7 +18,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
   }
 
-  const parsed = profileScopedImageBodySchema.safeParse(json)
+  const parsed = profileScopedVisionImageBodySchema.safeParse(json)
   if (!parsed.success) {
     return NextResponse.json(
       { error: 'validation', details: parsed.error.flatten() },
@@ -34,12 +38,26 @@ export async function POST(request: Request) {
     const { analysis, vision } = await analyzeProductFromImage({
       imageBase64: parsed.data.imageBase64,
       mimeType: parsed.data.mimeType,
+      openRouterTier: parsed.data.openRouterTier,
     })
-    const enriched = await enrichProductImageAnalysis(analysis).catch(() => null)
+
+    const items = normalizeMultiProductVisionJson(analysis)
+    const products = await Promise.all(
+      items.map(async (item) => {
+        try {
+          return await enrichProductImageAnalysis(item)
+        } catch {
+          return mergeProductImageWithOff(item, null)
+        }
+      })
+    )
+
     return NextResponse.json({
       profileId: parsed.data.profileId,
-      analysis,
-      enriched,
+      /** Compatibilidad: primer ítem igual que antes */
+      analysis: items[0] ?? analysis,
+      enriched: products[0] ?? null,
+      products,
       vision,
       persisted: false,
     })

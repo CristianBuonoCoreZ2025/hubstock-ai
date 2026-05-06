@@ -1,10 +1,25 @@
-import { createClient } from '@/lib/supabase/server'
 import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
 import { InventoryView } from './InventoryView'
+import { createClient } from '@/lib/supabase/server'
 import { buildInventoryRows } from './inventory-rows'
 
-export default async function InventoryPage() {
+type SearchParams = {
+  page?: string
+  q?: string
+  section?: string
+  category?: string
+  status?: string
+  inactive?: string
+}
+
+const PAGE_SIZE = 100
+
+export default async function InventoryPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>
+}) {
   const { activeProfileId, profiles } = await getProfileContext()
 
   if (!activeProfileId || profiles.length === 0) {
@@ -18,25 +33,51 @@ export default async function InventoryPage() {
     )
   }
 
+  const sp = (await searchParams) ?? {}
+  const page = Math.max(1, Number(sp.page ?? 1) || 1)
+  const from = (page - 1) * PAGE_SIZE
+  const to = from + PAGE_SIZE - 1
+  const q = (sp.q ?? '').trim()
+  const sectionFilter = (sp.section ?? 'all').trim()
+  const categoryFilter = (sp.category ?? 'all').trim()
+  const statusFilter = (sp.status ?? 'all').trim()
+  const showInactive = sp.inactive === '1'
+
   const supabase = await createClient()
 
-  const [
-    { data: products, error: productsError },
-    { data: categories },
-    { data: sections },
-  ] = await Promise.all([
-    supabase
-      .from('products')
-      .select(
-        'id, name, stock_current, stock_min, reference_price, category_id, section_id, active'
-      )
-      .eq('profile_id', activeProfileId)
-      .eq('active', true)
-      .order('name')
-      .limit(500),
-    supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
-    supabase.from('sections').select('id, name, sort_order').order('sort_order'),
-  ])
+  const productsQuery = supabase
+    .from('products')
+    .select(
+      'id, name, stock_current, stock_min, reference_price, category_id, section_id, active, catalog_product_id',
+      { count: 'exact' }
+    )
+    .eq('profile_id', activeProfileId)
+    .order('name')
+
+  if (!showInactive) {
+    productsQuery.eq('active', true)
+  }
+  if (sectionFilter !== 'all') {
+    productsQuery.eq('section_id', sectionFilter)
+  }
+  if (categoryFilter !== 'all') {
+    productsQuery.eq('category_id', categoryFilter)
+  }
+
+  // Búsqueda server-side: no es 100% “google-like” (acentos/orden), pero evita traer todo.
+  // La búsqueda tolerante se aplica en el cliente dentro de la página.
+  if (q.length >= 2) {
+    productsQuery.ilike('name', `%${q}%`)
+  }
+
+  productsQuery.range(from, to)
+
+  const [{ data: products, error: productsError, count }, { data: categories }, { data: sections }] =
+    await Promise.all([
+      productsQuery,
+      supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
+      supabase.from('sections').select('id, name, sort_order').order('sort_order'),
+    ])
 
   if (productsError) {
     return (
@@ -59,6 +100,16 @@ export default async function InventoryPage() {
       categories={categories ?? []}
       sections={sections ?? []}
       rows={rows}
+      query={{
+        page,
+        pageSize: PAGE_SIZE,
+        total: count ?? null,
+        q,
+        section: sectionFilter,
+        category: categoryFilter,
+        status: statusFilter,
+        inactive: showInactive,
+      }}
     />
   )
 }

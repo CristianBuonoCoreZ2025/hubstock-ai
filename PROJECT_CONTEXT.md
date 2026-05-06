@@ -2,6 +2,9 @@
 
 # HUB-STOCK-AI
 
+Este proyecto trabaja bajo la regla UX primero. Toda pantalla debe ser clara, rápida, consistente y entendible antes de considerarse terminada. Ver .cursor/rules/01_ux_primero.mdc.
+
+
 Este proyecto es una aplicación de inventario doméstico con IA.
 
 La aplicación ya tiene base de datos Supabase creada y operando.
@@ -35,9 +38,11 @@ Cursor debe revisar el stack real antes de modificar.
 
 # Objetivo del sistema
 
-El sistema administra inventario doméstico por perfil.
+El sistema administra inventario doméstico por **ubicación** (entidad `profiles` en base de datos; `profile_id` en todas las tablas operativas).
 
-Un perfil representa una casa, departamento, oficina o unidad de inventario.
+En la interfaz de usuario el hogar o unidad de inventario se denomina **«Ubicación»** (antes «Perfil» en varios textos). La tabla y la columna siguen llamándose `profiles` / `profile_id`; no se renombraron en la base.
+
+Una ubicación representa una casa, departamento, oficina o unidad de inventario.
 
 Ejemplos:
 
@@ -68,14 +73,14 @@ Incluye:
 
 Este mundo no representa stock personal.
 
-## 2. Mundo del perfil
+## 2. Mundo del perfil (ubicación activa)
 
-Es información propia de una casa o perfil.
+Es información propia de una casa o **ubicación** (`profiles`).
 
 Incluye:
 
 - inventario del perfil
-- secciones físicas del hogar
+- zonas físicas del hogar (lista fija compartida; ver más abajo)
 - consumo
 - chequeos de stock
 - compras
@@ -83,6 +88,27 @@ Incluye:
 - miembros del perfil
 
 Este mundo sí representa stock real.
+
+# Regla clave: dos “clasificaciones” distintas en el producto del perfil
+
+En el sistema conviven dos ejes que el usuario suele llamar “categorías”, pero no cumplen el mismo rol:
+
+## 1) Taxonomía global del catálogo (sección/categoría comercial)
+
+Estas tablas son **globales** (compartidas por todos los perfiles):
+
+- **`sections`**: “pasillo / rubro” comercial (ej. alimentos, limpieza, mascotas).
+- **`categories`**: subcategoría dentro de una `section`.
+
+Se usan para **navegar y normalizar** el catálogo global y también para clasificar los productos del perfil (porque `products` referencia `section_id` y `category_id`).
+
+## 2) Zona física del hogar (no es la taxonomía del catálogo)
+
+Para “dónde está en la casa” se usa un conjunto **fijo de zonas** (misma lista para todas las ubicaciones): alacena, refrigerador, congelador, baño/aseo, bodega, otro. Están definidas en código (`src/lib/stock-zones.ts`, `STOCK_ZONE_OPTIONS`) y son las mismas en **Chequeo de stock** (`stock_checks.zone`) y en **Carga por fotos** (se guardan en `products.location` como texto con el mismo valor canónico).
+
+Los catálogos auxiliares del perfil (`profile_product_types`, `profile_presentations`, etc.) son independientes de estas zonas.
+
+Regla: **no** confundir `sections` / `categories` (rubro comercial global en catálogo) con **zona física** (alacena, nevera, etc.).
 
 # Tablas existentes visibles
 
@@ -120,7 +146,7 @@ Antes de crear cualquier tabla nueva, Cursor debe revisar si una tabla existente
 
 ## profiles
 
-Representa perfiles o casas.
+Representa una **ubicación** (hogar o unidad de inventario). En UI suele etiquetarse «Ubicación»; en SQL sigue siendo `profiles`.
 
 Ejemplo:
 
@@ -183,7 +209,7 @@ Cursor debe revisar la diferencia real entre ambas antes de modificar.
 
 ## categories
 
-Representa categorías globales o comerciales.
+Representa categorías globales o comerciales (dependen de `sections`).
 
 Ejemplos:
 
@@ -196,21 +222,7 @@ No debe confundirse con secciones físicas de casa.
 
 ## sections
 
-Representa lugares físicos del perfil.
-
-Ejemplos:
-
-- Baño
-- Cocina
-- Despensa
-- Refrigerador principal
-- Refrigerador externo
-- Congeladora
-- Patio
-- Aseo
-- Alimentos mascotas
-
-Esta tabla debe usarse para ubicar productos dentro del hogar.
+Representa secciones globales o comerciales (taxonomía del catálogo).
 
 ## profile_product_types
 
@@ -338,11 +350,29 @@ El inventario pertenece a un profile_id.
 
 El inventario usa productos globales, pero el stock pertenece al perfil.
 
-El inventario debe trabajar con sections.
+## Vínculo catálogo → inventario (obligatorio en el flujo manual)
+
+Un ítem de inventario (`products`) **no es un producto nuevo**: es una instancia en el hogar que **siempre** debe referenciar un producto maestro en `catalog_products` mediante `products.catalog_product_id`. El **nombre** del ítem en inventario lo define el catálogo (no hay alta con nombre libre desde el modal de inventario).
+
+- Si falta el maestro en el catálogo, el usuario debe **crearlo en Catálogo** y luego agregarlo al inventario.
+- Datos heredados del maestro: emparejamiento en boletas/captura, alias, consistencia de nombres.
+
+Ítems antiguos **sin** `catalog_product_id` deben **enlazarse** a un producto del catálogo al editar (no guardar sin vínculo).
+
+## Pantalla `/inventory` (implementado)
+
+- **Alta**: modal **“Agregar desde catálogo”** — dos caminos: (1) **elegir** un producto maestro ya existente (`catalog_products`); (2) si **no existe** en catálogo, **crear nombre estándar** en una sola acción: inserta el maestro en `catalog_products` y el ítem en `products` del perfil (mismo nombre; requiere rol editor, igual que escritura de catálogo). Luego sección/categoría comercial y cantidades. Enlace a **Catálogo** para administrar solo el maestro.
+- **Edición**: si ya hay vínculo, el nombre se muestra como referencia al catálogo (solo se ajustan clasificación y stock). Sin vínculo (legado): obligatorio elegir producto del catálogo antes de guardar.
+- **Grilla paginada en servidor**: tamaño de página **100**; controles **Anterior / Siguiente** y conteo total.
+- **Mostrar inactivos**: switch visible; por defecto **apagado**; el filtro `active` aplica en la consulta (no se cargan inactivos si está apagado).
+- **Filtros** por sección y categoría (taxonomía global `sections` / `categories` del producto `products`) vía query string.
+- **Búsqueda**: prefiltro server-side por nombre cuando hay texto (≥2 caracteres); refinamiento **tipo Google** en cliente sobre el lote usando `src/lib/search.ts` (`filterBySearch` / `matchesSearch`).
+- **Catálogo**: buscador remoto en el modal (≥2 caracteres, debounce, máximo 50 resultados) vía `searchCatalogProductsForPickerAction`; la grilla indica si el ítem está **vinculado** al catálogo.
+- **Errores** en acciones de inventario: mensajes vía `getUserFriendlyErrorMessage` (sin textos técnicos crudos al usuario).
 
 Ejemplo:
 
-Un producto global llamado Shampoo se encuentra en el perfil Casa Cristian, dentro de la sección Baño, con cierta cantidad disponible.
+Un producto global llamado Shampoo se encuentra en el perfil Casa Cristian, clasificado en la taxonomía global del catálogo (sección/categoría del `products` del perfil), con cierta cantidad disponible.
 
 # Carga de inventario
 
@@ -356,35 +386,30 @@ La carga manual existe, pero no es el flujo principal.
 
 El flujo principal es visual.
 
-# Carga por fotos
+Regla de UX:
 
-El usuario selecciona una sección del perfil.
+- En **carga por fotos**, el usuario elige **modelo IA**, **zona física** y **foto** antes de analizar; la clasificación comercial es **por ítem** (catálogo global). En otros flujos (boleta, manual) aplican las reglas de cada pantalla.
+- La IA **propone** y el usuario **confirma** antes de impactar el stock.
 
-Ejemplo:
+# Carga por fotos (`/capture`)
 
-Baño.
+Flujo alineado con **Chequeo de stock** en el orden de controles:
 
-Luego sube una o varias fotos.
+1. Modelos OpenRouter (gratis primero / solo gratis / solo de pago).
+2. **Zona física** del hogar (lista fija `STOCK_ZONE_OPTIONS`; equivalente semántico a la zona del chequeo).
+3. Foto y **Analizar**.
 
-La IA analiza las imágenes.
+Por cada producto detectado:
 
-El sistema debe:
+- **Sección y categoría** provienen de la **taxonomía global del catálogo** (`sections` / `categories`): se propone una categoría a partir del texto sugerido por la IA (`categoryGuess`) con coincidencia tolerante (`pickCatalogTaxonomyFromGuess` en `src/lib/catalog-taxonomy-match.ts`); el usuario puede corregir **por fila** en un selector agrupado por sección comercial.
+- La **zona** elegida en el paso 2 se persiste en **`products.location`** (mismo valor canónico que `stock_checks.zone`, p. ej. `alacena`, `refrigerador`).
+- Enriquecimiento opcional con Open Food Facts sigue siendo independiente del catálogo interno.
 
-- detectar productos
-- buscar coincidencias en catalog_products
-- mostrar alternativas cercanas
-- permitir seleccionar producto correcto
-- permitir crear producto si no existe
-- registrar cantidad
-- registrar sección
-- registrar profile_id
-- guardar movimiento en stock_movements
+La revisión es obligatoria antes de guardar; el stock inicial registra movimiento `import` en `stock_movements` cuando corresponde (ver implementación en `addProductFromCapture`).
 
-No debe guardar directo sin revisión del usuario.
+La pantalla puede listar **varios productos en una misma foto** (varias filas en tabla compacta).
 
-No debe trabajar solo uno a uno.
-
-Debe aceptar lote de fotos.
+**Pendientes de producto / catálogo:** búsqueda explícita de coincidencias en `catalog_products` fila a fila y alta controlada de maestro desde captura pueden ampliarse sin cambiar la regla de confirmación previa al stock.
 
 # Carga por boleta
 
@@ -395,7 +420,7 @@ Por cada producto detectado debe:
 - buscar producto global
 - revisar alias
 - revisar historial del perfil
-- sugerir sección usada antes
+- sugerir sección usada antes para ese producto en ese perfil
 - permitir corregir sección
 - permitir confirmar producto
 - permitir crear producto nuevo si no existe
@@ -405,6 +430,10 @@ Por cada producto detectado debe:
 Ejemplo:
 
 Si antes un producto se cargó en Baño, la siguiente boleta debe sugerir Baño.
+
+Nota importante:
+
+- La boleta puede no traer una sección explícita por línea. La sección sugerida debe salir de la **historia del perfil** (por ejemplo: última sección confirmada para ese producto en ese perfil) y siempre debe poder corregirse.
 
 # Captura IA
 
@@ -423,11 +452,17 @@ Debe soportar:
 
 Si existe menú Captura IA, debe integrarse a Inventario.
 
+Regla de lote:
+
+- Captura IA debe soportar **subir muchas fotos de una sección en una sola sesión** y luego mostrar una revisión consolidada (no una confirmación 1:1 por foto como flujo principal).
+
 # Consumo
 
 Consumo es el flujo para descontar productos usados.
 
-El usuario entra a una sección del perfil.
+Consumo es siempre **sobre el inventario del perfil** (no es aleatorio).
+
+El usuario entra a una sección/zona del perfil (ubicación del hogar) o filtra por su clasificación interna.
 
 El sistema muestra productos con stock.
 
@@ -474,13 +509,7 @@ Stock calculado significa:
 
 Inventario cargado menos consumo registrado.
 
-El usuario selecciona una sección.
-
-Ejemplo:
-
-Baño.
-
-Luego sube fotos.
+El usuario selecciona una **zona física** del hogar (misma lista que en carga por fotos; campo `stock_checks.zone`).
 
 La IA detecta productos visibles.
 
@@ -567,20 +596,24 @@ Reglas:
 - permitir asociar responsable
 - mantener historial de compras planificadas
 
+Regla de responsables:
+
+- Los responsables salen de los **miembros del perfil** (`profile_members`) y se usan para asignar compras (planificación) y, a futuro, notificaciones.
+
 # Administración
 
 Administración solo debe ser visible para administradores.
 
 Debe manejar:
 
-- perfiles
+- ubicaciones (`profiles` — alta desde «Ubicación» en menú)
 - miembros
 - invitaciones
 - permisos
 - responsables
 - configuración avanzada
 
-Un usuario común no debe administrar perfiles ni personas.
+Un usuario común no debe administrar ubicaciones ni personas.
 
 # Configuración
 
@@ -618,6 +651,8 @@ Los resultados IA deben quedar en estado pendiente hasta revisión.
 
 La IA debe guardar sugerencias, no cambios definitivos.
 
+Los endpoints de visión **`/api/ai/analyze-product`**, **`/api/ai/analyze-receipt`** y **`/api/ai/stock-check`** comparten el modo **OpenRouter** (`openRouterTier`: gratis primero, solo gratis, solo de pago), coherente con la cadena de proveedores en servidor (`resolveStockCheckVisionChain`).
+
 # Reglas sobre perfil activo
 
 Todo módulo operativo debe usar profile_id.
@@ -632,20 +667,19 @@ Módulos operativos:
 
 El catálogo global no depende de un perfil para existir.
 
-# Reglas sobre categorías y secciones
+# Reglas sobre categorías, secciones y zonas
 
-categories representa clasificación global o comercial.
+- **`categories` y `sections`**: taxonomía **global / comercial** del catálogo. Los productos del inventario (`products`) referencian `section_id` y `category_id` para clasificación de pasillo y compras.
+- **Zona física** (alacena, refrigerador, etc.): no es `sections`; es la lista fija en `stock-zones` y valores en `stock_checks.zone` o `products.location`.
 
-sections representa ubicación física dentro del perfil.
-
-No mezclar ambos conceptos.
+No mezclar taxonomía de catálogo con zona física del hogar.
 
 Ejemplo correcto:
 
-Producto global: Shampoo.
-Categoría global: higiene personal.
-Sección del perfil: Baño.
-Perfil: Casa Cristian.
+Producto en inventario: Shampoo (nombre ligado a `catalog_products` según reglas vigentes).
+Categoría/sección **comercial** global: higiene personal / droguería (según datos en `categories` / `sections`).
+Zona física del hogar: baño / alacena (campo de zona o `location`).
+Ubicación (hogar): Casa Cristian (`profiles`).
 
 # Reglas de navegación
 
@@ -763,11 +797,11 @@ Administración solo debe estar visible para administradores.
 
 Debe manejar:
 
-- Perfiles
+- Ubicación (altas de `profiles`; etiqueta de menú «Ubicación»)
 - Personas
 - Invitaciones enviadas
 
-## Perfiles
+## Ubicación (tabla `profiles`)
 
 Representan casas o unidades de inventario.
 

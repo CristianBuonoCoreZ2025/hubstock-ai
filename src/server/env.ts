@@ -18,6 +18,9 @@ const serverEnvSchema = z.object({
   OPENROUTER_VISION_MODEL: z.string().min(1).optional(),
   /** Modelos gratuitos OpenRouter (coma = orden de intento), ej. a:free,b:free */
   OPENROUTER_VISION_MODEL_FREE: z.string().min(1).optional(),
+  /** Modelos solo texto para boletas por PDF/texto (coma); si no hay, se usan los de visión */
+  OPENROUTER_DOCUMENT_MODEL: z.string().min(1).optional(),
+  OPENROUTER_DOCUMENT_MODEL_FREE: z.string().min(1).optional(),
   OPENROUTER_HTTP_REFERER: z.string().url().optional(),
   NEXT_PUBLIC_APP_URL: z.string().url().optional(),
   /** API local Ollama (visión), sin clave; ej. http://127.0.0.1:11434 */

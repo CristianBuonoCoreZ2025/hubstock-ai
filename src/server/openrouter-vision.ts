@@ -9,6 +9,24 @@ type OpenRouterErrorBody = {
   error?: { message?: string; code?: number; metadata?: unknown }
 }
 
+function parseOpenRouterAssistantContent(
+  json: OpenRouterErrorBody & {
+    choices?: Array<{ message?: { content?: string | unknown } }>
+  }
+): string {
+  const content = json.choices?.[0]?.message?.content
+  if (typeof content === 'string') {
+    return content.trim()
+  }
+  if (Array.isArray(content)) {
+    const parts = content
+      .map((p: { text?: string }) => (typeof p?.text === 'string' ? p.text : ''))
+      .join('')
+    return parts.trim()
+  }
+  throw new Error('openrouter_empty_response')
+}
+
 /**
  * Una llamada chat multimodal (texto + imagen base64) y devuelve el texto del asistente.
  */
@@ -71,17 +89,59 @@ export async function openRouterVisionText(params: {
     )
   }
 
-  const content = json.choices?.[0]?.message?.content
-  if (typeof content === 'string') {
-    return content.trim()
-  }
-  if (Array.isArray(content)) {
-    // Algunos proveedores devuelven fragmentos de texto
-    const parts = content
-      .map((p: { text?: string }) => (typeof p?.text === 'string' ? p.text : ''))
-      .join('')
-    return parts.trim()
+  return parseOpenRouterAssistantContent(json)
+}
+
+/**
+ * Chat solo texto (boletas desde PDF o texto pegado; sin imagen).
+ */
+export async function openRouterChatText(params: {
+  prompt: string
+  model?: string
+}): Promise<string> {
+  const key = process.env.OPENROUTER_API_KEY?.trim()
+  if (!key) {
+    throw new Error('OPENROUTER_API_KEY no está configurada')
   }
 
-  throw new Error('openrouter_empty_response')
+  const model = params.model ?? getOpenRouterVisionModel()
+  const body = {
+    model,
+    messages: [
+      {
+        role: 'user' as const,
+        content: params.prompt,
+      },
+    ],
+  }
+
+  const res = await fetch(OPENROUTER_CHAT_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${key}`,
+      'HTTP-Referer': getOpenRouterHttpReferer(),
+      'X-Title': 'StockCasa AI',
+    },
+    body: JSON.stringify(body),
+  })
+
+  const json = (await res.json()) as OpenRouterErrorBody & {
+    choices?: Array<{ message?: { content?: string | unknown } }>
+  }
+
+  if (!res.ok) {
+    const msg =
+      json.error?.message ??
+      (typeof json === 'object' ? JSON.stringify(json) : String(json))
+    throw new Error(
+      JSON.stringify({
+        status: res.status,
+        openrouter: true,
+        message: msg,
+      })
+    )
+  }
+
+  return parseOpenRouterAssistantContent(json)
 }

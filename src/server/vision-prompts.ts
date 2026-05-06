@@ -2,35 +2,39 @@
  * Prompts compartidos entre Gemini directo y OpenRouter (misma salida JSON).
  */
 
-/** Análisis detallado de producto desde foto de etiqueta/empaque. */
-export const PRODUCT_ANALYSIS_PROMPT = `Eres un experto en lectura de etiquetas de supermercado y empaques. Examina TODA la imagen: frente, marca, contenido neto, tipo de producto y envase.
+/** Análisis desde foto: puede haber varios productos o envases claros en la misma imagen. */
+export const PRODUCT_ANALYSIS_PROMPT = `Eres un experto en lectura de etiquetas de supermercado y empaques. Examina TODA la imagen: puede incluir uno o más productos distintos visibles en el mismo encuadre (varios paquetes, botellas frente al fondo de nevera, varias unidades lado a lado).
 
 Devuelve SOLO un JSON válido (sin markdown, sin texto fuera del JSON) con esta forma exacta:
 {
-  "name": "string",
-  "brand": "string|null",
-  "productType": "string|null",
-  "presentation": "string|null",
-  "netQuantity": number|null,
-  "netUnit": "g"|"ml"|"L"|"kg"|null,
-  "format": "string|null",
-  "unit": "string|null",
-  "categoryGuess": "string|null",
-  "notes": "string|null",
-  "gtin": "string|null"
+  "products": [
+    {
+      "name": "string",
+      "brand": "string|null",
+      "productType": "string|null",
+      "presentation": "string|null",
+      "netQuantity": number|null,
+      "netUnit": "g"|"ml"|"L"|"kg"|null,
+      "format": "string|null",
+      "unit": "string|null",
+      "categoryGuess": "string|null",
+      "notes": "string|null",
+      "gtin": "string|null"
+    }
+  ]
 }
 
 Reglas obligatorias:
-- "name": nombre comercial completo legible en el envase (no uses solo una palabra genérica como "pasta" si la etiqueta dice más; incluye variante: ej. "Fideos spaghetti N°5").
-- "brand": marca registrada visible; null solo si no hay marca identificable.
-- "productType": QUÉ es el producto (ej. pasta seca de trigo, aceite de girasol, leche entera UHT, detergente líquido ropa).
-- "presentation": tipo de envase (bolsa, caja, botella PET, lata, brick, pote, pack multipack).
-- "netQuantity" y "netUnit": contenido neto impreso en la etiqueta (ej. netQuantity 500, netUnit "g"; o 1 y "L"). Si hay varios bloques, el principal según el frente del producto.
-- "format": una línea resumen humano: tipo + presentación + peso/volumen si aplica (ej. "Pasta seca · bolsa · 400 g").
-- "unit": texto útil para inventario (ej. "400 g", "1 L", "6×330 ml").
-- "notes": solo datos extra útiles (ingredientes llamativos, país de origen en etiqueta, advertencias); no repitas lo mismo de arriba.
-- "gtin": código de barras (EAN/UPC/GTIN) si es visible en la imagen o etiqueta. Devuelve solo dígitos (8 a 14). Si no se ve, null.
-- Todo en español. Si no hay producto reconocible: "name": "Desconocido" y null en campos que no apliquen.`
+- "products": un objeto por cada producto EMPAQUE distinto que puedas distinguir sin inventar líneas repetidas triviales del mismo SKU (ej. tres latas iguales del mismo producto → suele bastar una entrada con datos del envase una vez).
+- Para cada entrada:
+  - "name": nombre comercial legible para ese ítem en la foto (include variante cuando la etiqueta la muestre: ej. "Fideos spaghetti N°5").
+  - "brand": marca visible para ese elemento; null si no se distinguen.
+  - "productType", "presentation", "netQuantity", "netUnit", "format", "unit", "notes", "gtin": igual criterio que antes pero por cada entrada; "gtin" solo dígitos 8–14 si está visible para ese objeto.
+  - "categoryGuess": pista opcional sobre categoría tipo supermercado (en español).
+- Si ves un solo producto claro en la foto, "products" es un array con un solo objeto.
+- Si no hay ningún envase/producto reconocible, usa "products": [{"name":"Desconocido","brand":null,"productType":null,"presentation":null,"netQuantity":null,"netUnit":null,"format":null,"unit":null,"categoryGuess":null,"notes":null,"gtin":null}].
+- Todo el texto descriptivo en español.
+- Respeta SIEMPRE la clave "products" (array); no pongas solo un objeto en la raíz.`
 
 export const RECEIPT_ANALYSIS_PROMPT = `Extrae datos de una boleta o ticket de compra. Devuelve SOLO JSON válido (sin markdown) con forma:
 {"storeName":"string|null","purchasedAt":"ISO8601 string|null","currency":"string","total":"number|null","items":[{"nameRaw":"string","quantity":"number|null","unitPrice":"number|null","lineTotal":"number|null"}]}

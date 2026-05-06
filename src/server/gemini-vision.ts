@@ -49,6 +49,32 @@ export async function geminiAnalyzeProductFromImage(input: {
   return parseModelJsonLoose(text)
 }
 
+/** Boleta desde texto (PDF extraído o pegado); mismo JSON que desde imagen. */
+export async function geminiAnalyzeReceiptFromText(receiptText: string): Promise<unknown> {
+  const ai = getClient()
+  const safeText = receiptText.slice(0, 450_000)
+  const prompt = `${RECEIPT_ANALYSIS_PROMPT}
+
+---
+El siguiente bloque es texto extraído de una boleta o ticket (puede tener errores de OCR):
+
+${safeText}`
+
+  const model = getGeminiVisionModel()
+  const res = await ai.models.generateContent({
+    model,
+    contents: [
+      {
+        role: 'user',
+        parts: [{ text: prompt }],
+      },
+    ],
+  })
+
+  const text = res.text?.trim() ?? ''
+  return parseModelJsonLoose(text)
+}
+
 export async function geminiAnalyzeReceiptFromImage(input: {
   imageBase64: string
   mimeType: string

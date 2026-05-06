@@ -13,11 +13,11 @@ export function ProfileForm({ name, description, canEdit }: Props) {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Perfil del hogar</CardTitle>
+          <CardTitle>Datos de la ubicación</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">
-            Solo los administradores pueden editar el nombre y la descripción del perfil.
+            Solo los administradores pueden editar el nombre y la descripción de la ubicación.
           </p>
         </CardContent>
       </Card>
@@ -27,7 +27,7 @@ export function ProfileForm({ name, description, canEdit }: Props) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Perfil del hogar</CardTitle>
+        <CardTitle>Datos de la ubicación</CardTitle>
       </CardHeader>
       <CardContent>
         <form action={updateActiveProfileSettings} className="flex max-w-lg flex-col gap-4">

@@ -798,6 +798,10 @@ export interface Database {
         Args: Record<string, never>
         Returns: undefined
       }
+      catalog_brand_id_for_label: {
+        Args: { p_name: string }
+        Returns: string | null
+      }
     }
     Enums: {
       [_ in never]: never

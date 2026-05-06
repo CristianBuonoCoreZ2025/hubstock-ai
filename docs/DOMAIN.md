@@ -19,10 +19,10 @@ Son **las mismas etiquetas** en toda la app; lo que cambia es si la fila lleva s
 | **Sección** | `sections` | — | Pasillo / ámbito de compra (ej. *Lácteos*). Global, compartida. |
 | **Categoría** | `categories` (pertenece a una sección) | — | Subtipo dentro del pasillo (muchas veces *General*). Global. |
 | **Producto maestro** | `catalog_products` (+ `catalog_product_aliases`) | No | Plantilla de nombre, presentación y precio referencia. Sirve para copiar al hogar y para emparejar texto. |
-| **Producto del hogar** | `products` | Sí (`stock_current`, etc.) | Lo que editas en **Inventario**; referencia `section_id` + `category_id`; puede enlazar `catalog_product_id`. |
+| **Producto del hogar** | `products` | Sí (`stock_current`, etc.) | Instancia en el hogar: referencia **obligatoria** a un maestro vía `catalog_product_id` en el flujo manual de `/inventory`; `section_id` + `category_id` son la taxonomía comercial del ítem. |
 
-**Confusión habitual:** “¿Por qué veo sección/categoría en Inventario, Catálogo y Captura?”  
-Porque clasifican **el mismo tipo de fila final** (`products`): la captura y el catálogo solo proponen valores; el inventario persiste la instancia del hogar.
+**Confusión habitual:** “¿Inventario crea productos?”  
+El **maestro** siempre vive en `catalog_products`. Desde inventario puedes **vincular** uno existente o, en el mismo flujo, **crear el maestro + la fila del perfil** (nombre estándar único), con los mismos permisos que editar catálogo.
 
 ---
 

@@ -4,7 +4,7 @@ import { createProfile } from '@/app/actions/profile'
 
 const errorText: Record<string, string> = {
   invalid_name: 'El nombre debe tener al menos 2 caracteres.',
-  insert_failed: 'No se pudo crear el perfil. Revisa el esquema y RLS en Supabase.',
+  insert_failed: 'No se pudo crear la ubicación. Revisa el esquema y RLS en Supabase.',
 }
 
 type PageProps = {
@@ -19,9 +19,9 @@ export default async function NewProfilePage({ searchParams }: PageProps) {
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6">
       <div>
         <p className="text-[13px] font-medium uppercase tracking-wide text-muted-foreground">
-          Administración · Perfiles
+          Administración · Ubicación
         </p>
-        <h1 className="mt-1 text-2xl font-bold">Nuevo perfil</h1>
+        <h1 className="mt-1 text-2xl font-bold">Nueva ubicación</h1>
         <p className="mt-1 text-sm text-muted-foreground">{PAGE_LEADS.profilesNew}</p>
       </div>
 
@@ -61,7 +61,7 @@ export default async function NewProfilePage({ searchParams }: PageProps) {
             type="submit"
             className="inline-flex h-10 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90"
           >
-            Crear perfil
+            Crear ubicación
           </button>
           <Link
             href="/dashboard"

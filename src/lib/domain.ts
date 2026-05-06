@@ -10,7 +10,7 @@ export const PAGE_LEADS = {
 
   /** Inventario: stock del hogar; coherente con sub-rutas del menú (ver, fotos, boleta, manual). */
   inventory:
-    'Stock y fichas de este hogar (taxonomía global compartida con Catálogo). Entradas típicas en Inventario: ver listado, cargar por fotos, por boleta o carga manual.',
+    'Stock de este hogar: cada ítem está ligado al catálogo global. Puedes elegir un maestro ya existente o, si no está creado, dar de alta el nombre estándar en catálogo y en este inventario en el mismo flujo (según permisos). Aquí ajustas sección/categoría comercial y cantidades. También: fotos, boleta o ajustes manuales.',
 
   /** Catálogo: global; no es inventario ni stock del hogar. */
   catalogMaster:
@@ -18,7 +18,7 @@ export const PAGE_LEADS = {
 
   /** Captura = Inventario · cargar por fotos. */
   capture:
-    'Inventario · Cargar por fotos: una sesión por producto; foto, IA y confirmación de taxonomía antes de dar de alta en este hogar.',
+    'Inventario · Cargar por fotos: mismo esquema que el chequeo de stock (modelos OpenRouter, zona física fija, foto). Por cada producto detectado se propone categoría del catálogo global (editable por fila) y la zona elegida se guarda como ubicación física del ítem.',
 
   /** Boletas: ingreso a inventario desde ticket; mismo listado enlazado desde Compras como historial. */
   receipts:
@@ -40,9 +40,9 @@ export const PAGE_LEADS = {
   settings:
     'Preferencias y datos generales del hogar activo, más opciones de sesión.',
 
-  /** Administración · Perfiles — alta de hogar. */
+  /** Administración · Ubicación — alta de hogar. */
   profilesNew:
-    'Alta de un hogar adicional (perfil). Podrás alternar perfiles desde el selector.',
+    'Alta de una ubicación adicional (hogar). Podrás alternarla desde el selector; las zonas físicas disponibles son las mismas en todas las ubicaciones.',
 
   /** Ruta técnica / dev; no es módulo funcional. */
   styleLabDev:

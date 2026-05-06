@@ -86,7 +86,7 @@ export function TeamPageClient({
   const anchorName =
     activeProfileId && profileNameById.has(activeProfileId)
       ? profileNameById.get(activeProfileId)
-      : 'Perfil activo'
+      : 'Ubicación activa'
 
   const selectableExtraProfiles = useMemo(() => {
     const anchor = activeProfileId

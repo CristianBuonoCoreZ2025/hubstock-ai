@@ -16,6 +16,15 @@
  * **`OPENROUTER_VISION_MODEL_FREE`**: uno o **varios** ids separados por **coma**; se intentan **en orden**
  * dentro del paso `openrouter_free` antes de pasar al siguiente proveedor de la cadena (ej. el de pago).
  *
+ * **`OPENROUTER_VISION_MODEL`** (pago): igual — **varios** ids separados por **coma**; se intentan en orden
+ * dentro del paso `openrouter` antes de fallar ese paso.
+ *
+ * ## Boletas por documento (texto: PDF extraído o pegado)
+ * - Listas **independientes** de las de imagen: no se mezclan salvo que tú copies los mismos ids en `.env`.
+ * - **`OPENROUTER_DOCUMENT_MODEL_FREE`**: chat gratis; orden = prioridad. Si no defines la variable, el código
+ *   usa una **línea por defecto solo para documento** (no la de visión).
+ * - **`OPENROUTER_DOCUMENT_MODEL`**: chat de pago; orden = prioridad. Si no defines, hay defaults solo documento.
+ *
  * **`VISION_CHAIN`**: lista explícita, ej. `gemini,openrouter_free,openrouter` (admite `openrouter_free`).
  *
  * ## Ollama (local, sin API key)
@@ -25,7 +34,7 @@
  *
  * ## Variables
  * - `GEMINI_API_KEY`, `GEMINI_MODEL`
- * - `OPENROUTER_API_KEY`, `OPENROUTER_VISION_MODEL`, `OPENROUTER_VISION_MODEL_FREE`, `OPENROUTER_HTTP_REFERER`
+ * - `OPENROUTER_API_KEY`, `OPENROUTER_VISION_MODEL`, `OPENROUTER_VISION_MODEL_FREE`, `OPENROUTER_DOCUMENT_MODEL`, `OPENROUTER_DOCUMENT_MODEL_FREE`, `OPENROUTER_HTTP_REFERER`
  * - `OLLAMA_BASE_URL`, `OLLAMA_VISION_MODEL`
  */
 
@@ -194,13 +203,29 @@ export function resolveStockCheckVisionChain(
   return merged
 }
 
-/** Modelo de pago / saldo en OpenRouter (respaldo tras intentos gratis). */
-export function getOpenRouterVisionModel(): string {
-  const fromEnv = process.env.OPENROUTER_VISION_MODEL?.trim()
-  if (fromEnv && fromEnv.length > 0) {
-    return fromEnv
+function splitModelList(raw: string | undefined, fallback: string): string[] {
+  const fromEnv = raw?.trim()
+  if (!fromEnv || fromEnv.length === 0) {
+    return [fallback]
   }
-  return 'openai/gpt-4o-mini'
+  const parts = fromEnv
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+  return parts.length > 0 ? parts : [fallback]
+}
+
+/** Modelos de pago / saldo en OpenRouter (visión), en orden de intento. */
+export function getOpenRouterPaidVisionModels(): string[] {
+  return splitModelList(
+    process.env.OPENROUTER_VISION_MODEL,
+    'openai/gpt-4o-mini'
+  )
+}
+
+/** Primer modelo de pago (compatibilidad con llamadas que esperan un solo id). */
+export function getOpenRouterVisionModel(): string {
+  return getOpenRouterPaidVisionModels()[0] ?? 'openai/gpt-4o-mini'
 }
 
 const DEFAULT_OPENROUTER_FREE_MODEL = 'google/gemini-2.0-flash-exp:free'
@@ -251,4 +276,45 @@ export function getOllamaVisionModel(): string {
     return m
   }
   return 'llava'
+}
+
+/**
+ * Línea por defecto para **solo texto** (PDF/pegar), separada de la de visión.
+ * Orden = mejor candidato primero; puedes sustituirla entera con OPENROUTER_DOCUMENT_MODEL_FREE.
+ */
+const DEFAULT_OPENROUTER_DOCUMENT_FREE_MODELS: string[] = [
+  'google/gemini-2.0-flash-exp:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+]
+
+const DEFAULT_OPENROUTER_DOCUMENT_PAID_MODELS: string[] = [
+  'openai/gpt-4o-mini',
+]
+
+/**
+ * Modelos OpenRouter para boletas como **texto** (PDF / pegado). Chat completions, sin imagen.
+ * Independiente de `OPENROUTER_VISION_*`: cada lista tiene su propia línea y orden de intento.
+ */
+export function getOpenRouterFreeDocumentModels(): string[] {
+  const doc = process.env.OPENROUTER_DOCUMENT_MODEL_FREE?.trim()
+  if (doc && doc.length > 0) {
+    const parts = doc
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    return parts.length > 0 ? parts : [...DEFAULT_OPENROUTER_DOCUMENT_FREE_MODELS]
+  }
+  return [...DEFAULT_OPENROUTER_DOCUMENT_FREE_MODELS]
+}
+
+export function getOpenRouterPaidDocumentModels(): string[] {
+  const doc = process.env.OPENROUTER_DOCUMENT_MODEL?.trim()
+  if (doc && doc.length > 0) {
+    const parts = doc
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+    return parts.length > 0 ? parts : [...DEFAULT_OPENROUTER_DOCUMENT_PAID_MODELS]
+  }
+  return [...DEFAULT_OPENROUTER_DOCUMENT_PAID_MODELS]
 }

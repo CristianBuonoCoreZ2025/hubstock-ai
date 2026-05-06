@@ -37,9 +37,11 @@ import {
 import { StockCheckAiPanel } from '@/components/stock-check-ai-panel'
 import { StockCheckReviewDialog } from '@/components/stock-check-review-dialog'
 import { StockCheckScanEditTable } from '@/components/stock-check-scan-edit-table'
+import { VisionOpenRouterTierSelect } from '@/components/vision-openrouter-tier-select'
 import { VisionAnalysisNote } from '@/components/vision-analysis-note'
-import { messageFromAiApiError } from '@/lib/ai-api-error'
-import { fileToBase64, resolveApiImageMimeType } from '@/lib/ai-mime'
+import { messageFromAiApiError, readAiApiJsonBody } from '@/lib/ai-api-error'
+import { buildVisionAnalysisImagePayload } from '@/lib/capture-vision-image'
+import { STOCK_ZONE_OPTIONS, stockZoneLabel } from '@/lib/stock-zones'
 import {
   analysisToScanRows,
   scanRowsToAnalysisJson,
@@ -59,15 +61,6 @@ type CheckRow = {
   ai_meta: Json | null
 }
 
-const ZONES: { value: string; label: string }[] = [
-  { value: 'alacena', label: 'Alacena' },
-  { value: 'refrigerador', label: 'Refrigerador' },
-  { value: 'congelador', label: 'Congelador' },
-  { value: 'bano', label: 'Baño / aseo' },
-  { value: 'bodega', label: 'Bodega' },
-  { value: 'otro', label: 'Otro' },
-]
-
 function statusLabel(s: StockCheckStatus): string {
   switch (s) {
     case 'draft':
@@ -81,10 +74,6 @@ function statusLabel(s: StockCheckStatus): string {
     default:
       return s
   }
-}
-
-function zoneLabel(z: string): string {
-  return ZONES.find((x) => x.value === z)?.label ?? z
 }
 
 interface StockChecksClientProps {
@@ -111,7 +100,7 @@ export function StockChecksClient({
   listError,
 }: StockChecksClientProps) {
   const router = useRouter()
-  const [zone, setZone] = useState(ZONES[0]?.value ?? 'alacena')
+  const [zone, setZone] = useState(STOCK_ZONE_OPTIONS[0]?.value ?? 'alacena')
   const [openRouterTier, setOpenRouterTier] =
     useState<OpenRouterStockCheckTier>('free_first')
   const [file, setFile] = useState<File | null>(null)
@@ -230,25 +219,37 @@ export function StockChecksClient({
     clearScanDraft()
     setAnalyzing(true)
     try {
-      const mimeType = resolveApiImageMimeType(file)
-      const imageBase64 = await fileToBase64(file)
+      const payload = await buildVisionAnalysisImagePayload(file)
       const res = await fetch('/api/ai/stock-check', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           profileId,
-          imageBase64,
-          mimeType,
+          imageBase64: payload.imageBase64,
+          mimeType: payload.mimeType,
           zone,
           openRouterTier,
         }),
       })
-      const json = (await res.json()) as {
+      const parsed = await readAiApiJsonBody<{
         error?: string
         hint?: string
         analysis?: unknown
         vision?: VisionAnalysisMeta
+      }>(res)
+      if (parsed.kind === 'invalid_json') {
+        toast.error('La respuesta del servidor no es válida.')
+        return
       }
+      if (parsed.kind === 'empty') {
+        toast.error(
+          res.ok
+            ? 'Respuesta vacía del servidor.'
+            : messageFromAiApiError({})
+        )
+        return
+      }
+      const json = parsed.json
       if (!res.ok) {
         toast.error(messageFromAiApiError(json))
         return
@@ -346,36 +347,14 @@ export function StockChecksClient({
           celda antes de guardar si la lectura no es exacta.
         </p>
 
-        <div className="space-y-1.5">
-          <span className="app-field-label">Modelos OpenRouter</span>
-          <Select
-            value={openRouterTier}
-            onValueChange={(v) => {
-              setOpenRouterTier(v as OpenRouterStockCheckTier)
-              clearScanDraft()
-            }}
-          >
-            <SelectTrigger className="app-input w-full border-input">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="free_first">
-                Gratis primero, luego de pago (recomendado)
-              </SelectItem>
-              <SelectItem value="free_only">Solo modelos gratuitos</SelectItem>
-              <SelectItem value="paid_only">
-                Solo modelo de pago (saldo)
-              </SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-[12px] text-muted-foreground">
-            Prioridad de modelos en{' '}
-            <code className="rounded bg-muted px-1 text-[11px]">
-              OPENROUTER_VISION_MODEL
-            </code>
-            .
-          </p>
-        </div>
+        <VisionOpenRouterTierSelect
+          value={openRouterTier}
+          disabled={analyzing}
+          onValueChange={(v) => {
+            setOpenRouterTier(v)
+            clearScanDraft()
+          }}
+        />
 
         <div className="space-y-1.5">
           <span className="app-field-label">Zona</span>
@@ -390,7 +369,7 @@ export function StockChecksClient({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {ZONES.map((z) => (
+              {STOCK_ZONE_OPTIONS.map((z) => (
                 <SelectItem key={z.value} value={z.value}>
                   {z.label}
                 </SelectItem>
@@ -531,7 +510,7 @@ export function StockChecksClient({
                       <td className="whitespace-nowrap text-muted-foreground">
                         {new Date(c.created_at).toLocaleString('es')}
                       </td>
-                      <td>{zoneLabel(c.zone)}</td>
+                      <td>{stockZoneLabel(c.zone)}</td>
                       <td className="align-top">
                         <StockCheckAiPanel
                           meta={parseStockCheckAiMeta(c.ai_meta)}

@@ -5,6 +5,7 @@ export type InventoryRow = {
   sectionId: string
   categoryLabel: string
   sectionLabel: string
+  catalogProductId: string | null
   quantity: number
   stockMin: number | null
   price: number | null
@@ -26,6 +27,7 @@ export function buildInventoryRows(
     stock_current: number
     stock_min: number | null
     reference_price: number | null
+    catalog_product_id?: string | null
   }[],
   categoryById: Map<string, string>,
   sectionById: Map<string, string>
@@ -40,6 +42,7 @@ export function buildInventoryRows(
       sectionId: p.section_id,
       categoryLabel: categoryById.get(p.category_id) ?? '—',
       sectionLabel: sectionById.get(p.section_id) ?? '—',
+      catalogProductId: p.catalog_product_id ?? null,
       quantity: qty,
       stockMin: min,
       price: p.reference_price != null ? Number(p.reference_price) : null,

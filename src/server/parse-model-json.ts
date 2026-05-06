@@ -5,5 +5,8 @@ export function parseModelJsonLoose(text: string): unknown {
     .replace(/^```\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim()
+  if (!cleaned) {
+    throw new SyntaxError('model_empty_json')
+  }
   return JSON.parse(cleaned) as unknown
 }

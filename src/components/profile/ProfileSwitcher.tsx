@@ -27,7 +27,7 @@ export function ProfileSwitcher({ profiles, activeProfileId, className }: Props)
 
   return (
     <label className={cn('flex min-w-0 flex-col gap-1 text-sm', className)}>
-      <span className="text-muted-foreground sr-only sm:not-sr-only">Perfil</span>
+      <span className="text-muted-foreground sr-only sm:not-sr-only">Ubicación</span>
       <select
         className="max-w-[180px] truncate rounded-md border border-input bg-background px-2 py-1.5 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
         disabled={pending}

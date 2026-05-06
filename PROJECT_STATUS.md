@@ -1,6 +1,6 @@
 # Estado del proyecto — reporte
 
-Última actualización: 2026-05-06 (Etapa 4 — boletas e inventario).
+Última actualización: 2026-05-06 (Etapa 6 — Ubicación, zonas y captura).
 
 ## Etapa 1 — corrección final (navegación jerárquica)
 
@@ -392,3 +392,136 @@ Lint global del repo (p. ej. `react-hooks/set-state-in-effect`) fuera del alcanc
 ### Riesgo residual
 
 **Medio-bajo.** Sin transacción única en servidor de aplicación: ventana pequeña entre updates; dos confirmaciones paralelas podrían duplicar cantidades en teoría. Movimientos antiguos con `note = null` no son idempotentes por línea si se reejecutara lógica antigua sobre datos viejos — las nuevas confirmaciones usan `note` fijo. No se alteró RLS ni esquema.
+
+---
+
+## Nota (2026-05-06) — Ajustes en `/catalog`
+
+- **Productos (vista principal):** filtros por **Sección / Categoría (dependiente de sección) / Marca / Búsqueda libre** con búsqueda tipo Google usando `src/lib/search.ts`.
+- **Marcas:** creación en **modal**, búsqueda y selección de marca con listado de productos asociados.
+- **Categorías:** creación de sección/categoría en **modal**, navegación por **Sección → Categoría → Productos**.
+- **Alias:** movido a **sección avanzada** (modal “Administrar alias”), sin aparecer como opción del menú lateral.
+- **Errores profesionales:** helper central `src/lib/user-friendly-errors.ts` + normalización anti-duplicados al crear marca (ignora acentos/mayúsculas/espacios).
+
+### Rendimiento y grillas (actualización 2026-05-05)
+
+- **`/catalog`** ya no hidrata todos los productos del catálogo en el servidor: `page.tsx` solo envía secciones, categorías y un conteo opcional de vínculos al perfil; el listado usa **`fetchCatalogProductsPage`** con **`range` / lotes** según `PROJECT_CONTEXT` (tamaño **`CATALOG_GRID_PAGE_SIZE` = 100** en `src/lib/catalog-grid.ts`, compartido cliente/servidor porque `catalog.ts` es `"use server"` y no puede exportar constantes no-async).
+- **Productos:** switch **Mostrar inactivos** (solo activos si está apagado, filtro en consulta), paginación anterior/siguiente, columnas visibles alineadas al contexto; pickers grandes (marca/categoría/producto en modales) con **búsqueda remota**, **≥2 caracteres**, **debounce ~320 ms** y **máximo 50** resultados.
+- **Marcas:** listado paginado; **`catalog_brands` sin `active`** — nota UI de limitación (`GridInactiveNote`); productos por marca paginados igual que la grilla principal.
+- **`npm run build`:** correcto. **`npm run lint`:** siguen fallando **errores previos** fuera de Catálogo (`CaptureView`, Inventario, tema, etc.); **`CatalogTabs.tsx`** acotó `react-hooks/set-state-in-effect` solo dentro de `CatalogTabs` por el patrón paginación+filtros.
+
+---
+
+## Etapa 5 completada: módulo Inventario cerrado (`/inventory`)
+
+### Objetivo
+
+Cerrar el módulo **Inventario** según `PROJECT_CONTEXT.md` y reglas de grillas: paginación server-side, inactivos con filtro en consulta, búsqueda consistente con el helper común, **alta solo desde catálogo** (`catalog_product_id` obligatorio en `addProduct`; nombre siempre desde `catalog_products`), modal y textos alineados, y errores legibles al usuario.
+
+### Cambios realizados (resumen)
+
+| Área | Detalle |
+|------|---------|
+| Lista | Paginación **100** (`range`), `count` exacto, filtros por `section`/`category`/`inactive`/página vía `searchParams`. |
+| Inactivos | Checkbox **Mostrar inactivos**; por defecto solo `active = true` en la query. |
+| Búsqueda | Prefiltro `ilike` en servidor si `q` ≥ 2; refinamiento tolerante en cliente con `src/lib/search.ts`. |
+| Modal | `ProductDialog`: **solo** selección desde catálogo en el alta; enlace a `/catalog` si falta el maestro; botón **Agregar desde catálogo**. |
+| Persistencia | `addProduct` **exige** `catalog_product_id`. `updateProduct` mantiene vínculo existente o exige elegir catálogo si el ítem legado no tenía; `name` solo desde `catalog_products`. |
+| UX errores | `inventory.ts` usa `getUserFriendlyErrorMessage`. |
+| Grilla | Columna indicando vínculo al catálogo. |
+
+### Archivos modificados
+
+| Archivo |
+|---------|
+| `src/app/(app)/inventory/page.tsx` |
+| `src/app/(app)/inventory/InventoryView.tsx` |
+| `src/app/(app)/inventory/ProductDialog.tsx` |
+| `src/app/(app)/inventory/inventory-rows.ts` |
+| `src/app/actions/inventory.ts` |
+| `src/lib/domain.ts` |
+| `PROJECT_CONTEXT.md` |
+| `PROJECT_STATUS.md` |
+
+### Rutas
+
+`/inventory` (misma ruta; comportamiento y query params ampliados: `page`, `q`, `section`, `category`, `status`, `inactive`).
+
+### Tablas involucradas
+
+`products` (incl. `catalog_product_id`, `active`), `catalog_products` (lectura para nombre al vincular), `categories`, `sections`, `stock_movements` (sin cambio de contrato).
+
+### Migraciones
+
+**Ninguna.**
+
+### Validaciones (2026-05-06)
+
+| Comando | Resultado |
+|---------|-----------|
+| `npm run build` | **Correcto** (exit code 0). |
+| `npm run lint` | Sin nueva ejecución en esta etapa; histórico: errores **preexistentes** en el repo. |
+
+### Pendientes fuera de este cierre (otros módulos)
+
+- **Captura / fotos:** parte del flujo quedó cerrada en **Etapa 6** (zona fija, categoría de catálogo por ítem); pueden seguir abiertos lote masivo de fotos y emparejamiento explícito con `catalog_products` por línea.
+- **Boleta** e integración más amplia con inventario según contexto de producto.
+- Próximo foco acordado histórico: **Consumo** (`/consumption`).
+
+### Riesgo residual
+
+**Bajo** para este cierre. El cliente Supabase no ejecuta transacción única `products` + `stock_movements` (ya documentado en etapas anteriores).
+
+---
+
+## Etapa 6 completada: Ubicación (UI), zonas compartidas y captura por fotos
+
+### Objetivo
+
+Unificar la nomenclatura de **«Perfil» → «Ubicación»** en la interfaz sin renombrar tablas; alinear **Carga por fotos** con **Chequeo de stock** (orden: modelos OpenRouter → zona física → foto → analizar); asignar **categoría/sección del catálogo global por producto** en la revisión; persistir la **zona física** en columna existente `products.location`; reutilizar la misma lista de zonas en todo el hogar.
+
+### Cambios realizados (resumen)
+
+| Área | Detalle |
+|------|---------|
+| UI «Ubicación» | Menú Administración, página nueva ubicación (`/profiles/new`), Configuración, selector superior (`ProfileSwitcher`), textos en `domain.ts` / formularios donde aplicaba. Tabla **`profiles`** y **`profile_id`** sin cambios en BD. |
+| Zonas | `src/lib/stock-zones.ts` (`STOCK_ZONE_OPTIONS`) compartido por `StockChecksClient` y `CaptureView`. Todas las ubicaciones usan las mismas opciones por defecto. |
+| Captura (`CaptureView`) | Orden igual al chequeo; categorías por fila con selector agrupado por sección comercial; propuesta inicial vía `pickCatalogTaxonomyFromGuess` (`src/lib/catalog-taxonomy-match.ts`) desde `categoryGuess` de la IA. |
+| Persistencia | `addProductFromCapture` envía `location` = zona canónica; insert en `products.location`. |
+| IA (visión) | Producto y boleta aceptan `openRouterTier` en body (validación `profileScopedVisionImageBodySchema`); cadena de análisis alineada con chequeo de stock en servidor. |
+
+### Archivos tocados (referencia)
+
+| Archivo | Rol |
+|---------|-----|
+| `src/lib/stock-zones.ts` | Lista única de zonas físicas. |
+| `src/lib/catalog-taxonomy-match.ts` | Coincidencia categoría catálogo ← texto IA. |
+| `src/app/(app)/capture/CaptureView.tsx` | Flujo y tabla por ítem. |
+| `src/app/actions/capture.ts` | Campo `location` en insert. |
+| `src/app/(app)/stock-checks/StockChecksClient.tsx` | Import de zonas desde `stock-zones`. |
+| `src/lib/navigation.ts`, `profiles/new`, `settings`, `ProfileSwitcher`, `TeamPageClient`, `capture/page.tsx`, `domain.ts` | Copy «Ubicación». |
+| `src/lib/validators/ai.ts`, APIs `analyze-product` / `analyze-receipt`, `src/server/image-analysis.ts` | Paridad OpenRouter en análisis por imagen. |
+| `PROJECT_CONTEXT.md`, `PROJECT_STATUS.md` | Documentación. |
+
+### Rutas
+
+Sin rutas nuevas. `/profiles/new` conserva path; solo cambia texto visible.
+
+### Tablas / migraciones
+
+**Ninguna.** Uso de columna ya existente `products.location` (texto); sin cambios de RLS.
+
+### Validaciones
+
+| Comando | Resultado |
+|---------|-----------|
+| `npm run build` | **Correcto** (exit code 0), según última ejecución previa a esta documentación. |
+
+### Pendientes / siguiente foco
+
+- Mostrar **zona** (`products.location`) en grillas de inventario o filtros si el producto lo requiere.
+- Opcional: coincidencia explícita con `catalog_products` fila a fila en captura (además de categoría comercial y OFF).
+
+### Riesgo residual
+
+**Bajo.** Select de categorías por fila puede ser largo en catálogos muy grandes; las reglas del proyecto ya piden buscadores remotos en combobox pesados — evaluar si el selector de captura debe sustituirse por búsqueda async en una iteración futura.

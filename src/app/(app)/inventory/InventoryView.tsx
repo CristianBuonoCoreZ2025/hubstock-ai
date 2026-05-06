@@ -1,7 +1,11 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -12,6 +16,7 @@ import {
 import { ProductDialog } from './ProductDialog'
 import type { InventoryRow } from './inventory-rows'
 import type { TaxonomyCategory, TaxonomySection } from '@/types/taxonomy'
+import { filterBySearch } from '@/lib/search'
 
 type Props = {
   categories: TaxonomyCategory[]
@@ -19,6 +24,16 @@ type Props = {
   rows: InventoryRow[]
   /** Ayuda alineada con docs/DOMAIN.md (taxonomía sección/categoría vs inventario). */
   lead?: string
+  query: {
+    page: number
+    pageSize: number
+    total: number | null
+    q: string
+    section: string
+    category: string
+    status: string
+    inactive: boolean
+  }
 }
 
 function statusLabel(s: InventoryRow['status']) {
@@ -43,10 +58,13 @@ function statusClass(s: InventoryRow['status']) {
   }
 }
 
-export function InventoryView({ categories, sections, rows, lead }: Props) {
-  const [categoryFilter, setCategoryFilter] = useState<string>('all')
-  const [sectionFilter, setSectionFilter] = useState<string>('all')
-  const [statusFilter, setStatusFilter] = useState<string>('all')
+export function InventoryView({ categories, sections, rows, lead, query }: Props) {
+  const router = useRouter()
+  const [q, setQ] = useState(query.q)
+  const [categoryFilter, setCategoryFilter] = useState<string>(query.category)
+  const [sectionFilter, setSectionFilter] = useState<string>(query.section)
+  const [statusFilter, setStatusFilter] = useState<string>(query.status)
+  const [showInactive, setShowInactive] = useState<boolean>(query.inactive)
 
   const categoriesForSectionFilter = useMemo(() => {
     if (sectionFilter === 'all') return categories
@@ -61,16 +79,51 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
     }
   }, [sectionFilter, categoriesForSectionFilter, categoryFilter])
 
+  useEffect(() => {
+    // Sincroniza cambios de navegación (atrás/adelante) con el estado local.
+    setQ(query.q)
+    setCategoryFilter(query.category)
+    setSectionFilter(query.section)
+    setStatusFilter(query.status)
+    setShowInactive(query.inactive)
+  }, [query])
+
   const hasProducts = rows.length > 0
 
   const filtered = useMemo(() => {
-    return rows.filter((r) => {
+    const base = rows.filter((r) => {
       if (categoryFilter !== 'all' && r.categoryId !== categoryFilter) return false
       if (sectionFilter !== 'all' && r.sectionId !== sectionFilter) return false
       if (statusFilter !== 'all' && r.status !== statusFilter) return false
       return true
     })
-  }, [rows, categoryFilter, sectionFilter, statusFilter])
+
+    // Búsqueda tipo Google (tolerante) local sobre la página.
+    if (q.trim().length < 2) return base
+    return filterBySearch(base, q, (item) => item.name)
+  }, [rows, categoryFilter, sectionFilter, statusFilter, q])
+
+  function pushQuery(next: Partial<Props['query']>) {
+    const merged: Props['query'] = {
+      ...query,
+      q,
+      section: sectionFilter,
+      category: categoryFilter,
+      status: statusFilter,
+      inactive: showInactive,
+      ...next,
+    }
+
+    const params = new URLSearchParams()
+    if (merged.page > 1) params.set('page', String(merged.page))
+    if (merged.q.trim()) params.set('q', merged.q.trim())
+    if (merged.section !== 'all') params.set('section', merged.section)
+    if (merged.category !== 'all') params.set('category', merged.category)
+    if (merged.status !== 'all') params.set('status', merged.status)
+    if (merged.inactive) params.set('inactive', '1')
+
+    router.replace(`/inventory?${params.toString()}`)
+  }
 
   return (
     <div className="app-page">
@@ -79,7 +132,7 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
         <ProductDialog
           categories={categories}
           sections={sections}
-          trigger={<Button>Nuevo producto</Button>}
+          trigger={<Button>Agregar desde catálogo</Button>}
         />
       </div>
 
@@ -89,16 +142,36 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
 
       {!hasProducts ? (
         <p className="app-page-lead">
-          No hay productos activos en este perfil. Crea el primero con &quot;Nuevo producto&quot;.
+          No hay ítems en el inventario. Los productos vienen del{' '}
+          <Link href="/catalog" className="font-medium text-primary underline-offset-4 hover:underline">
+            catálogo global
+          </Link>
+          ; usa &quot;Agregar desde catálogo&quot; para vincular uno a este hogar y definir cantidad.
         </p>
       ) : null}
 
       {hasProducts ? (
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-        <div className="grid w-full gap-3 sm:max-w-3xl sm:grid-cols-3">
+      <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+          <div className="grid w-full gap-3 sm:max-w-4xl sm:grid-cols-4">
+            <div className="space-y-1.5">
+              <span className="text-xs font-medium text-muted-foreground">Búsqueda</span>
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onBlur={() => pushQuery({ page: 1, q })}
+                placeholder="Escribe al menos 2 caracteres…"
+              />
+            </div>
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">Sección</span>
-            <Select value={sectionFilter} onValueChange={setSectionFilter}>
+            <Select
+              value={sectionFilter}
+              onValueChange={(v) => {
+                setSectionFilter(v)
+                pushQuery({ page: 1, section: v, category: 'all' })
+              }}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Todas" />
               </SelectTrigger>
@@ -114,7 +187,13 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
           </div>
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">Categoría</span>
-            <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <Select
+              value={categoryFilter}
+              onValueChange={(v) => {
+                setCategoryFilter(v)
+                pushQuery({ page: 1, category: v })
+              }}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Todas" />
               </SelectTrigger>
@@ -130,7 +209,13 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
           </div>
           <div className="space-y-1.5">
             <span className="text-xs font-medium text-muted-foreground">Estado de stock</span>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <Select
+              value={statusFilter}
+              onValueChange={(v) => {
+                setStatusFilter(v)
+                pushQuery({ page: 1, status: v })
+              }}
+            >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder="Todos" />
               </SelectTrigger>
@@ -141,6 +226,51 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
                 <SelectItem value="critical">Crítico</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </div>
+          <div className="flex items-center gap-2">
+            <input
+              id="inventory-show-inactive"
+              type="checkbox"
+              checked={showInactive}
+              onChange={(e) => {
+                const checked = e.target.checked
+                setShowInactive(checked)
+                pushQuery({ page: 1, inactive: checked })
+              }}
+              className="h-4 w-4 rounded border border-input bg-background text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <Label htmlFor="inventory-show-inactive" className="text-sm text-muted-foreground">
+              Mostrar inactivos
+            </Label>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            {query.total != null
+              ? `Mostrando ${filtered.length} de ${query.total} (página ${query.page}).`
+              : `Mostrando ${filtered.length} (página ${query.page}).`}
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={query.page <= 1}
+              onClick={() => pushQuery({ page: Math.max(1, query.page - 1) })}
+            >
+              Anterior
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={query.total != null ? query.page * query.pageSize >= query.total : rows.length < query.pageSize}
+              onClick={() => pushQuery({ page: query.page + 1 })}
+            >
+              Siguiente
+            </Button>
           </div>
         </div>
       </div>
@@ -156,6 +286,7 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
             <thead>
               <tr>
                 <th>Nombre</th>
+                <th>Catálogo</th>
                 <th>Sección</th>
                 <th>Categoría</th>
                 <th>Stock</th>
@@ -169,6 +300,15 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
               {filtered.map((product) => (
                 <tr key={product.id}>
                   <td className="font-medium text-foreground">{product.name}</td>
+                  <td className="text-muted-foreground">
+                    {product.catalogProductId ? (
+                      <span className="inline-flex rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+                        Vinculado
+                      </span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">—</span>
+                    )}
+                  </td>
                   <td className="text-muted-foreground">{product.sectionLabel}</td>
                   <td className="text-muted-foreground">{product.categoryLabel}</td>
                   <td className="tabular-nums">{product.quantity}</td>
@@ -197,6 +337,7 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
                         stock_current: product.quantity,
                         stock_min: product.stockMin,
                         reference_price: product.price,
+                        catalog_product_id: product.catalogProductId,
                       }}
                       trigger={
                         <Button type="button" variant="outline" size="sm">

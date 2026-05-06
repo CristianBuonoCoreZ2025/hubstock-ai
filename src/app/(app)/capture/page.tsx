@@ -12,7 +12,7 @@ export default async function CapturePage() {
         <header className="app-page-header">
           <h1 className="app-page-title">Cargar por fotos</h1>
           <p className="app-page-lead">
-            Necesitas un perfil activo para usar esta función.
+            Necesitas una ubicación activa para usar esta función.
           </p>
         </header>
       </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ProfileOption } from '@/lib/profile/context'
 import {
@@ -26,10 +26,11 @@ import { isUiStyleDevToolbarEnabled } from '@/lib/ui-style-dev'
 function renderNavNode(
   node: NavNode,
   pathname: string,
-  locationHash: string
+  locationHash: string,
+  currentSearch: string
 ): ReactNode {
   if (node.type === 'link') {
-    const active = navLinkIsActive(pathname, locationHash, node.href)
+    const active = navLinkIsActive(pathname, locationHash, node.href, currentSearch)
     return (
       <Link
         key={node.href}
@@ -52,7 +53,7 @@ function renderNavNode(
         {node.name}
       </div>
       {node.children.map((child) => {
-        const active = navLinkIsActive(pathname, locationHash, child.href)
+        const active = navLinkIsActive(pathname, locationHash, child.href, currentSearch)
         return (
           <Link
             key={`${node.name}-${child.name}-${child.href}`}
@@ -85,6 +86,8 @@ export default function AppShell({
   needsProfileSetup,
 }: Props) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const currentSearch = searchParams.toString()
   const [locationHash, setLocationHash] = useState('')
   useEffect(() => {
     const sync = () => setLocationHash(typeof window !== 'undefined' ? window.location.hash : '')
@@ -117,7 +120,9 @@ export default function AppShell({
             />
           </div>
           <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3 text-[13px] font-medium lg:px-3">
-            {navigationTree.map((node) => renderNavNode(node, pathname, locationHash))}
+            {navigationTree.map((node) =>
+              renderNavNode(node, pathname, locationHash, currentSearch)
+            )}
           </nav>
           {isUiStyleDevToolbarEnabled ? (
             <div className="mt-auto border-t border-border px-3 py-4 lg:px-4">
@@ -178,7 +183,12 @@ export default function AppShell({
         >
           <ul className="flex items-stretch justify-around">
             {mobileBottomNavItems.map((item) => {
-              const active = navLinkIsActive(pathname, locationHash, item.href)
+              const active = navLinkIsActive(
+                pathname,
+                locationHash,
+                item.href,
+                currentSearch
+              )
               return (
                 <li key={item.name} className="flex-1">
                   <Link

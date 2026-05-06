@@ -1,0 +1,106 @@
+---
+description: Reglas permanentes de UI, modales y búsqueda
+alwaysApply: true
+---
+
+# Reglas permanentes de UI
+
+Antes de modificar cualquier pantalla, respetar estas reglas.
+
+## Modales
+
+Toda creación o edición específica debe ir en modal.
+
+Aplica para:
+
+- Nuevo producto
+- Editar producto
+- Nueva marca
+- Editar marca
+- Nueva sección
+- Nueva categoría
+- Nuevo alias
+- Crear producto desde boleta
+- Crear producto desde captura
+- Editar datos puntuales de una entidad
+
+No poner formularios grandes abiertos por defecto en la página.
+
+La página principal debe servir para navegar, buscar, filtrar y revisar datos.
+
+La creación es acción secundaria.
+
+## Búsquedas
+
+Toda búsqueda interna del sistema debe comportarse como búsqueda tipo Google.
+
+Debe ignorar:
+
+- acentos
+- mayúsculas
+- minúsculas
+- posición del texto
+- espacios repetidos
+
+Debe aceptar varias palabras en distinto orden.
+
+Ejemplos obligatorios:
+
+- "mayo" encuentra "Mayonesa"
+- "mayó" encuentra "Mayonesa"
+- "MAYO" encuentra "Mayonesa"
+- "hell mayo" encuentra "Mayonesa Hellmanns"
+- "cristian casa" encuentra "Casa Cristian"
+
+Usar un helper común de búsqueda.
+
+No crear filtros locales distintos en cada pantalla.
+
+Helper esperado:
+
+- normalizeSearchText
+- matchesSearch
+- filterBySearch
+
+Ubicación sugerida:
+
+src/lib/search.ts
+
+## Navegación interna
+
+El menú lateral muestra módulos.
+
+Las opciones internas viven dentro de la página como tabs, filtros, botones o modales.
+
+No duplicar en el menú lateral lo que ya existe como tab interna.
+
+## Regla de foco
+
+Cada pantalla debe tener un objetivo principal.
+
+Catálogo:
+navegar productos globales por sección, categoría, producto y marca.
+
+Inventario:
+ver stock y cargar productos al perfil.
+
+Consumo:
+descontar productos usados.
+
+Chequeo de stock:
+comparar stock esperado contra stock físico.
+
+Compras:
+planificar compras, tiendas e historial.
+
+Administración:
+perfiles, personas e invitaciones enviadas.
+
+## Prohibido
+
+- Formularios grandes como foco principal si la acción es crear.
+- Repetir buscadores con lógicas distintas.
+- Cambiar navegación global cuando el problema es solo de una pantalla.
+- Convertir tabs internas en ítems principales del menú.
+- Tocar base de datos para corregir un problema visual.
+- Reescribir módulos completos sin aprobación.

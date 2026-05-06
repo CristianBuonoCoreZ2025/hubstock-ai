@@ -40,16 +40,16 @@ export default async function SettingsPage() {
       </header>
 
       <section className="app-panel">
-        <h2 className="text-sm font-semibold">Perfiles</h2>
+        <h2 className="text-sm font-semibold">Ubicación</h2>
         <p className="mt-1 text-[13px] text-muted-foreground">
-          Puedes crear más de un hogar/perfil y cambiar entre ellos desde el selector de perfil.
+          Puedes crear más de un hogar y cambiar entre ellos desde el selector de ubicación.
         </p>
         <div className="mt-3">
           <Link
             href="/profiles/new"
             className="text-sm font-medium text-primary underline-offset-4 hover:underline"
           >
-            Crear nuevo perfil
+            Crear nueva ubicación
           </Link>
         </div>
       </section>

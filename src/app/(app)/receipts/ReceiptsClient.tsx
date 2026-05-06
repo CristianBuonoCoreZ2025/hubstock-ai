@@ -20,9 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { VisionOpenRouterTierSelect } from '@/components/vision-openrouter-tier-select'
 import { VisionAnalysisNote } from '@/components/vision-analysis-note'
-import { messageFromAiApiError } from '@/lib/ai-api-error'
-import { fileToBase64, resolveApiImageMimeType } from '@/lib/ai-mime'
+import { messageFromAiApiError, readAiApiJsonBody } from '@/lib/ai-api-error'
+import { fileToBase64 } from '@/lib/ai-mime'
+import { buildVisionAnalysisImagePayload } from '@/lib/capture-vision-image'
+import type { OpenRouterStockCheckTier } from '@/types/open-router-stock-check-tier'
 import type { VisionAnalysisMeta } from '@/types/vision-meta'
 import type { ReceiptStatus } from '@/types/database'
 
@@ -65,6 +68,9 @@ type ProductOption = { id: string; name: string }
 
 const NONE = '__none__'
 
+/** Misma idea que captura: foto (visión) vs documento (texto / PDF). */
+type BoletaSource = 'image' | 'document_pdf' | 'document_text'
+
 interface ReceiptsClientProps {
   profileId: string
   initialReceipts: ReceiptRow[]
@@ -84,7 +90,11 @@ export function ReceiptsClient({
   const [reviewItems, setReviewItems] = useState<ReceiptDetailItem[]>([])
   const [confirming, setConfirming] = useState(false)
 
+  const [openRouterTier, setOpenRouterTier] =
+    useState<OpenRouterStockCheckTier>('free_first')
+  const [boletaSource, setBoletaSource] = useState<BoletaSource>('image')
   const [file, setFile] = useState<File | null>(null)
+  const [documentPlainText, setDocumentPlainText] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [analysis, setAnalysis] = useState<ReceiptAnalysis | null>(null)
@@ -96,26 +106,99 @@ export function ReceiptsClient({
   const [purchasedAt, setPurchasedAt] = useState('')
   const [total, setTotal] = useState('')
 
+  function clearReceiptAiDraft() {
+    setReceiptVision(null)
+    setAnalysis(null)
+    setStoreName('')
+    setPurchasedAt('')
+    setTotal('')
+  }
+
+  function resetBoletaInputs() {
+    setFile(null)
+    setDocumentPlainText('')
+    clearReceiptAiDraft()
+  }
+
+  function changeBoletaSource(next: BoletaSource) {
+    setBoletaSource(next)
+    resetBoletaInputs()
+  }
+
   async function analyze() {
-    if (!file) {
-      toast.error('Selecciona una foto de la boleta')
-      return
-    }
     setAnalyzing(true)
     try {
-      const mimeType = resolveApiImageMimeType(file)
-      const imageBase64 = await fileToBase64(file)
+      let body: Record<string, unknown>
+      if (boletaSource === 'image') {
+        if (!file) {
+          toast.error('Selecciona una imagen de la boleta')
+          return
+        }
+        const img = await buildVisionAnalysisImagePayload(file)
+        body = {
+          profileId,
+          inputKind: 'image',
+          imageBase64: img.imageBase64,
+          mimeType: img.mimeType,
+          openRouterTier,
+        }
+      } else if (boletaSource === 'document_pdf') {
+        if (!file) {
+          toast.error('Selecciona un PDF')
+          return
+        }
+        if (
+          file.type !== 'application/pdf' &&
+          !file.name.toLowerCase().endsWith('.pdf')
+        ) {
+          toast.error('El archivo debe ser PDF')
+          return
+        }
+        const pdfBase64 = await fileToBase64(file)
+        body = {
+          profileId,
+          inputKind: 'document_pdf',
+          pdfBase64,
+          openRouterTier,
+        }
+      } else {
+        const t = documentPlainText.trim()
+        if (t.length < 10) {
+          toast.error('Pega al menos unas pocas líneas del ticket (10 caracteres).')
+          return
+        }
+        body = {
+          profileId,
+          inputKind: 'document_text',
+          plainText: t,
+          openRouterTier,
+        }
+      }
+
       const res = await fetch('/api/ai/analyze-receipt', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profileId, imageBase64, mimeType }),
+        body: JSON.stringify(body),
       })
-      const json = (await res.json()) as {
+      const parsed = await readAiApiJsonBody<{
         error?: string
         hint?: string
         analysis?: unknown
         vision?: VisionAnalysisMeta
+      }>(res)
+      if (parsed.kind === 'invalid_json') {
+        toast.error('La respuesta del servidor no es válida.')
+        return
       }
+      if (parsed.kind === 'empty') {
+        toast.error(
+          res.ok
+            ? 'Respuesta vacía del servidor.'
+            : messageFromAiApiError({})
+        )
+        return
+      }
+      const json = parsed.json
       if (!res.ok) {
         toast.error(messageFromAiApiError(json))
         return
@@ -149,10 +232,16 @@ export function ReceiptsClient({
     }
   }
 
+  function canAnalyze(): boolean {
+    if (boletaSource === 'image') return Boolean(file)
+    if (boletaSource === 'document_pdf') return Boolean(file)
+    return documentPlainText.trim().length >= 10
+  }
+
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     if (!analysis) {
-      toast.error('Primero analiza una imagen')
+      toast.error('Primero analiza la boleta')
       return
     }
     setSaving(true)
@@ -162,7 +251,12 @@ export function ReceiptsClient({
       fd.set('store_name', storeName)
       if (purchasedAt) fd.set('purchased_at', new Date(purchasedAt).toISOString())
       if (total.trim() !== '') fd.set('total', total)
-      if (file) fd.set('image', file)
+      if (
+        file &&
+        (boletaSource === 'image' || boletaSource === 'document_pdf')
+      ) {
+        fd.set('image', file)
+      }
 
       const result = await savePurchaseReceiptDraft(fd)
       if (!result.ok) {
@@ -171,6 +265,7 @@ export function ReceiptsClient({
       }
       toast.success('Boleta guardada como borrador')
       setFile(null)
+      setDocumentPlainText('')
       setReceiptVision(null)
       setAnalysis(null)
       setStoreName('')
@@ -235,38 +330,149 @@ export function ReceiptsClient({
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="grid gap-8 lg:grid-cols-2">
-      <div className="space-y-4">
-        <div className="app-panel space-y-3">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="app-panel space-y-4">
           <h2 className="text-sm font-semibold text-foreground">
-            Nueva boleta
+            1. Modelo y archivo
           </h2>
           <p className="app-page-lead">
-            Sube una foto del ticket. La IA extrae ítems y total; al guardar solo
-            queda un borrador (sin cambiar inventario) hasta que revises y
-            confirmes la boleta abajo.
+            Mismo criterio que <strong>Inventario · Cargar por fotos</strong>: eliges
+            si OpenRouter intenta primero modelos gratuitos, solo gratuitos o solo de
+            pago. La <strong>zona física del hogar</strong> no aplica en boletas (solo
+            en carga por fotos). Puedes procesar la boleta como{' '}
+            <strong>foto</strong> (visión) o como <strong>documento</strong> (PDF con
+            texto extraído o texto pegado).
           </p>
-          <Input
-            type="file"
-            accept="image/*"
-            className="app-input cursor-pointer"
-            onChange={(ev) => {
-              setFile(ev.target.files?.[0] ?? null)
-              setReceiptVision(null)
+
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={boletaSource === 'image' ? 'default' : 'outline'}
+              onClick={() => changeBoletaSource('image')}
+              disabled={analyzing}
+            >
+              Foto de boleta
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={boletaSource === 'document_pdf' ? 'default' : 'outline'}
+              onClick={() => changeBoletaSource('document_pdf')}
+              disabled={analyzing}
+            >
+              PDF (documento)
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={boletaSource === 'document_text' ? 'default' : 'outline'}
+              onClick={() => changeBoletaSource('document_text')}
+              disabled={analyzing}
+            >
+              Texto pegado
+            </Button>
+          </div>
+
+          <VisionOpenRouterTierSelect
+            value={openRouterTier}
+            disabled={analyzing}
+            hintVariant={boletaSource === 'image' ? 'vision' : 'document'}
+            onValueChange={(v) => {
+              setOpenRouterTier(v)
+              clearReceiptAiDraft()
             }}
           />
+
+          {boletaSource === 'image' ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="receipt-photo" className="app-field-label">
+                Imagen del ticket
+              </Label>
+              <Input
+                id="receipt-photo"
+                type="file"
+                accept="image/*"
+                className="app-input cursor-pointer"
+                onChange={(ev) => {
+                  setFile(ev.target.files?.[0] ?? null)
+                  clearReceiptAiDraft()
+                }}
+              />
+            </div>
+          ) : null}
+
+          {boletaSource === 'document_pdf' ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="receipt-pdf" className="app-field-label">
+                PDF de la boleta
+              </Label>
+              <Input
+                id="receipt-pdf"
+                type="file"
+                accept="application/pdf,.pdf"
+                className="app-input cursor-pointer"
+                onChange={(ev) => {
+                  setFile(ev.target.files?.[0] ?? null)
+                  clearReceiptAiDraft()
+                }}
+              />
+              <p className="text-[12px] text-muted-foreground">
+                El servidor extrae el texto del PDF y lo envía a modelos de{' '}
+                <strong>documento</strong> (variables{' '}
+                <code className="rounded bg-muted px-1 text-[11px]">
+                  OPENROUTER_DOCUMENT_MODEL*
+                </code>{' '}
+                si las configuraste).
+              </p>
+            </div>
+          ) : null}
+
+          {boletaSource === 'document_text' ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="receipt-plain" className="app-field-label">
+                Texto del ticket
+              </Label>
+              <textarea
+                id="receipt-plain"
+                rows={10}
+                className="app-input min-h-[160px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none"
+                placeholder="Pega aquí el contenido del ticket (desde correo, OCR o PDF)."
+                value={documentPlainText}
+                onChange={(e) => {
+                  setDocumentPlainText(e.target.value)
+                  clearReceiptAiDraft()
+                }}
+              />
+            </div>
+          ) : null}
+
           <Button
             type="button"
             variant="secondary"
             onClick={() => void analyze()}
-            disabled={!file || analyzing}
+            disabled={!canAnalyze() || analyzing}
           >
             {analyzing ? 'Leyendo…' : 'Analizar boleta'}
           </Button>
           <VisionAnalysisNote vision={receiptVision} />
+        </div>
 
-          {analysis ? (
-            <form className="space-y-3 pt-2" onSubmit={onSave}>
+        <div className="app-panel space-y-4">
+          <h2 className="text-sm font-semibold text-foreground">
+            2. Revisar y guardar borrador
+          </h2>
+          <p className="app-page-lead text-[13px] text-muted-foreground">
+            Al guardar solo queda un borrador (sin cambiar inventario) hasta que
+            confirmes la boleta en la tabla inferior.
+          </p>
+
+          {!analysis ? (
+            <p className="rounded-lg border border-dashed border-border bg-muted/20 px-3 py-6 text-center text-sm text-muted-foreground">
+              Ejecuta el análisis en el paso 1 para ver comercio, total y líneas.
+            </p>
+          ) : (
+            <form className="space-y-3" onSubmit={onSave}>
               <div className="space-y-1.5">
                 <Label htmlFor="store_name" className="app-field-label">
                   Comercio
@@ -306,30 +512,57 @@ export function ReceiptsClient({
                   />
                 </div>
               </div>
-              <div className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+              <div className="app-data-table-wrap text-[12px]">
                 {Array.isArray(analysis.items) && analysis.items.length > 0 ? (
-                  <ul className="list-inside list-disc space-y-0.5">
-                    {analysis.items.slice(0, 8).map((it, i) => (
-                      <li key={i}>
-                        {it.nameRaw}
-                        {it.lineTotal != null
-                          ? ` — ${it.lineTotal}`
-                          : ''}
-                      </li>
-                    ))}
-                    {analysis.items.length > 8 ? (
-                      <li>… y más ítems</li>
-                    ) : null}
-                  </ul>
+                  <table className="app-data-table">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Descripción</th>
+                        <th className="text-right">Cant.</th>
+                        <th className="text-right">P. unit.</th>
+                        <th className="text-right">Subtotal</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {analysis.items.slice(0, 12).map((it, i) => (
+                        <tr key={i}>
+                          <td className="tabular-nums text-muted-foreground">
+                            {i + 1}
+                          </td>
+                          <td className="max-w-[240px] truncate font-medium">
+                            {it.nameRaw}
+                          </td>
+                          <td className="text-right tabular-nums">
+                            {it.quantity ?? '—'}
+                          </td>
+                          <td className="text-right tabular-nums">
+                            {it.unitPrice ?? '—'}
+                          </td>
+                          <td className="text-right tabular-nums">
+                            {it.lineTotal ?? '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 ) : (
-                  <span>No se detectaron líneas; igual puedes guardar la boleta.</span>
+                  <p className="rounded-lg border border-border bg-muted/30 px-3 py-2 text-muted-foreground">
+                    No se detectaron líneas; igual puedes guardar la boleta.
+                  </p>
                 )}
+                {Array.isArray(analysis.items) && analysis.items.length > 12 ? (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Mostrando 12 de {analysis.items.length} líneas; el borrador
+                    guardará el JSON completo.
+                  </p>
+                ) : null}
               </div>
               <Button type="submit" disabled={saving}>
                 {saving ? 'Guardando…' : 'Guardar borrador'}
               </Button>
             </form>
-          ) : null}
+          )}
         </div>
       </div>
 
@@ -364,9 +597,7 @@ export function ReceiptsClient({
                     <td className="whitespace-nowrap text-muted-foreground">
                       {new Date(r.created_at).toLocaleString('es')}
                     </td>
-                    <td className="font-medium">
-                      {r.store_name ?? '—'}
-                    </td>
+                    <td className="font-medium">{r.store_name ?? '—'}</td>
                     <td className="tabular-nums">
                       {r.total != null ? r.total.toFixed(2) : '—'}
                     </td>
@@ -391,7 +622,6 @@ export function ReceiptsClient({
             </tbody>
           </table>
         </div>
-      </div>
       </div>
 
       {reviewReceiptId ? (

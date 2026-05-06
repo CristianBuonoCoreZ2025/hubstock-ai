@@ -48,7 +48,7 @@ export type NavNode =
 
 /**
  * Jerarquía según PROJECT_CONTEXT.md.
- * Rutas solo existentes; Marcas/Categorías del catálogo apuntan a `/catalog` (misma vista).
+ * Catálogo: misma ruta con `?tab=` para estado activo en sidebar y pestañas.
  */
 export const navigationTree: NavNode[] = [
   { type: 'link', name: 'Dashboard', href: '/dashboard', icon: Home },
@@ -57,9 +57,9 @@ export const navigationTree: NavNode[] = [
     name: 'Catálogo',
     icon: BookMarked,
     children: [
-      { name: 'Productos', href: '/catalog', icon: Package },
-      { name: 'Marcas', href: '/catalog', icon: Tag },
-      { name: 'Categorías', href: '/catalog', icon: Layers },
+      { name: 'Productos', href: '/catalog?tab=productos', icon: Package },
+      { name: 'Marcas', href: '/catalog?tab=marcas', icon: Tag },
+      { name: 'Categorías', href: '/catalog?tab=categorias', icon: Layers },
     ],
   },
   {
@@ -110,7 +110,7 @@ export const navigationTree: NavNode[] = [
     name: 'Administración',
     icon: Users,
     children: [
-      { name: 'Perfiles', href: '/profiles/new', icon: Building2 },
+      { name: 'Ubicación', href: '/profiles/new', icon: Building2 },
       { name: 'Personas', href: '/users#admin-personas', icon: UserRound },
       { name: 'Invitaciones enviadas', href: '/users#admin-invitaciones', icon: Mail },
     ],
@@ -131,15 +131,58 @@ export const mobileBottomNavItems: {
   { name: 'Menú', href: '/menu', icon: Menu },
 ]
 
-/** Estado activo para cualquier `href` (incluye fragmento). */
+/** Descompone `href` de navegación (path relativo, query sin `?`, hash con `#`). */
+function splitNavHref(href: string): { path: string; search: string; hash: string } {
+  let rest = href
+  let hash = ''
+  const hashIdx = rest.indexOf('#')
+  if (hashIdx >= 0) {
+    hash = rest.slice(hashIdx)
+    rest = rest.slice(0, hashIdx)
+  }
+  let path = rest
+  let search = ''
+  const qIdx = rest.indexOf('?')
+  if (qIdx >= 0) {
+    path = rest.slice(0, qIdx)
+    search = rest.slice(qIdx + 1)
+  }
+  return { path, search, hash }
+}
+
+/**
+ * Estado activo: pathname, opcionalmente hash (`#fragmento`) o query esperada (`?param=…`).
+ * `currentSearch` es el `search` de la URL actual sin `?` (p. ej. `tab=marcas`).
+ * En `/catalog` sin `tab`, se considera activo el subenlace `?tab=productos`.
+ */
 export function navLinkIsActive(
   pathname: string,
   locationHash: string,
-  href: string
+  href: string,
+  currentSearch = ''
 ): boolean {
-  if (href.includes('#')) {
-    const [path, frag] = href.split('#')
-    return pathname === path && locationHash === `#${frag}`
+  const { path, search: hrefSearch, hash } = splitNavHref(href)
+
+  if (hash) {
+    return pathname === path && locationHash === hash
   }
-  return pathname === href
+
+  if (hrefSearch) {
+    if (pathname !== path) return false
+    const expected = new URLSearchParams(hrefSearch)
+    const current = new URLSearchParams(
+      currentSearch.startsWith('?') ? currentSearch.slice(1) : currentSearch
+    )
+    for (const [key, value] of expected.entries()) {
+      if (key === 'tab' && value === 'productos' && path === '/catalog') {
+        const t = current.get('tab')
+        if (t === null || t === '' || t === 'productos') continue
+        return false
+      }
+      if (current.get(key) !== value) return false
+    }
+    return true
+  }
+
+  return pathname === path
 }
