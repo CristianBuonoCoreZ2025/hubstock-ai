@@ -108,7 +108,38 @@ export async function addProductFromCapture(
     })
   }
 
+  if (stock_current > 0) {
+    const { error: movErr } = await supabase.from('stock_movements').insert({
+      profile_id: activeProfileId,
+      product_id: product.id,
+      delta: stock_current,
+      movement_type: 'import',
+      note: 'Carga por fotos (captura)',
+      reference_id: null,
+      created_by: userData.user.id,
+    })
+    if (movErr) {
+      const { error: revertErr } = await supabase
+        .from('products')
+        .update({ stock_current: 0 })
+        .eq('id', product.id)
+        .eq('profile_id', activeProfileId)
+      if (revertErr) {
+        console.error('Revertir stock tras fallo de movimiento (captura):', revertErr)
+        return {
+          ok: false,
+          error: `No se registró el movimiento de stock y no se pudo dejar la cantidad en 0: ${revertErr.message} (movimiento: ${movErr.message})`,
+        }
+      }
+      return {
+        ok: false,
+        error: `No se pudo registrar el movimiento de stock; la cantidad del producto quedó en 0. ${movErr.message}`,
+      }
+    }
+  }
+
   revalidatePath('/inventory')
   revalidatePath('/capture')
+  revalidatePath('/history')
   return { ok: true }
 }

@@ -10,6 +10,7 @@ export type CopyCatalogResult =
 /**
  * Copia el catálogo maestro global al perfil activo (solo admin/editor).
  * Idempotente: no duplica filas ya vinculadas por catalog_product_id.
+ * La RPC inserta `stock_current = 0` (ver migración `copy_catalog_products_to_profile`); no crea `stock_movements` en la copia.
  */
 export async function copyCatalogProductsToProfile(
   profileId: string

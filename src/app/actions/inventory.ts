@@ -88,7 +88,37 @@ export async function addProduct(formData: FormData) {
     return { error: error.message }
   }
 
+  if (data && stock_current > 0) {
+    const { error: movErr } = await supabase.from('stock_movements').insert({
+      profile_id: activeProfileId,
+      product_id: data.id,
+      delta: stock_current,
+      movement_type: 'import',
+      note: 'Alta manual (inventario)',
+      reference_id: null,
+      created_by: userData.user.id,
+    })
+    if (movErr) {
+      console.error('stock_movements tras alta de producto:', movErr)
+      const { error: revertErr } = await supabase
+        .from('products')
+        .update({ stock_current: 0 })
+        .eq('id', data.id)
+        .eq('profile_id', activeProfileId)
+      if (revertErr) {
+        console.error('Revertir stock tras fallo de movimiento (alta):', revertErr)
+        return {
+          error: `No se registró el movimiento de stock y no se pudo dejar la cantidad en 0: ${revertErr.message} (movimiento: ${movErr.message})`,
+        }
+      }
+      return {
+        error: `No se pudo registrar el movimiento de stock; la cantidad del producto quedó en 0. ${movErr.message}`,
+      }
+    }
+  }
+
   revalidatePath('/inventory')
+  revalidatePath('/history')
   return { data }
 }
 
@@ -99,7 +129,11 @@ export async function updateProduct(id: string, formData: FormData) {
   }
 
   const supabase = await createClient()
-  
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData.user) {
+    return { error: 'Not authenticated' }
+  }
+
   const name = formData.get('name') as string
   const category_id = formData.get('category_id') as string
   const section_id = formData.get('section_id') as string
@@ -114,6 +148,15 @@ export async function updateProduct(id: string, formData: FormData) {
   if (!name || !category_id || !section_id) {
     return { error: 'Missing required fields' }
   }
+
+  const { data: priorRow } = await supabase
+    .from('products')
+    .select('stock_current')
+    .eq('id', id)
+    .eq('profile_id', activeProfileId)
+    .maybeSingle()
+
+  const prevStock = Number(priorRow?.stock_current ?? 0)
 
   const { data, error } = await supabase
     .from('products')
@@ -135,7 +178,38 @@ export async function updateProduct(id: string, formData: FormData) {
     return { error: error.message }
   }
 
+  const delta = stock_current - prevStock
+  if (delta !== 0) {
+    const { error: movErr } = await supabase.from('stock_movements').insert({
+      profile_id: activeProfileId,
+      product_id: id,
+      delta,
+      movement_type: 'adjustment',
+      note: 'Ajuste manual (edición en inventario)',
+      reference_id: null,
+      created_by: userData.user.id,
+    })
+    if (movErr) {
+      console.error('stock_movements tras edición de producto:', movErr)
+      const { error: revertErr } = await supabase
+        .from('products')
+        .update({ stock_current: prevStock })
+        .eq('id', id)
+        .eq('profile_id', activeProfileId)
+      if (revertErr) {
+        console.error('Revertir stock tras fallo de movimiento (edición):', revertErr)
+        return {
+          error: `Falló el movimiento de stock y no se pudo restaurar la cantidad anterior: ${revertErr.message} (movimiento: ${movErr.message})`,
+        }
+      }
+      return {
+        error: `No se pudo registrar el movimiento de stock; la cantidad volvió al valor anterior. ${movErr.message}`,
+      }
+    }
+  }
+
   revalidatePath('/inventory')
+  revalidatePath('/history')
   return { data }
 }
 
@@ -221,5 +295,6 @@ export async function consumeProduct(productId: string, quantity: number) {
 
   revalidatePath('/consumption')
   revalidatePath('/inventory')
+  revalidatePath('/history')
   return { success: true, applied, newStock }
 }

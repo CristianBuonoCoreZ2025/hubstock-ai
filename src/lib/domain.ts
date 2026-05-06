@@ -22,7 +22,7 @@ export const PAGE_LEADS = {
 
   /** Boletas: ingreso a inventario desde ticket; mismo listado enlazado desde Compras como historial. */
   receipts:
-    'Boleta de compra: líneas revisables antes de confirmar ingreso de stock al inventario. Este listado también cumple el rol de historial de boletas del módulo Compras.',
+    'Boleta de compra: subir o guardar solo crea un borrador con ítems detectados; el stock del hogar no cambia hasta que confirmas tras revisar y emparejar líneas. Este listado también cumple el rol de historial de boletas del módulo Compras.',
 
   /** Chequeo de stock: comparar físico vs sistema y aplicar ajustes. */
   stockChecks:
@@ -49,11 +49,21 @@ export const PAGE_LEADS = {
     'Herramienta técnica para probar apariencia en desarrollo; no forma parte del flujo operativo de inventario o compras.',
 } as const
 
+/**
+ * Etiquetas UI para `stock_movements.movement_type` (valores fijos en BD).
+ * Mapeo funcional aproximado: `import` — alta manual o captura con cantidad inicial;
+ * `purchase` — boletas / compras confirmadas; `consumption` — consumo; `inventory_count` — chequeo;
+ * `adjustment` — edición manual de cantidad en inventario u otros ajustes no cubiertos arriba.
+ *
+ * Consistencia (Etapa 3.2): en alta manual, captura y edición de cantidad, si falla el insert en
+ * `stock_movements` tras actualizar `products`, las server actions compensan (stock inicial → 0 o
+ * cantidad revertida al valor previo) para no dejar stock cambiado sin movimiento asociado.
+ */
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {
   consumption: 'Consumo',
   purchase: 'Compra / ingreso',
-  adjustment: 'Ajuste',
-  import: 'Importación',
+  adjustment: 'Ajuste manual',
+  import: 'Alta / importación inicial',
   inventory_count: 'Conteo de inventario',
 }
 

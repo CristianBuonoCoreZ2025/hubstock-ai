@@ -7,6 +7,13 @@ import { assertProfileMembership } from '@/lib/profile/membership'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import { createClient } from '@/lib/supabase/server'
 
+/** Marca en `stock_movements.note` para idempotencia por línea de boleta (Etapa 4). */
+const PURCHASE_RECEIPT_ITEM_NOTE_PREFIX = 'purchase_receipt_item:' as const
+
+function purchaseReceiptItemNote(lineId: string) {
+  return `${PURCHASE_RECEIPT_ITEM_NOTE_PREFIX}${lineId}`
+}
+
 export async function getPurchaseReceipts() {
   const { activeProfileId } = await getProfileContext()
   if (!activeProfileId) {
@@ -106,6 +113,8 @@ export async function savePurchaseReceiptDraft(
   }
 
   const raw_analysis = analysis as unknown as Json
+
+  // Solo borrador: no modifica stock ni inserts en stock_movements hasta confirmar la boleta.
 
   const { data: receipt, error: rErr } = await supabase
     .from('purchase_receipts')
@@ -337,6 +346,22 @@ export async function confirmPurchaseReceipt(
   }
 
   for (const line of toApply) {
+    const idemNote = purchaseReceiptItemNote(line.id)
+
+    const { data: existingMove } = await supabase
+      .from('stock_movements')
+      .select('id')
+      .eq('profile_id', activeProfileId)
+      .eq('reference_id', receiptId)
+      .eq('product_id', line.product_id)
+      .eq('movement_type', 'purchase')
+      .eq('note', idemNote)
+      .maybeSingle()
+
+    if (existingMove) {
+      continue
+    }
+
     const qtyRaw = line.quantity
     const qty =
       typeof qtyRaw === 'number' && !Number.isNaN(qtyRaw) && qtyRaw > 0
@@ -345,7 +370,7 @@ export async function confirmPurchaseReceipt(
 
     const { data: product, error: pErr } = await supabase
       .from('products')
-      .select('id, stock_current')
+      .select('id, stock_current, last_price')
       .eq('id', line.product_id)
       .eq('profile_id', activeProfileId)
       .eq('active', true)
@@ -356,6 +381,7 @@ export async function confirmPurchaseReceipt(
     }
 
     const prev = Number(product.stock_current)
+    const prevLastPrice = product.last_price
     const nextStock = prev + qty
 
     const upPayload: {
@@ -381,24 +407,65 @@ export async function confirmPurchaseReceipt(
       product_id: line.product_id,
       delta: qty,
       movement_type: 'purchase',
-      note: null,
+      note: idemNote,
       reference_id: receiptId,
       created_by: userData.user.id,
     })
 
     if (mErr) {
-      return { ok: false, error: mErr.message }
+      console.error('stock_movements tras compra por boleta:', mErr)
+      const { error: revErr } = await supabase
+        .from('products')
+        .update({ stock_current: prev, last_price: prevLastPrice })
+        .eq('id', line.product_id)
+        .eq('profile_id', activeProfileId)
+
+      if (revErr) {
+        console.error('Revertir stock tras fallo de movimiento (boleta):', revErr)
+        return {
+          ok: false,
+          error: `No se registró el movimiento de compra y no se pudo revertir el stock: ${revErr.message} (movimiento: ${mErr.message})`,
+        }
+      }
+      return {
+        ok: false,
+        error: `No se pudo registrar el movimiento de compra; el stock quedó como antes de esta línea. ${mErr.message}`,
+      }
     }
   }
 
-  const { error: stErr } = await supabase
+  const { data: statusRows, error: stErr } = await supabase
     .from('purchase_receipts')
     .update({ status: 'confirmed' })
     .eq('id', receiptId)
     .eq('profile_id', activeProfileId)
+    .eq('status', 'pending_review')
+    .select('id')
 
   if (stErr) {
     return { ok: false, error: stErr.message }
+  }
+
+  if (!statusRows?.length) {
+    const { data: recAgain } = await supabase
+      .from('purchase_receipts')
+      .select('status')
+      .eq('id', receiptId)
+      .eq('profile_id', activeProfileId)
+      .maybeSingle()
+
+    if (recAgain?.status === 'confirmed') {
+      revalidatePath('/receipts')
+      revalidatePath('/inventory')
+      revalidatePath('/history')
+      return { ok: true, linesApplied: toApply.length }
+    }
+
+    return {
+      ok: false,
+      error:
+        'No se pudo marcar la boleta como confirmada; vuelve a intentar o revisa el estado en el listado.',
+    }
   }
 
   revalidatePath('/receipts')

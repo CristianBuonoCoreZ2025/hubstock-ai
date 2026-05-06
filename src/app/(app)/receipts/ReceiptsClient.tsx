@@ -242,8 +242,9 @@ export function ReceiptsClient({
             Nueva boleta
           </h2>
           <p className="app-page-lead">
-            Sube una foto del ticket. La IA extrae ítems y total; guardas un
-            borrador para revisar después en tu flujo de compras.
+            Sube una foto del ticket. La IA extrae ítems y total; al guardar solo
+            queda un borrador (sin cambiar inventario) hasta que revises y
+            confirmes la boleta abajo.
           </p>
           <Input
             type="file"
