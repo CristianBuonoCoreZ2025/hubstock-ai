@@ -10,7 +10,7 @@ export default async function CapturePage() {
     return (
       <div className="app-page">
         <header className="app-page-header">
-          <h1 className="app-page-title">Captura de productos</h1>
+          <h1 className="app-page-title">Cargar por fotos</h1>
           <p className="app-page-lead">
             Necesitas un perfil activo para usar esta función.
           </p>
@@ -28,7 +28,7 @@ export default async function CapturePage() {
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Captura de productos</h1>
+        <h1 className="app-page-title">Cargar por fotos</h1>
         <p className="app-page-lead">{PAGE_LEADS.capture}</p>
       </header>
 

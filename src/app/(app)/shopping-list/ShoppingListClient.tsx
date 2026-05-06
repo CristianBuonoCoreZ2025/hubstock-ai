@@ -56,9 +56,9 @@ export function ShoppingListClient({ tripId, phaseNotes, items, products }: Prop
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Lista de compras</h1>
+        <h1 className="app-page-title">Compras</h1>
         <p className="app-page-lead">
-          Planifica cantidades; el modo supermercado marca ítems y cierra el viaje para actualizar stock.
+          Planifica cantidades; en tiendas marcas ítems y cierras el viaje para actualizar stock.
         </p>
       </header>
 
@@ -66,14 +66,14 @@ export function ShoppingListClient({ tripId, phaseNotes, items, products }: Prop
         <div className="app-alert-warn">
           <p className="font-medium">Viaje en curso</p>
           <p className="mt-1 text-sm opacity-90">
-            Continúa en <span className="font-semibold">Supermercado</span> o finaliza ahí el viaje.
+            Continúa en <span className="font-semibold">Tiendas</span> o finaliza ahí el viaje.
           </p>
           <Button
             type="button"
             className="mt-3"
             onClick={() => router.push('/supermarket')}
           >
-            Ir al supermercado
+            Ir a tiendas
           </Button>
         </div>
       ) : null}
@@ -98,13 +98,13 @@ export function ShoppingListClient({ tripId, phaseNotes, items, products }: Prop
                   toast.error(r.error)
                   return
                 }
-                toast.success('Modo supermercado')
+                toast.success('Modo tiendas')
                 router.push('/supermarket')
                 router.refresh()
               })
             }
           >
-            Ir al supermercado
+            Ir a tiendas
           </Button>
         ) : null}
       </div>

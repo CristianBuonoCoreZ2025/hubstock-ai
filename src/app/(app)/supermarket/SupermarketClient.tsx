@@ -46,15 +46,15 @@ export function SupermarketClient({ tripId, grouped }: Props) {
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Supermercado</h1>
+        <h1 className="app-page-title">Tiendas</h1>
         <p className="app-page-lead">
-          Marca lo que llevas al carrito. Al finalizar se suma al inventario y se registra la compra.
+          Marca lo que llevas al carrito en cualquier tienda. Al finalizar se suma al inventario y se registra la compra.
         </p>
       </header>
 
       <div className="app-toolbar">
         <Button type="button" variant="secondary" asChild>
-          <Link href="/shopping-list">Volver a la lista</Link>
+          <Link href="/shopping-list">Volver a compras</Link>
         </Button>
         <Button
           type="button"

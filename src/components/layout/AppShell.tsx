@@ -2,9 +2,15 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { useSyncExternalStore } from 'react'
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { ProfileOption } from '@/lib/profile/context'
-import { desktopNavItems, mobileBottomNavItems } from '@/lib/navigation'
+import {
+  mobileBottomNavItems,
+  navLinkIsActive,
+  navigationTree,
+  type NavNode,
+} from '@/lib/navigation'
+import { cn } from '@/lib/utils'
 import { ProfileSwitcher } from '@/components/profile/ProfileSwitcher'
 import { MotionFadeIn } from '@/components/motion/motion-fade-in'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
@@ -16,6 +22,54 @@ import {
   subscribeUiStyle,
 } from '@/lib/ui-style-client-store'
 import { isUiStyleDevToolbarEnabled } from '@/lib/ui-style-dev'
+
+function renderNavNode(
+  node: NavNode,
+  pathname: string,
+  locationHash: string
+): ReactNode {
+  if (node.type === 'link') {
+    const active = navLinkIsActive(pathname, locationHash, node.href)
+    return (
+      <Link
+        key={node.href}
+        href={node.href}
+        className={cn(
+          'flex items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted hover:text-foreground',
+          active ? 'bg-muted font-semibold text-foreground' : 'text-muted-foreground'
+        )}
+      >
+        <node.icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+        {node.name}
+      </Link>
+    )
+  }
+
+  return (
+    <div key={node.name} className="flex flex-col gap-0.5">
+      <div className="flex items-center gap-2 px-3 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <node.icon className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden />
+        {node.name}
+      </div>
+      {node.children.map((child) => {
+        const active = navLinkIsActive(pathname, locationHash, child.href)
+        return (
+          <Link
+            key={`${node.name}-${child.name}-${child.href}`}
+            href={child.href}
+            className={cn(
+              'flex items-center gap-3 rounded-xl py-1.5 pl-8 pr-3 text-[12px] transition-colors hover:bg-muted hover:text-foreground',
+              active ? 'bg-muted font-semibold text-foreground' : 'text-muted-foreground'
+            )}
+          >
+            <child.icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+            {child.name}
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
 
 type Props = {
   children: React.ReactNode
@@ -31,10 +85,18 @@ export default function AppShell({
   needsProfileSetup,
 }: Props) {
   const pathname = usePathname()
+  const [locationHash, setLocationHash] = useState('')
+  useEffect(() => {
+    const sync = () => setLocationHash(typeof window !== 'undefined' ? window.location.hash : '')
+    sync()
+    window.addEventListener('hashchange', sync)
+    return () => window.removeEventListener('hashchange', sync)
+  }, [pathname])
+
   const activeUiStyle = useSyncExternalStore(
     subscribeUiStyle,
     getUiStyleSnapshot,
-    getUiStyleServerSnapshot,
+    getUiStyleServerSnapshot
   )
 
   return (
@@ -55,20 +117,7 @@ export default function AppShell({
             />
           </div>
           <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3 text-[13px] font-medium lg:px-3">
-            {desktopNavItems.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 rounded-xl px-3 py-2 transition-colors hover:bg-muted hover:text-foreground ${
-                  pathname === item.href
-                    ? 'bg-muted font-semibold text-foreground'
-                    : 'text-muted-foreground'
-                }`}
-              >
-                <item.icon className="h-4 w-4 shrink-0 opacity-80" />
-                {item.name}
-              </Link>
-            ))}
+            {navigationTree.map((node) => renderNavNode(node, pathname, locationHash))}
           </nav>
           {isUiStyleDevToolbarEnabled ? (
             <div className="mt-auto border-t border-border px-3 py-4 lg:px-4">
@@ -82,10 +131,7 @@ export default function AppShell({
                 </Link>
                 .
               </p>
-              <UiStyleDevSelect
-                value={activeUiStyle}
-                onValueChange={persistUiStyleChoice}
-              />
+              <UiStyleDevSelect value={activeUiStyle} onValueChange={persistUiStyleChoice} />
             </div>
           ) : null}
         </div>
@@ -105,10 +151,7 @@ export default function AppShell({
             <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Piel de UI (dev) · 7 estilos
             </p>
-            <UiStyleDevSelect
-              value={activeUiStyle}
-              onValueChange={persistUiStyleChoice}
-            />
+            <UiStyleDevSelect value={activeUiStyle} onValueChange={persistUiStyleChoice} />
           </div>
         ) : null}
 
@@ -134,19 +177,22 @@ export default function AppShell({
           aria-label="Navegación principal"
         >
           <ul className="flex items-stretch justify-around">
-            {mobileBottomNavItems.map((item) => (
-              <li key={item.href} className="flex-1">
-                <Link
-                  href={item.href}
-                  className={`flex flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide ${
-                    pathname === item.href ? 'text-primary' : 'text-muted-foreground'
-                  }`}
-                >
-                  <item.icon className="h-5 w-5" aria-hidden />
-                  <span className="truncate">{item.name}</span>
-                </Link>
-              </li>
-            ))}
+            {mobileBottomNavItems.map((item) => {
+              const active = navLinkIsActive(pathname, locationHash, item.href)
+              return (
+                <li key={item.name} className="flex-1">
+                  <Link
+                    href={item.href}
+                    className={`flex flex-col items-center gap-0.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wide ${
+                      active ? 'text-primary' : 'text-muted-foreground'
+                    }`}
+                  >
+                    <item.icon className="h-5 w-5" aria-hidden />
+                    <span className="truncate">{item.name}</span>
+                  </Link>
+                </li>
+              )
+            })}
           </ul>
         </nav>
       </div>

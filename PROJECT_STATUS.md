@@ -1,93 +1,113 @@
-# StockCasa AI — Estado del proyecto (contexto para agentes)
+# Estado del proyecto — reporte
 
-Este documento resume qué existe en el repositorio, cómo encajan las piezas y qué conviene mejorar. Sirve como referencia rápida para personas y para herramientas de código asistido (por ejemplo Roo Code).
+Última actualización: 2026-05-06 (Etapa 2 — cierre corregido).
 
-## Propósito
+## Etapa 1 — corrección final (navegación jerárquica)
 
-Aplicación web (Next.js) para inventario doméstico, listas de compra, supermercado, boletas y flujos con IA, con datos separados por **perfil** (hogar) y autenticación con **Supabase Auth**.
+### Objetivo
 
-## Stack
+Menú lateral y página **Menú** alineados con `PROJECT_CONTEXT.md`: grupos con sub-enlaces (Catálogo, Inventario, Consumo, Chequeo de stock, Compras, Administración), más Configuración al mismo nivel; sin ítem suelto «Equipo», sin **Estilos (demo)** en el menú normal del usuario (solo ruta técnica `/style-lab` enlazada desde el bloque dev del shell cuando aplica).
 
-| Área | Tecnología |
-|------|------------|
-| Framework | Next.js **16.2.4** (Turbopack en build) |
-| UI | React 19, Tailwind CSS 4, componentes varios (lucide-react, estilos tipo shadcn) |
-| Auth y datos | Supabase (`@supabase/ssr`, `@supabase/supabase-js`) |
-| Validación | Zod |
-| Tipos DB | `src/types/database` (tipos generados o mantenidos a mano) |
+### Cambios realizados
 
-**Nota:** En `AGENTS.md` se indica que la versión de Next en este repo puede diferir de la documentación “clásica”; conviene contrastar con `node_modules/next/dist/docs/` cuando haya dudas de API.
+| Archivo | Detalle |
+|---------|---------|
+| `src/lib/navigation.ts` | `navigationTree` (`NavNode` / `NavChild`), `mobileBottomNavItems` (Dashboard, Inventario, Consumo, Compras, Menú), `navLinkIsActive`. Sin lista plana previa. |
+| `src/components/layout/AppShell.tsx` | Renderizado por grupos + sub-enlaces; barra móvil con estado activo vía `navLinkIsActive`; sin Estilos en nav principal. |
+| `src/app/(app)/menu/page.tsx` | Lista jerárquica según `navigationTree`. |
+| `src/app/(app)/users/TeamPageClient.tsx` | `id="admin-invitaciones"` y `id="admin-personas"` + `scroll-mt-24` para anclas de Administración. |
+| `src/app/(app)/stock-checks/StockChecksClient.tsx` | `id="stock-check-nuevo"` y `id="stock-check-historial"` para anclas del menú de chequeo. |
 
-## Variables de entorno
+### Rutas
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` (o clave publicable según el proyecto de Supabase)
+Todas las rutas existentes se conservan. No hay rutas nuevas. Donde no hay pantalla separada (p. ej. Marcas/Categorías del catálogo), los enlaces apuntan a `/catalog` (misma vista).
 
-Definir en `.env.local` (no commitear secretos). El build asume presencia de env en entorno de desarrollo.
+### Tablas / migraciones
 
-## Estructura relevante
+Ninguna.
 
-| Ruta | Rol |
-|------|-----|
-| `middleware.ts` (raíz) | Delega en `src/proxy` la lógica de cookies/sesión y redirecciones. |
-| `src/proxy.ts` | Supabase `createServerClient` + reglas de rutas protegidas, login y raíz. |
-| `src/lib/supabase/server.ts` | Cliente servidor (cookies con `next/headers`). |
-| `src/lib/supabase/client.ts` | Cliente navegador; falla con error claro si faltan env. |
-| `src/lib/profile/context.ts` | Perfiles del usuario vía `profile_members` + cookie `stockcasa_profile_id`. |
-| `src/app/(auth)/` | Login, registro. |
-| `src/app/(app)/` | Aplicación autenticada: dashboard, inventario, listas, etc. |
-| `src/app/auth/callback/route.ts` | Intercambio OAuth/magic link → redirección. |
-| `src/app/actions/profile.ts` | Server actions: crear perfil, fijar perfil activo (cookie). |
-| `src/components/layout/AppShell.tsx` | Layout con sidebar, nav móvil, aviso de “crear perfil”. |
+### Validaciones (2026-05-06)
 
-## Autenticación y middleware (comportamiento actual)
-
-1. **Rutas protegidas** (prefijo): `/dashboard`, `/inventory`, `/shopping-list`, `/supermarket`, `/receipts`, `/stock-checks`, `/profiles` (incluye `/profiles/new` por el prefijo).
-2. **Sin sesión** en ruta protegida → redirección a `/login?next=...` (ruta original en query).
-3. **Con sesión** en `/login` o `/register` → redirección a `/dashboard` (no se usa una ruta `/profiles` inexistente).
-4. **Raíz `/`** con sesión → `/dashboard`; sin sesión el `src/app/page.tsx` redirige a `/login`.
-
-### Incidencia corregida (caída / bucle al ir al dashboard)
-
-- **Bucle de redirecciones:** la condición de “ruta pública” usaba `pathname.startsWith('/')`, lo que es **verdadero para cualquier ruta**. Con sesión, el middleware trataba `/dashboard` como “público” y redirigía otra vez a `/dashboard` → bucle infinito (navegador: “demasiadas redirecciones” o fallo aparente al cargar).
-- **Redirección inválida:** con sesión en login se enviaba a `/profiles`, pero **no existe** `page` en `/profiles` (solo `/profiles/new`), lo que producía 404 en algunos flujos.
-
-En `src/proxy.ts` la raíz se detecta con igualdad estricta `pathname === '/'`, y la verificación de sesión en el borde usa `auth.getUser()` en lugar de confiar solo en `getSession()` para la decisión de acceso.
-
-## Funcionalidad implementada (alto nivel)
-
-- Login con email/contraseña y formulario en `LoginForm.tsx` (tras éxito: `router.refresh()` + `router.push` hacia `next` o `/dashboard`).
-- Registro; callback de auth en `/auth/callback`.
-- **Perfiles (hogares):** creación en `/profiles/new`, membresía en `profile_members`, cookie de perfil activo.
-- **Dashboard:** conteo de productos del perfil activo (tabla `products`); tarjetas placeholder para más métricas.
-- Navegación principal en `src/lib/navigation.ts`; shell responsive con `AppShell`.
-- Rutas de app adicionales presentes en el árbol: inventario, lista de compras, supermercado, captura, boletas, chequeos de stock, historial, consumo, usuarios, menú, ajustes.
-- APIs bajo `src/app/api/ai/*` (análisis de producto, boleta, stock check) según archivos en el repo.
-
-## Mejoras recomendadas (deuda / siguiente paso)
-
-1. **Middleware y Supabase:** alinear con la guía oficial más reciente (refresh de tokens, `setAll` y cabeceras anti-caché si aplica en tu versión de `@supabase/ssr`).
-2. **Ruta `/profiles`:** crear página índice que redirija a `/profiles/new` o listado de hogares, o quitar el prefijo `/profiles` de la lista si no aplica.
-3. **Dashboard:** completar métricas (bajo mínimo, supermercado, boletas) con vistas SQL o consultas acordes al esquema real.
-4. **RLS y tablas:** revisar políticas en Supabase para `products`, `profiles`, `profile_members`; el dashboard ya muestra aviso si falla el conteo.
-5. **Observabilidad:** usar `src/lib/logger.ts` / `error-handler.ts` de forma consistente en server actions y APIs.
-6. **Pruebas:** añadir pruebas e2e o de contrato para login → dashboard y para rutas protegidas sin sesión.
-7. **Limpieza:** carpeta `_legacy` solo como referencia; no mezclar importaciones desde ahí en código nuevo.
-
-## Comandos
-
-```bash
-npm run dev      # desarrollo
-npm run build    # compilación producción
-npm run lint     # ESLint
-```
-
-## Convenciones para cambios de código
-
-- Comentarios en código: **español neutro**; identificadores en **inglés**.
-- No introducir rutas de redirección hacia páginas que no existan en el árbol `src/app`.
-- Tras tocar middleware, probar: `/`, `/login`, `/dashboard` con y sin sesión.
+| Comando | Resultado |
+|---------|-----------|
+| `npm run build` | **Correcto** (exit code 0). |
+| `npm run lint` | **Falló** (exit code 1). Errores **preexistentes** (`react-hooks/set-state-in-effect`, etc.); no atribuibles a esta corrección de navegación. |
 
 ---
 
-*Última revisión de este documento: alineado con el estado del repo tras corrección del middleware y la página de inicio.*
+## Histórico (referencia)
+
+Iteraciones anteriores de la Etapa 1 / 1.1 (lista plana o agrupación parcial) quedaron sustituidas por la **corrección final** anterior.
+
+---
+
+## Riesgo residual
+
+**Bajo.** Varias entradas comparten URL (`/catalog`, `/receipts`) con distinta etiqueta; el estado activo puede coincidir en varias líneas cuando el path es el mismo sin fragmento.
+
+---
+
+## Estado de cierre Etapa 1
+
+1. **Etapa 1 cerrada** — incluye la corrección final de navegación jerárquica (`navigationTree`, sidebar y página Menú).
+2. **Build correcto** — según validación registrada (`npm run build`, exit code 0).
+3. **Base de datos sin cambios** — ninguna modificación de esquema ni datos por esta etapa.
+4. **Migraciones sin cambios** — no se añadieron ni alteraron migraciones SQL.
+5. **Lint pendiente** — fallos por errores **preexistentes** del repo (no atribuibles a la navegación).
+6. **Riesgo residual** — enlaces que comparten la misma ruta con etiquetas distintas (p. ej. `/catalog`, `/receipts`).
+7. **Próxima acción** — prueba manual del menú (lateral, móvil y página Menú) antes de definir la siguiente etapa de trabajo.
+
+---
+
+## Etapa 2 completada: separación funcional de módulos
+
+### Objetivo
+
+Alinear títulos y textos visibles de cada pantalla con el rol funcional del módulo definido en la navegación jerárquica (Etapa 1) y en `PROJECT_CONTEXT.md`: Dashboard ejecutivo, Catálogo sin stock como foco, Inventario como stock/carga, Consumo como descuento e historial asociado, Chequeo como comparación/ajustes, Compras como planificación/tiendas/historial de tickets, Administración vs Configuración, y Laboratorio solo como herramienta técnica.
+
+### Archivos modificados
+
+| Archivo |
+|---------|
+| `src/lib/domain.ts` |
+| `src/app/(app)/dashboard/page.tsx` |
+| `src/app/(app)/consumption/page.tsx` |
+| `src/app/(app)/history/page.tsx` |
+| `src/app/(app)/catalog/page.tsx` |
+| `src/app/(app)/capture/page.tsx` |
+| `src/app/(app)/capture/CaptureView.tsx` |
+| `src/app/(app)/stock-checks/page.tsx` |
+| `src/app/(app)/settings/page.tsx` |
+| `src/app/(app)/profiles/new/page.tsx` |
+| `src/app/(app)/style-lab/page.tsx` |
+| `src/app/(app)/users/TeamPageClient.tsx` |
+| `src/app/(app)/menu/page.tsx` |
+
+### Rutas tocadas (solo copy / títulos / leads)
+
+`/dashboard`, `/consumption`, `/history`, `/catalog`, `/capture`, `/stock-checks`, `/settings`, `/profiles/new`, `/style-lab`, `/users` (cliente); texto de ayuda en `/menu`. Sin cambios de path ni redirecciones.
+
+### Tablas involucradas
+
+Ninguna.
+
+### Migraciones
+
+Ninguna.
+
+### Validaciones
+
+| Comando | Resultado |
+|---------|-----------|
+| `npm run build` | **Correcto** (exit code 0). |
+| `npm run lint` | **Falló** (exit code 1). Errores **preexistentes** en otros archivos; aviso de import resuelto en dashboard tras usar `PAGE_LEADS.dashboard`. |
+
+### Errores pendientes
+
+Lint global sigue fallando por reglas `react-hooks/set-state-in-effect` y warnings ya conocidos fuera del alcance de esta etapa.
+
+### Riesgo residual
+
+Siguen existiendo rutas compartidas entre menú y funciones (p. ej. `/catalog`, `/receipts`) como en Etapa 1.
+
+**Cierre Etapa 2 (corrección):** Se corrigió el nombre visible de `/history` para evitar confusión entre «historial de consumo» y el registro general de movimientos de stock (la vista lista todos los tipos; el ítem de menú bajo Consumo enlaza a esta misma ruta con la etiqueta **Historial de stock**).

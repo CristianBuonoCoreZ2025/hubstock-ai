@@ -18,7 +18,7 @@ export default async function StockChecksPage() {
     return (
       <div className="app-page">
         <header className="app-page-header">
-          <h1 className="app-page-title">Chequeos de stock</h1>
+          <h1 className="app-page-title">Chequeo de stock</h1>
           <p className="app-page-lead">
             Necesitas un perfil activo para usar esta sección.
           </p>
@@ -59,7 +59,7 @@ export default async function StockChecksPage() {
   return (
     <div className="app-page app-page-stock-wide">
       <header className="app-page-header">
-        <h1 className="app-page-title">Chequeos de stock</h1>
+        <h1 className="app-page-title">Chequeo de stock</h1>
         <p className="app-page-lead">{PAGE_LEADS.stockChecks}</p>
       </header>
 

@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { PAGE_LEADS } from '@/lib/domain'
 import { createClient } from '@/lib/supabase/server'
 import { getProfileContext } from '@/lib/profile/context'
 import { assertProfileMembership } from '@/lib/profile/membership'
@@ -35,7 +36,7 @@ export default async function SettingsPage() {
     <div className="app-page">
       <header className="app-page-header">
         <h1 className="app-page-title">Configuración</h1>
-        <p className="app-page-lead">Datos del hogar y sesión.</p>
+        <p className="app-page-lead">{PAGE_LEADS.settings}</p>
       </header>
 
       <section className="app-panel">

@@ -124,10 +124,11 @@ export function TeamPageClient({
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Equipo</h1>
+        <h1 className="app-page-title">Administración</h1>
         <p className="app-page-lead">
-          Invita por correo; la invitación aparece abajo y allí enlazas otros hogares donde también eres administrador.
-          Vista actual: <span className="font-medium text-foreground">{anchorName ?? '—'}</span>.
+          Administración del hogar activo: personas (miembros), invitaciones enviadas y envío de nuevas
+          invitaciones cuando aplica. Vista actual:{' '}
+          <span className="font-medium text-foreground">{anchorName ?? '—'}</span>.
         </p>
       </header>
 
@@ -195,7 +196,7 @@ export function TeamPageClient({
         ) : null}
 
         {isAdmin ? (
-          <section>
+          <section id="admin-invitaciones" className="scroll-mt-24">
             <div className="mb-4 flex items-center gap-2">
               <Users className="h-5 w-5 text-muted-foreground" aria-hidden />
               <h2 className="text-lg font-semibold tracking-tight">Invitaciones pendientes</h2>
@@ -280,7 +281,7 @@ export function TeamPageClient({
           </section>
         ) : null}
 
-        <section>
+        <section id="admin-personas" className="scroll-mt-24">
           <div className="mb-4 flex items-center gap-2">
             <Users className="h-5 w-5 text-muted-foreground" aria-hidden />
             <h2 className="text-lg font-semibold tracking-tight">Miembros de este hogar</h2>

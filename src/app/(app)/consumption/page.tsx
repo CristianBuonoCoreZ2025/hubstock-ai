@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
 import { ConsumptionView } from './ConsumptionView'
 
@@ -8,7 +9,7 @@ export default async function ConsumptionPage() {
   if (!activeProfileId || profiles.length === 0) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Consumo rápido</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Registrar consumo</h1>
         <p className="text-sm text-muted-foreground">
           Necesitas un perfil activo para registrar consumo.
         </p>
@@ -28,7 +29,7 @@ export default async function ConsumptionPage() {
   if (error) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-semibold tracking-tight">Consumo rápido</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Registrar consumo</h1>
         <p className="text-sm text-destructive">{error.message}</p>
       </div>
     )
@@ -44,9 +45,10 @@ export default async function ConsumptionPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Consumo rápido</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Descuenta unidades del inventario y se registra el movimiento como{' '}
+        <h1 className="text-2xl font-semibold tracking-tight">Registrar consumo</h1>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{PAGE_LEADS.consumption}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Movimiento registrado como{' '}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">consumption</code> en{' '}
           <code className="rounded bg-muted px-1 py-0.5 text-xs">stock_movements</code>.
         </p>

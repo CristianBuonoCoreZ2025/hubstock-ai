@@ -205,7 +205,7 @@ export function CaptureView({
       <div className="app-panel">
         <p className="app-page-lead">
           Necesitas al menos una categoría y una sección en la base de datos
-          para crear productos por captura.
+          para usar Inventario · Cargar por fotos.
         </p>
       </div>
     )

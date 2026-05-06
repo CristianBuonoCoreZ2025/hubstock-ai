@@ -11,7 +11,7 @@ export default async function SupermarketPage() {
     return (
       <div className="app-page">
         <header className="app-page-header">
-          <h1 className="app-page-title">Supermercado</h1>
+          <h1 className="app-page-title">Tiendas</h1>
           <p className="app-page-lead">Necesitas un perfil activo.</p>
         </header>
       </div>
@@ -31,13 +31,13 @@ export default async function SupermarketPage() {
     return (
       <div className="app-page">
         <header className="app-page-header">
-          <h1 className="app-page-title">Supermercado</h1>
+          <h1 className="app-page-title">Tiendas</h1>
           <p className="app-page-lead">
-            Inicia el modo supermercado desde la lista de compras para ver ítems agrupados por pasillo.
+            Inicia el modo tiendas desde Compras para ver ítems agrupados por pasillo.
           </p>
         </header>
         <Link href="/shopping-list" className="text-primary underline-offset-4 hover:underline">
-          Ir a lista de compras
+          Ir a compras
         </Link>
       </div>
     )

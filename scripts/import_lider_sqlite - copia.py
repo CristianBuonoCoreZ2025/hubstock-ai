@@ -596,13 +596,7 @@ def main() -> int:
     thumb_ok = 0
     thumb_missing = 0
 
-    print(
-        "Importando: cada fila hace varias peticiones HTTPS a Supabase; los primeros "
-        "minutos pueden pasar sin mensaje si la red es lenta.",
-        flush=True,
-    )
-
-    for i, row in enumerate(products, start=1):
+    for row in products:
         sid_sub = row["subcategoria_id"]
         if sid_sub not in sub_sqlite_to_pg:
             skipped_no_cat += 1
@@ -687,12 +681,8 @@ def main() -> int:
                 print(f"Thumb error {cp_id}: {e}", file=sys.stderr)
                 thumb_missing += 1
 
-        if i % 50 == 0 or i == len(products):
-            print(
-                f"  … fila {i}/{len(products)} SQLite · insertados {processed} · "
-                f"omitidos dup URL {skipped_dup}",
-                flush=True,
-            )
+        if processed % 100 == 0:
+            print(f"  … {processed} productos")
 
     print(
         f"Listo. Insertados: {processed}, duplicados URL omitidos: {skipped_dup}, "

@@ -11,6 +11,7 @@ import {
   persistUiStyleChoice,
   subscribeUiStyle,
 } from '@/lib/ui-style-client-store'
+import { PAGE_LEADS } from '@/lib/domain'
 
 export default function StyleLabPage() {
   const active = useSyncExternalStore(
@@ -28,8 +29,9 @@ export default function StyleLabPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight md:text-3xl">Laboratorio de estilos</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground md:text-base">
-          Siete pieles (tipografía, color, modales y grillas). Funcionan en modo claro y oscuro.
-          Elige una para toda la app; el interruptor de abajo sirve para comparar día y noche.
+          {PAGE_LEADS.styleLabDev} Siete pieles (tipografía, color, modales y grillas). Funcionan en
+          modo claro y oscuro. Elige una para toda la app; el interruptor de abajo sirve para comparar
+          día y noche.
         </p>
       </div>
 

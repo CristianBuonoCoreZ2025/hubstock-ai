@@ -4,29 +4,49 @@
  */
 
 export const PAGE_LEADS = {
-  /** Inventario: productos con stock del hogar (misma taxonomía global). */
+  /** Dashboard: vista ejecutiva del perfil activo. */
+  dashboard:
+    'Resumen del hogar seleccionado en el selector de perfil. Las métricas y accesos se referencian a ese perfil.',
+
+  /** Inventario: stock del hogar; coherente con sub-rutas del menú (ver, fotos, boleta, manual). */
   inventory:
-    'Productos de este hogar con stock y precios. La sección y la categoría son la misma taxonomía global que en Catálogo y Captura; aquí ajustas cantidades y la ficha del ítem.',
+    'Stock y fichas de este hogar (taxonomía global compartida con Catálogo). Entradas típicas en Inventario: ver listado, cargar por fotos, por boleta o carga manual.',
 
-  /** Catálogo maestro: solo lectura + copia al perfil. */
+  /** Catálogo: global; no es inventario ni stock del hogar. */
   catalogMaster:
-    'Lista base compartida entre hogares (sin stock). Úsala para copiar ítems ya clasificados a tu inventario; luego el stock y precios reales se editan en Inventario.',
+    'Productos, marcas y categorías en vista global (sin cantidades del hogar). Copia al perfil desde aquí; el stock operativo vive en Inventario.',
 
-  /** Captura: un producto por flujo, foto + IA → products. */
+  /** Captura = Inventario · cargar por fotos. */
   capture:
-    'Un producto por sesión: foto → análisis con IA → confirmación de sección y categoría → alta en el inventario de este hogar.',
+    'Inventario · Cargar por fotos: una sesión por producto; foto, IA y confirmación de taxonomía antes de dar de alta en este hogar.',
 
-  /** Boletas: documento con muchas líneas. */
+  /** Boletas: ingreso a inventario desde ticket; mismo listado enlazado desde Compras como historial. */
   receipts:
-    'Ticket de compra: varias líneas por boleta, análisis asistido y revisión antes de impactar inventario al confirmar.',
+    'Boleta de compra: líneas revisables antes de confirmar ingreso de stock al inventario. Este listado también cumple el rol de historial de boletas del módulo Compras.',
 
-  /** Chequeo: inventario físico por zona. */
+  /** Chequeo de stock: comparar físico vs sistema y aplicar ajustes. */
   stockChecks:
-    'Fotos por zona con detección asistida; las líneas quedan pendientes hasta que confirmes cantidades y vínculos con productos.',
+    'Chequeo de stock por zona: detección asistida, revisión de líneas y propuesta de ajustes al confirmar (impacto en inventario).',
 
-  /** Historial: solo movimientos de stock; no mezclar con boletas. */
+  /** Historial global de movimientos de stock (no solo consumos). Enlace desde Consumo en el menú. */
   history:
-    'Movimientos de stock del hogar (entradas y salidas). Las boletas y capturas pueden generar movimientos; aquí ves el registro contable por producto.',
+    'Registro de movimientos de stock del hogar en una sola vista: consumos, cargas de inventario (captura, boleta confirmada u otras compras que impactan stock), ajustes y conteos de chequeo. Sirve para auditar cómo cambió cada producto.',
+
+  /** Consumo: solo registrar salidas. */
+  consumption:
+    'Descuenta unidades del inventario del perfil activo; cada confirmación registra un movimiento de consumo.',
+
+  /** Configuración: preferencias y casa/sesión. */
+  settings:
+    'Preferencias y datos generales del hogar activo, más opciones de sesión.',
+
+  /** Administración · Perfiles — alta de hogar. */
+  profilesNew:
+    'Alta de un hogar adicional (perfil). Podrás alternar perfiles desde el selector.',
+
+  /** Ruta técnica / dev; no es módulo funcional. */
+  styleLabDev:
+    'Herramienta técnica para probar apariencia en desarrollo; no forma parte del flujo operativo de inventario o compras.',
 } as const
 
 const MOVEMENT_TYPE_LABELS: Record<string, string> = {

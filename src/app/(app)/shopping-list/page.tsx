@@ -9,7 +9,7 @@ export default async function ShoppingListPage() {
     return (
       <div className="app-page">
         <header className="app-page-header">
-          <h1 className="app-page-title">Lista de compras</h1>
+          <h1 className="app-page-title">Compras</h1>
           <p className="app-page-lead">Selecciona un perfil activo para planificar compras.</p>
         </header>
       </div>

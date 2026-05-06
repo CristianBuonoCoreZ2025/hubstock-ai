@@ -74,7 +74,7 @@ export function InventoryView({ categories, sections, rows, lead }: Props) {
 
   return (
     <div className="app-page">
-      <div className="app-toolbar">
+      <div id="carga-manual" className="app-toolbar scroll-mt-20">
         <h1 className="app-page-title">Inventario</h1>
         <ProductDialog
           categories={categories}

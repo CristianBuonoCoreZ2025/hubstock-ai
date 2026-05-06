@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { PAGE_LEADS } from '@/lib/domain'
 import { createProfile } from '@/app/actions/profile'
 
 const errorText: Record<string, string> = {
@@ -17,10 +18,11 @@ export default async function NewProfilePage({ searchParams }: PageProps) {
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6">
       <div>
-        <h1 className="text-2xl font-bold">Nuevo perfil</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Un perfil representa un hogar o grupo. Podrás invitar a más personas después.
+        <p className="text-[13px] font-medium uppercase tracking-wide text-muted-foreground">
+          Administración · Perfiles
         </p>
+        <h1 className="mt-1 text-2xl font-bold">Nuevo perfil</h1>
+        <p className="mt-1 text-sm text-muted-foreground">{PAGE_LEADS.profilesNew}</p>
       </div>
 
       {errorMessage ? (

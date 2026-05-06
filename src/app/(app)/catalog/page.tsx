@@ -16,7 +16,7 @@ export default async function CatalogPage() {
   if (!activeProfileId || profiles.length === 0) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-bold">Catálogo maestro</h1>
+        <h1 className="text-2xl font-bold">Catálogo</h1>
         <p className="text-sm text-muted-foreground">
           Necesitas un perfil activo para usar el catálogo.
         </p>
@@ -74,7 +74,7 @@ export default async function CatalogPage() {
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Catálogo maestro</h1>
+          <h1 className="text-2xl font-bold">Catálogo</h1>
           <p className="mt-1 max-w-xl text-sm text-muted-foreground">{PAGE_LEADS.catalogMaster}</p>
         </div>
         <CopyCatalogButton profileId={activeProfileId} />

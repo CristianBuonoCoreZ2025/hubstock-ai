@@ -1,5 +1,6 @@
 import StatCard from '@/components/dashboard/StatCard'
 import QuickActionCard from '@/components/dashboard/QuickActionCard'
+import { PAGE_LEADS } from '@/lib/domain'
 import {
   FileText,
   Package,
@@ -18,7 +19,7 @@ export default async function DashboardPage() {
       <div className="flex flex-col gap-4">
         <h1 className="text-2xl font-bold">Dashboard</h1>
         <p className="text-sm text-muted-foreground">
-          Crea un perfil para ver métricas de inventario filtradas por hogar.
+          Crea un perfil para ver el resumen ejecutivo filtrado por hogar.
         </p>
       </div>
     )
@@ -36,7 +37,10 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
+      <div>
+        <h1 className="text-2xl font-bold">Dashboard</h1>
+        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{PAGE_LEADS.dashboard}</p>
+      </div>
       {productsError != null ? (
         <p className="text-sm text-amber-800 dark:text-amber-200">
           No se pudo cargar el conteo de productos: revisa RLS y la tabla{' '}
@@ -58,32 +62,32 @@ export default async function DashboardPage() {
           icon={ShoppingCart}
         />
         <StatCard
-          title="Supermercado"
+          title="Compras (viajes)"
           value="—"
-          description="Viajes en el historial (pendiente de vistas)"
+          description="Módulo Compras / Tiendas — métricas pendientes"
           icon={Store}
         />
         <StatCard
           title="Boletas"
           value="—"
-          description="Importadas y revisadas"
+          description="Compras / historial de tickets — métricas pendientes"
           icon={FileText}
         />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <QuickActionCard
-          title="Agregar producto"
-          description="Ir al inventario y registrar ítems"
+          title="Inventario · carga manual"
+          description="Ver inventario y registrar o editar ítems"
           icon={Plus}
           actionText="Abrir inventario"
           href="/inventory"
         />
         <QuickActionCard
-          title="Lista de compras"
-          description="Generación automática según mínimos e ideal"
+          title="Compras"
+          description="Planifica la lista y compra en cualquier tienda"
           icon={ShoppingCart}
-          actionText="Ver lista"
+          actionText="Abrir compras"
           href="/shopping-list"
         />
       </div>

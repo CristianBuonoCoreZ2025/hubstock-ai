@@ -324,18 +324,20 @@ export function StockChecksClient({
             historial para vincular productos y aplicar al inventario.
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="shrink-0"
-          onClick={() => setHistoryModalOpen(true)}
-        >
-          Historial de chequeos
-          {initialChecks.length > 0 ? ` (${initialChecks.length})` : ''}
-        </Button>
+        <div id="stock-check-historial" className="scroll-mt-24">
+          <Button
+            type="button"
+            variant="outline"
+            className="shrink-0"
+            onClick={() => setHistoryModalOpen(true)}
+          >
+            Historial de chequeos
+            {initialChecks.length > 0 ? ` (${initialChecks.length})` : ''}
+          </Button>
+        </div>
       </div>
 
-      <div className="app-panel space-y-4">
+      <div id="stock-check-nuevo" className="app-panel scroll-mt-24 space-y-4">
         <h2 className="text-sm font-semibold text-foreground">
           Nuevo chequeo (captura y lectura)
         </h2>
