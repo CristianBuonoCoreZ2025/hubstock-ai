@@ -72,6 +72,22 @@ export function looseSearchTermsFromQuery(query: string | null | undefined): str
   return normalized.split(' ').filter(Boolean)
 }
 
+/**
+ * Pares strict/loose alineados con `matchesSearch` (índice por palabra).
+ * Usado por la RPC `catalog_products_search_page` en Postgres.
+ */
+export function getSearchTermPairs(query: string | null | undefined): {
+  strict: string[]
+  loose: string[]
+} {
+  const strict = searchTermsFromQuery(query)
+  const looseArr = looseSearchTermsFromQuery(query)
+  return {
+    strict,
+    loose: strict.map((t, i) => looseArr[i] ?? collapseRepeatedLetters(t)),
+  }
+}
+
 function buildSearchText(texts: string | string[] | null | undefined): string {
   if (!texts) return ''
 
