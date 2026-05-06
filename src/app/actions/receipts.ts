@@ -6,6 +6,7 @@ import { getProfileContext } from '@/lib/profile/context'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import { createClient } from '@/lib/supabase/server'
+import { createProductStockZeroForReceiptLine } from '@/app/actions/inventory'
 
 /** Marca en `stock_movements.note` para idempotencia por línea de boleta (Etapa 4). */
 const PURCHASE_RECEIPT_ITEM_NOTE_PREFIX = 'purchase_receipt_item:' as const
@@ -166,6 +167,7 @@ export type ReceiptDetailItem = {
   line_total: number | null
   product_id: string | null
   sort_order: number
+  linked_product_name: string | null
 }
 
 export async function getReceiptDetail(receiptId: string) {
@@ -192,11 +194,268 @@ export async function getReceiptDetail(receiptId: string) {
     .eq('receipt_id', receiptId)
     .order('sort_order', { ascending: true })
 
+  if (iErr) {
+    return { receipt, items: [], error: iErr.message }
+  }
+
+  const rawItems = items ?? []
+  const productIds = [
+    ...new Set(
+      rawItems
+        .map((row) => row.product_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0)
+    ),
+  ]
+
+  let nameByProductId = new Map<string, string>()
+  if (productIds.length > 0) {
+    const { data: prods } = await supabase
+      .from('products')
+      .select('id, name')
+      .eq('profile_id', activeProfileId)
+      .in('id', productIds)
+
+    nameByProductId = new Map((prods ?? []).map((p) => [p.id, p.name]))
+  }
+
+  const mapped: ReceiptDetailItem[] = rawItems.map((row) => ({
+    ...row,
+    linked_product_name: row.product_id
+      ? nameByProductId.get(row.product_id) ?? null
+      : null,
+  }))
+
   return {
     receipt,
-    items: (items ?? []) as ReceiptDetailItem[],
-    error: iErr?.message ?? null,
+    items: mapped,
+    error: null as string | null,
   }
+}
+
+export type CatalogSearchRow = {
+  id: string
+  name: string
+  brand: string | null
+  format: string | null
+  unit: string | null
+}
+
+/** Búsqueda por nombre en catálogo maestro (solo lectura). No usa alias; ver PAGE_LEADS / RECEIPT_HELP. */
+export async function searchCatalogProductsForReceipt(
+  query: string
+): Promise<{ data: CatalogSearchRow[]; error: string | null }> {
+  const q = query.trim()
+  if (q.length < 2) {
+    return { data: [], error: null }
+  }
+
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('catalog_products')
+    .select('id, name, brand, format, unit')
+    .eq('active', true)
+    .ilike('name', `%${q}%`)
+    .order('name')
+    .limit(25)
+
+  return {
+    data: (data ?? []) as CatalogSearchRow[],
+    error: error?.message ?? null,
+  }
+}
+
+/**
+ * Crea o reutiliza un producto del perfil vinculado al ítem de catálogo y lo asigna a la línea.
+ */
+export async function linkPurchaseReceiptLineFromCatalog(
+  lineId: string,
+  catalogProductId: string
+): Promise<{ ok: boolean; error?: string; productId?: string }> {
+  const { activeProfileId } = await getProfileContext()
+  if (!activeProfileId) {
+    return { ok: false, error: 'Sin perfil' }
+  }
+
+  const supabase = await createClient()
+  const gate = await assertProfileMembership(supabase, activeProfileId, {
+    minRole: 'editor',
+  })
+  if (!gate.ok) {
+    return { ok: false, error: 'Sin permiso' }
+  }
+
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData.user) {
+    return { ok: false, error: 'Sesión requerida' }
+  }
+
+  const { data: line, error: lineErr } = await supabase
+    .from('purchase_receipt_items')
+    .select('id, receipt_id')
+    .eq('id', lineId)
+    .maybeSingle()
+
+  if (lineErr || !line) {
+    return { ok: false, error: 'Línea no encontrada' }
+  }
+
+  const { data: rec } = await supabase
+    .from('purchase_receipts')
+    .select('id, status')
+    .eq('id', line.receipt_id)
+    .eq('profile_id', activeProfileId)
+    .maybeSingle()
+
+  if (!rec || rec.status !== 'pending_review') {
+    return { ok: false, error: 'La boleta no se puede editar' }
+  }
+
+  const { data: existing } = await supabase
+    .from('products')
+    .select('id')
+    .eq('profile_id', activeProfileId)
+    .eq('catalog_product_id', catalogProductId)
+    .maybeSingle()
+
+  let profileProductId: string | null = existing?.id ?? null
+
+  if (!profileProductId) {
+    const { data: cp, error: cpErr } = await supabase
+      .from('catalog_products')
+      .select(
+        'id, name, brand, format, unit, section_id, category_id, default_reference_price, brand_id, active'
+      )
+      .eq('id', catalogProductId)
+      .eq('active', true)
+      .maybeSingle()
+
+    if (cpErr || !cp) {
+      return { ok: false, error: 'Ítem de catálogo no encontrado' }
+    }
+
+    let brandLabel = cp.brand
+    if (cp.brand_id) {
+      const { data: br } = await supabase
+        .from('catalog_brands')
+        .select('name')
+        .eq('id', cp.brand_id)
+        .maybeSingle()
+      if (br?.name) {
+        brandLabel = br.name
+      }
+    }
+
+    const { data: thumb } = await supabase
+      .from('catalog_product_media')
+      .select('public_url')
+      .eq('catalog_product_id', cp.id)
+      .eq('kind', 'thumbnail')
+      .limit(1)
+      .maybeSingle()
+
+    const { data: inserted, error: insErr } = await supabase
+      .from('products')
+      .insert({
+        profile_id: activeProfileId,
+        section_id: cp.section_id,
+        category_id: cp.category_id,
+        name: cp.name,
+        brand: brandLabel,
+        format: cp.format,
+        unit: cp.unit,
+        stock_current: 0,
+        stock_min: null,
+        stock_ideal: null,
+        reference_price: cp.default_reference_price,
+        last_price: null,
+        location: null,
+        image_url: thumb?.public_url ?? null,
+        active: true,
+        catalog_product_id: cp.id,
+        created_by: userData.user.id,
+      })
+      .select('id')
+      .single()
+
+    if (insErr || !inserted) {
+      console.error('linkPurchaseReceiptLineFromCatalog insert:', insErr)
+      return { ok: false, error: insErr?.message ?? 'No se pudo crear el producto desde catálogo' }
+    }
+
+    profileProductId = inserted.id
+    revalidatePath('/inventory')
+  }
+
+  if (!profileProductId) {
+    return { ok: false, error: 'No se pudo obtener el producto del hogar' }
+  }
+
+  const linkRes = await setReceiptLineProduct(lineId, profileProductId)
+  if (!linkRes.ok) {
+    return { ok: false, error: linkRes.error }
+  }
+
+  return { ok: true, productId: profileProductId }
+}
+
+export async function createAndLinkProductFromReceiptLine(input: {
+  lineId: string
+  name: string
+  categoryId: string
+  sectionId: string
+  referencePrice: number | null
+}): Promise<{ ok: boolean; error?: string; productId?: string }> {
+  const { activeProfileId } = await getProfileContext()
+  if (!activeProfileId) {
+    return { ok: false, error: 'Sin perfil' }
+  }
+
+  const supabase = await createClient()
+  const gate = await assertProfileMembership(supabase, activeProfileId, {
+    minRole: 'editor',
+  })
+  if (!gate.ok) {
+    return { ok: false, error: 'Sin permiso' }
+  }
+
+  const { data: line, error: lineErr } = await supabase
+    .from('purchase_receipt_items')
+    .select('id, receipt_id')
+    .eq('id', input.lineId)
+    .maybeSingle()
+
+  if (lineErr || !line) {
+    return { ok: false, error: 'Línea no encontrada' }
+  }
+
+  const { data: rec } = await supabase
+    .from('purchase_receipts')
+    .select('status')
+    .eq('id', line.receipt_id)
+    .eq('profile_id', activeProfileId)
+    .maybeSingle()
+
+  if (!rec || rec.status !== 'pending_review') {
+    return { ok: false, error: 'La boleta no se puede editar' }
+  }
+
+  const created = await createProductStockZeroForReceiptLine(
+    input.name,
+    input.categoryId,
+    input.sectionId,
+    input.referencePrice
+  )
+
+  if (created.error || !created.data) {
+    return { ok: false, error: created.error ?? 'No se pudo crear el producto' }
+  }
+
+  const linkRes = await setReceiptLineProduct(input.lineId, created.data.id)
+  if (!linkRes.ok) {
+    return { ok: false, error: linkRes.error }
+  }
+
+  return { ok: true, productId: created.data.id }
 }
 
 export type ProductPickerRow = {
@@ -330,20 +589,30 @@ export async function confirmPurchaseReceipt(
     .from('purchase_receipt_items')
     .select('id, product_id, quantity, unit_price')
     .eq('receipt_id', receiptId)
-    .not('product_id', 'is', null)
 
   if (lErr) {
     return { ok: false, error: lErr.message }
   }
 
-  const toApply = (lines ?? []).filter(
-    (row): row is typeof row & { product_id: string } =>
-      typeof row.product_id === 'string'
-  )
-
-  if (toApply.length === 0) {
-    return { ok: false, error: 'Empareja al menos una línea con un producto' }
+  const linesList = lines ?? []
+  if (linesList.length === 0) {
+    return { ok: false, error: 'Esta boleta no tiene líneas para confirmar' }
   }
+
+  if (linesList.some((l) => l.product_id == null)) {
+    return {
+      ok: false,
+      error:
+        'Vincula todas las líneas a un producto del inventario antes de confirmar',
+    }
+  }
+
+  const toApply = linesList as Array<{
+    id: string
+    product_id: string
+    quantity: number | null
+    unit_price: number | null
+  }>
 
   for (const line of toApply) {
     const idemNote = purchaseReceiptItemNote(line.id)

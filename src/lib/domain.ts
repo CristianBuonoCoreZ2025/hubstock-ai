@@ -20,9 +20,13 @@ export const PAGE_LEADS = {
   capture:
     'Inventario · Cargar por fotos: una sesión por producto; foto, IA y confirmación de taxonomía antes de dar de alta en este hogar.',
 
-  /** Boletas: ingreso a inventario desde ticket; mismo listado enlazado desde Compras como historial. */
+  /** Boleta: texto corto en cabecera de página `/receipts`. */
   receipts:
-    'Boleta de compra: subir o guardar solo crea un borrador con ítems detectados; el stock del hogar no cambia hasta que confirmas tras revisar y emparejar líneas. Este listado también cumple el rol de historial de boletas del módulo Compras.',
+    'Boleta de compra: borrador sin stock hasta confirmar; revisa cada línea (inventario existente, alta nueva o catálogo maestro) y confirma una sola vez para registrar compra en inventario.',
+
+  /** Aviso técnico visible en revisión de boleta (catálogo vs alias). */
+  receiptCatalogNote:
+    'La búsqueda en catálogo maestro usa solo nombre en catalog_products. catalog_product_aliases no se consulta en esta pantalla todavía.',
 
   /** Chequeo de stock: comparar físico vs sistema y aplicar ajustes. */
   stockChecks:

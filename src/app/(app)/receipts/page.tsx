@@ -1,3 +1,4 @@
+import { getCategoriesAndSections } from '@/app/actions/inventory'
 import { getPurchaseReceipts, listProductsPicker } from '@/app/actions/receipts'
 import { PAGE_LEADS } from '@/lib/domain'
 import { getProfileContext } from '@/lib/profile/context'
@@ -19,10 +20,18 @@ export default async function ReceiptsPage() {
     )
   }
 
-  const [{ data: receipts, error }, { data: products }] = await Promise.all([
+  const [
+    { data: receipts, error },
+    { data: products },
+    { categories, sections, error: taxError },
+  ] = await Promise.all([
     getPurchaseReceipts(),
     listProductsPicker(),
+    getCategoriesAndSections(),
   ])
+
+  const listError =
+    [error, taxError].filter(Boolean).join(' · ') || null
 
   return (
     <div className="app-page">
@@ -35,7 +44,9 @@ export default async function ReceiptsPage() {
         profileId={activeProfileId}
         initialReceipts={[...receipts]}
         products={products ?? []}
-        listError={error}
+        categories={(categories ?? []) as { id: string; name: string; section_id: string }[]}
+        sections={(sections ?? []) as { id: string; name: string }[]}
+        listError={listError}
       />
     </div>
   )

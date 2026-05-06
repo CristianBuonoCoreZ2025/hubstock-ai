@@ -40,6 +40,58 @@ export async function getCategoriesAndSections() {
   }
 }
 
+/**
+ * Crea un producto del perfil con stock 0 y sin fila en stock_movements.
+ * Uso: vincular una línea de boleta antes de confirmar; las unidades entran al confirmar la boleta.
+ */
+export async function createProductStockZeroForReceiptLine(
+  name: string,
+  categoryId: string,
+  sectionId: string,
+  referencePrice: number | null
+): Promise<{ data: { id: string } | null; error: string | null }> {
+  const trimmed = name.trim()
+  if (!trimmed || !categoryId || !sectionId) {
+    return { data: null, error: 'Nombre, categoría y sección son obligatorios' }
+  }
+
+  const { activeProfileId } = await getProfileContext()
+  if (!activeProfileId) {
+    return { data: null, error: 'No active profile' }
+  }
+
+  const supabase = await createClient()
+  const { data: userData } = await supabase.auth.getUser()
+  if (!userData.user) {
+    return { data: null, error: 'Not authenticated' }
+  }
+
+  const { data, error } = await supabase
+    .from('products')
+    .insert({
+      profile_id: activeProfileId,
+      name: trimmed,
+      category_id: categoryId,
+      section_id: sectionId,
+      stock_current: 0,
+      stock_min: null,
+      reference_price: referencePrice,
+      created_by: userData.user.id,
+      active: true,
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('createProductStockZeroForReceiptLine:', error)
+    return { data: null, error: error.message }
+  }
+
+  revalidatePath('/inventory')
+  revalidatePath('/receipts')
+  return { data: { id: data.id }, error: null }
+}
+
 export async function addProduct(formData: FormData) {
   const { activeProfileId } = await getProfileContext()
   if (!activeProfileId) {

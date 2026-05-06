@@ -1,6 +1,6 @@
 # Estado del proyecto — reporte
 
-Última actualización: 2026-05-06 (Etapa 4 — boletas e inventario).
+Última actualización: 2026-05-06 (Etapa 4 — UI revisión boleta + cierre funcional).
 
 ## Etapa 1 — corrección final (navegación jerárquica)
 
@@ -392,3 +392,47 @@ Lint global del repo (p. ej. `react-hooks/set-state-in-effect`) fuera del alcanc
 ### Riesgo residual
 
 **Medio-bajo.** Sin transacción única en servidor de aplicación: ventana pequeña entre updates; dos confirmaciones paralelas podrían duplicar cantidades en teoría. Movimientos antiguos con `note = null` no son idempotentes por línea si se reejecutara lógica antigua sobre datos viejos — las nuevas confirmaciones usan `note` fijo. No se alteró RLS ni esquema.
+
+---
+
+## Etapa 4 — cierre funcional visible (revisión de boleta)
+
+### Objetivo
+
+Completar la pantalla de revisión para vincular líneas a inventario (existente, alta nueva con stock 0 o copia desde catálogo maestro), impedir confirmación incompleta y mantener la confirmación de stock alineada con `purchase` + idempotencia.
+
+### Archivos modificados
+
+| Archivo |
+|---------|
+| `src/app/(app)/receipts/ReceiptsClient.tsx` |
+| `src/app/(app)/receipts/page.tsx` |
+| `src/app/actions/receipts.ts` |
+| `src/app/actions/inventory.ts` |
+| `src/lib/domain.ts` |
+| `PROJECT_STATUS.md` |
+
+### Comportamiento UI y servidor
+
+- Tabla de revisión por tarjeta: texto boleta, cantidad, precio unitario, estado pendiente/vinculada, nombre del producto vinculado.
+- Búsqueda/filtrado client-side sobre inventario del perfil + botones para elegir producto (confirma vínculo al hacer clic).
+- Diálogo «Nuevo producto desde boleta»: nombre (base `name_raw`), sección, categoría, precio referencia opcional — usa `createProductStockZeroForReceiptLine` (stock 0, sin `stock_movements` hasta confirmar boleta).
+- Catálogo maestro: `searchCatalogProductsForReceipt` + `linkPurchaseReceiptLineFromCatalog` (reutiliza `products` con mismo `catalog_product_id` o inserta copia con stock 0).
+- Texto `PAGE_LEADS.receiptCatalogNote`: alias (`catalog_product_aliases`) no integrados aún en la búsqueda.
+- Confirmar deshabilitado si falta algún `product_id` en líneas o la boleta no está en revisión; mensaje explícito sobre impacto en inventario.
+- `confirmPurchaseReceipt`: exige **todas** las líneas con producto antes de aplicar stock; resto igual (compensación, idempotencia `purchase_receipt_item:*`, cierre condicional `pending_review`).
+
+### Validaciones (2026-05-06)
+
+| Comando | Resultado |
+|---------|-----------|
+| `npm run build` | **Correcto** (exit code 0). |
+| `npm run lint` | **Falló** (exit code 1): errores **preexistentes** en otros archivos; sin nuevos en los tocados en este cierre. |
+
+### Migraciones / RLS
+
+Ninguna.
+
+### Riesgo residual
+
+Igual que Etapa 4 anterior (concurrencia sin bloqueo pesimista); alias de catálogo pendientes de integrar en UI.
