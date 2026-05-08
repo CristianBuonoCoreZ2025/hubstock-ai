@@ -11,6 +11,13 @@ import {
   getUserFriendlyErrorMessage,
   isUniqueViolation,
 } from '@/lib/user-friendly-errors'
+import { normalizeSearchText } from '@/lib/search'
+import {
+  fetchVtexSearchProducts,
+  resolveVtexBaseUrlForRetailer,
+} from '@/server/retail-capture/fetch-vtex-search'
+import { extractProductArrayFromJson } from '@/server/retail-capture/parse-json-products'
+import { mapVtexProductList } from '@/server/retail-capture/map-vtex-product'
 
 export type RetailListingRow = {
   snapshot_id: string
@@ -255,6 +262,163 @@ export async function linkRetailListingAction(input: {
 
   revalidatePath('/catalog')
   return { ok: true }
+}
+
+const CAPTURE_RETAILERS = ['jumbo', 'lider', 'central_mayorista'] as const
+export type CaptureRetailer = (typeof CAPTURE_RETAILERS)[number]
+
+function isCaptureRetailer(s: string): s is CaptureRetailer {
+  return (CAPTURE_RETAILERS as readonly string[]).includes(s)
+}
+
+export async function runRetailWebCaptureAction(input: {
+  retailer: CaptureRetailer
+  searchQuery: string
+  maxItems: number
+}): Promise<
+  | { ok: true; inserted: number }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) {
+    return { ok: false, error: editor.error }
+  }
+
+  const q = normalizeSearchText(input.searchQuery)
+  if (q.length < 2) {
+    return {
+      ok: false,
+      error: 'Escribe al menos 2 caracteres para buscar.',
+    }
+  }
+
+  const base = resolveVtexBaseUrlForRetailer(input.retailer)
+  if (!base) {
+    return {
+      ok: false,
+      error:
+        'La captura automática para esta cadena no está configurada en el servidor. Define RETAIL_LIDER_VTEX_BASE_URL o RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL con la URL base del catálogo (formato VTEX), o importa JSON desde esta misma pantalla.',
+    }
+  }
+
+  const maxItems = Math.min(100, Math.max(1, Math.floor(input.maxItems || 40)))
+
+  const fetched = await fetchVtexSearchProducts(base, q, maxItems)
+  if (!fetched.ok) {
+    if (fetched.reason === 'not_json') {
+      return {
+        ok: false,
+        error:
+          'La tienda no devolvió datos utilizables desde el servidor en este momento. Intenta de nuevo más tarde o pega el JSON de la búsqueda en la opción de importación.',
+      }
+    }
+    if (fetched.reason === 'http_error') {
+      return {
+        ok: false,
+        error: 'No se pudo completar la acción. Intenta nuevamente.',
+      }
+    }
+    return {
+      ok: false,
+      error: 'No se pudo completar la acción. Intenta nuevamente.',
+    }
+  }
+
+  const rows = mapVtexProductList(fetched.products, {
+    retailer: input.retailer,
+    vtexBaseUrl: base,
+    matchMethod: 'app_vtex_search',
+  })
+
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      error: 'No se encontraron productos con precio para importar.',
+    }
+  }
+
+  const { error } = await editor.admin
+    .from('catalog_retail_snapshots')
+    .insert(rows as never)
+
+  if (error) {
+    return {
+      ok: false,
+      error: getUserFriendlyErrorMessage(error, 'generic'),
+    }
+  }
+
+  revalidatePath('/catalog')
+  return { ok: true, inserted: rows.length }
+}
+
+export async function importRetailSnapshotsFromJsonAction(input: {
+  retailer: string
+  jsonText: string
+  /** Para armar enlaces canónicos en VTEX; si se omite, se usa la URL base por cadena o Jumbo. */
+  vtexBaseUrlOverride?: string | null
+}): Promise<
+  | { ok: true; inserted: number }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) {
+    return { ok: false, error: editor.error }
+  }
+
+  if (!isCaptureRetailer(input.retailer)) {
+    return { ok: false, error: 'Cadena no válida.' }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(input.jsonText)
+  } catch {
+    return {
+      ok: false,
+      error: 'El contenido no es JSON válido. Revisa el texto pegado.',
+    }
+  }
+
+  const arr = extractProductArrayFromJson(parsed)
+  if (arr.length === 0) {
+    return {
+      ok: false,
+      error: 'No se encontró una lista de productos en el JSON.',
+    }
+  }
+
+  const baseResolved =
+    input.vtexBaseUrlOverride?.trim() ||
+    resolveVtexBaseUrlForRetailer(input.retailer) ||
+    'https://www.jumbo.cl'
+
+  const rows = mapVtexProductList(arr, {
+    retailer: input.retailer,
+    vtexBaseUrl: baseResolved,
+    matchMethod: 'app_json_import',
+  })
+
+  if (rows.length === 0) {
+    return {
+      ok: false,
+      error: 'No se encontraron productos con precio válido en el JSON.',
+    }
+  }
+
+  const { error } = await editor.admin
+    .from('catalog_retail_snapshots')
+    .insert(rows as never)
+
+  if (error) {
+    return {
+      ok: false,
+      error: getUserFriendlyErrorMessage(error, 'generic'),
+    }
+  }
+
+  revalidatePath('/catalog')
+  return { ok: true, inserted: rows.length }
 }
 
 export async function unlinkRetailListingAction(input: {

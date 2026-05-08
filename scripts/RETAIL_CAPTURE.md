@@ -8,6 +8,15 @@
 
 La **comparativa inteligente** usa la RPC `catalog_retail_match_candidates` en Postgres (similitud de nombre con `pg_trgm`, cercanía de precio, categoría opcional). La app la usa en **Catálogo → Precios cadenas → Homologar**. El script puede usar la misma RPC más reglas en Python (`retail_import_decision.py`: marca, descripción, umbrales) con `--smart-resolve` y, opcionalmente, alta de maestro con `--create-if-novel`.
 
+## Captura dentro de la aplicación
+
+En **Catálogo → Precios cadenas** el botón **Capturar precios** abre un modal para:
+
+1. **Búsqueda web** — Llama desde el servidor a la API pública estilo VTEX (`/api/catalog_system/pub/products/search/{término}`). **Jumbo** usa por defecto `https://www.jumbo.cl`. Opcional: variable `RETAIL_JUMBO_VTEX_BASE_URL` para otro host.
+2. **Lider / Central Mayorista** — Si la captura automática no está disponible, definí en el servidor `RETAIL_LIDER_VTEX_BASE_URL` o `RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL` con la URL base del catálogo en formato VTEX, o usá **Importar desde JSON** pegando la respuesta JSON del mismo endpoint (por ejemplo copiada desde las herramientas de desarrollo del navegador).
+
+Requiere `SUPABASE_SERVICE_ROLE_KEY` en el servidor y rol **editor** (o superior) en el perfil activo. Los registros se insertan en `catalog_retail_snapshots` con `match_method` `app_vtex_search` o `app_json_import`.
+
 ## Flujo recomendado
 
 ### 1. Scraping local (fuera de este repo)
