@@ -198,7 +198,7 @@ stable
 security invoker
 set search_path = public
 as $$
-  with narrowed as (
+  with narrowed as materialized (
     select
       cp.id as pid,
       cp.name as pname,
