@@ -901,6 +901,14 @@ export interface Database {
           match_score: number
         }[]
       }
+      catalog_retail_prices_for_products: {
+        Args: { p_product_ids: string[] }
+        Returns: {
+          catalog_product_id: string
+          retail_price_lider: number | null
+          retail_price_jumbo: number | null
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
