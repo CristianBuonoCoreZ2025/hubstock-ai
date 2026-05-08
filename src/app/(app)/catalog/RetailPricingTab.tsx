@@ -145,7 +145,10 @@ export function RetailPricingTab(props: {
           categoryForMatchId
         : null
       const res = await fetchRetailMatchCandidatesAction({
-        title: homologRow.title,
+        title:
+          homologRow.description_hint ?
+            `${homologRow.title} ${homologRow.description_hint}`.trim()
+          : homologRow.title,
         price: homologRow.price,
         categoryId: cat,
       })
@@ -275,7 +278,7 @@ export function RetailPricingTab(props: {
             <Label className="text-[12px]">Buscar</Label>
             <Input
               className="app-input h-9"
-              placeholder="Nombre, referencia o categoría del ítem…"
+              placeholder="Nombre, referencia, categoría o descripción del ítem…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
             />
@@ -334,7 +337,7 @@ export function RetailPricingTab(props: {
             {!loading && rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                  No hay capturas retail. Ejecutá el importador, por ejemplo{' '}
+                  No hay capturas retail. Ejecuta el importador, por ejemplo{' '}
                   <code className="rounded bg-muted px-1 text-[12px]">
                     python scripts/import_retail_snapshots.py --retailer central_mayorista
                   </code>
@@ -345,7 +348,14 @@ export function RetailPricingTab(props: {
               rows.map((row) => (
                 <tr key={`${row.retailer}:${row.external_ref}`} className="border-b border-border last:border-0">
                   <td className="p-3 text-[13px] font-medium">{retailerLabel(row.retailer)}</td>
-                  <td className="max-w-[280px] p-3 text-[13px] leading-snug">{row.title}</td>
+                  <td className="max-w-[280px] p-3 text-[13px] leading-snug">
+                    <div>{row.title}</div>
+                    {row.description_hint ? (
+                      <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                        {row.description_hint}
+                      </div>
+                    ) : null}
+                  </td>
                   <td className="p-3 tabular-nums text-[13px]">${Number(row.price).toFixed(0)}</td>
                   <td className="max-w-[200px] p-3 text-[12px] text-muted-foreground">
                     {row.category_hint ?? '—'}

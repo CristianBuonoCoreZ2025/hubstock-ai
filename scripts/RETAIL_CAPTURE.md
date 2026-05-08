@@ -88,3 +88,5 @@ Cada vez que ejecutes el mismo comando de import de snapshots para actualizar pr
 - `SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY` (service_role)
 - Opcional: `RETAIL_SQLITE` para forzar ruta al `.db`
+
+Después de aplicar migraciones nuevas en Supabase, conviene ejecutar en SQL (si la migración no lo hizo ya): `analyze catalog_retail_snapshots; analyze catalog_retail_links;` para mantener planes de consulta actualizados.
