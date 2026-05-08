@@ -43,6 +43,12 @@ from urllib.parse import urlparse
 
 # Raíz del repo (padre de scripts/)
 ROOT = Path(__file__).resolve().parent.parent
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
+
+from retail_private_label import fold_private_label_brand  # noqa: E402
+from sqlite_taxonomy_sync import sqlite_category_hint  # noqa: E402
 
 
 def env_ssl_verify() -> bool:
@@ -547,6 +553,10 @@ def main() -> int:
 
     print(f"Subcategorías mapeadas: {len(sub_sqlite_to_pg)}")
 
+    hint_by_subcat: dict[int, str] = {}
+    for sid_k in list(sub_sqlite_to_pg.keys()):
+        hint_by_subcat[sid_k] = sqlite_category_hint(cur, sid_k, norm_taxonomy_label) or ""
+
     # --- Productos ---
     cur.execute(
         """
@@ -608,14 +618,24 @@ def main() -> int:
             skipped_no_cat += 1
             continue
 
-        url_p = (row["url_producto"] or "").strip()
-        cat_uuid = sub_sqlite_to_pg[sid_sub]
+        nombre = norm_taxonomy_label(row["nombre"] or "") or "Sin nombre"
+        ch = hint_by_subcat.get(int(sid_sub), "") if sid_sub is not None else ""
+        brand_raw = norm_taxonomy_label(row["marca"] or "") or None
+        folded_marca, _used_gen = fold_private_label_brand(
+            brand_raw,
+            product_name=nombre,
+            category_hint=ch or None,
+        )
+        marca_for_resolve = folded_marca if folded_marca else brand_raw
 
         if args.dry_run:
             processed += 1
             continue
 
         assert supabase is not None
+
+        url_p = (row["url_producto"] or "").strip()
+        cat_uuid = sub_sqlite_to_pg[sid_sub]
 
         if url_p:
             dup = (
@@ -638,7 +658,6 @@ def main() -> int:
         )
         section_uuid = cat_row.data["section_id"]
 
-        nombre = norm_taxonomy_label(row["nombre"] or "") or "Sin nombre"
         precio = parse_clp(row["precio"])
         pu = (row["precio_unitario"] or "").strip()
         format_str = pu if pu else None
@@ -646,16 +665,15 @@ def main() -> int:
 
         brand_id: str | None = None
         marca_txt: str | None = None
-        if args.dry_run:
-            m = norm_taxonomy_label(row["marca"] or "")
-            marca_txt = m if m else None
+        if use_catalog_brands:
+            brand_id, marca_txt = resolve_brand(
+                supabase,
+                marca_for_resolve if marca_for_resolve is not None else "",
+                brand_by_key,
+            )
         else:
-            assert supabase is not None
-            if use_catalog_brands:
-                brand_id, marca_txt = resolve_brand(supabase, row["marca"], brand_by_key)
-            else:
-                m = norm_taxonomy_label(row["marca"] or "")
-                marca_txt = m if m else None
+            m = norm_taxonomy_label(marca_for_resolve or "")
+            marca_txt = m if m else None
 
         payload: dict[str, Any] = {
             "section_id": section_uuid,

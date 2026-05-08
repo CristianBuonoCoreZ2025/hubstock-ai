@@ -3,19 +3,20 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Pencil, Power } from 'lucide-react'
+import { Check, GitMerge, Minus, Pencil } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   CatalogFilterCombo,
   CatalogProductsTableSkeleton,
+  CatalogSearchBox,
   CatalogTabHeader,
   GridLoadingMask,
   SectionSearchCombo,
 } from '@/app/(app)/catalog/catalog-ui'
+import { RetailPricingTab } from '@/app/(app)/catalog/RetailPricingTab'
 import { CopyCatalogButton } from '@/components/catalog/CopyCatalogButton'
 import {
   createCatalogAliasAction,
-  createCatalogBrandAction,
   createCatalogProductAction,
   createCategoryAction,
   createSectionAction,
@@ -32,6 +33,7 @@ import {
   setCatalogProductActiveAction,
   updateCatalogBrandAction,
   updateCatalogProductAction,
+  mergeCatalogBrandsAction,
   updateCategoryAction,
   type AliasPageRow,
   type CatalogBrandGridRow,
@@ -41,6 +43,7 @@ import {
 } from '@/app/actions/catalog'
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
+import { GridPagingRow } from '@/components/grid/grid-paging-row'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -72,23 +75,86 @@ export type CategoryRow = {
   sort_order: number
 }
 
-type TabKey = 'products' | 'brands' | 'categories'
+type TabKey = 'products' | 'brands' | 'categories' | 'retail'
+function CatalogProductQuickActions({
+  row,
+  onEdit,
+  onToggleRequest,
+}: {
+  row: CatalogProductGridRow
+  onEdit: () => void
+  onToggleRequest: () => void
+}) {
+  return (
+    <div className="flex items-center justify-end gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 text-muted-foreground hover:text-foreground"
+        onClick={onEdit}
+        title="Editar producto"
+      >
+        <Pencil className="size-4" aria-hidden />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 text-muted-foreground hover:text-destructive"
+        onClick={onToggleRequest}
+        title={row.active ? 'Desactivar producto' : 'Activar producto'}
+      >
+        {row.active ? (
+          <span className="inline-flex size-6 items-center justify-center rounded-full border border-destructive text-destructive">
+            <Minus className="size-3.5" strokeWidth={2.5} aria-hidden />
+          </span>
+        ) : (
+          <span className="inline-flex size-6 items-center justify-center rounded-full border border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-400">
+            <Check className="size-3.5" strokeWidth={2.5} aria-hidden />
+          </span>
+        )}
+      </Button>
+    </div>
+  )
+}
 
 const TAB_QUERY: Record<TabKey, string> = {
   products: 'productos',
   brands: 'marcas',
   categories: 'categorias',
+  retail: 'cadenas',
 }
 
 const QUERY_TO_TAB = new Map<string, TabKey>([
   ['productos', 'products'],
   ['marcas', 'brands'],
   ['categorias', 'categories'],
+  ['cadenas', 'retail'],
 ])
 
 function tabFromUrl(tabParam: string | null): TabKey {
   if (!tabParam) return 'products'
   return QUERY_TO_TAB.get(tabParam) ?? 'products'
+}
+
+/** Columna Lider: última captura homologada; si no hay, precio ref. del import masivo Lider. */
+function formatRetailLiderCell(row: CatalogProductGridRow): string {
+  if (row.retail_price_lider != null) return `$${Number(row.retail_price_lider).toFixed(0)}`
+  if (row.source_system === 'lider_sqlite' && row.default_reference_price != null) {
+    return `$${Number(row.default_reference_price).toFixed(0)}`
+  }
+  return '—'
+}
+
+function formatRetailJumboCell(row: CatalogProductGridRow): string {
+  return row.retail_price_jumbo != null ? `$${Number(row.retail_price_jumbo).toFixed(0)}` : '—'
+}
+
+function formatRetailCentralMayoristaCell(row: CatalogProductGridRow): string {
+  return row.retail_price_central_mayorista != null
+    ? `$${Number(row.retail_price_central_mayorista).toFixed(0)}`
+    : '—'
 }
 
 const emptyProductInput = (): CatalogProductInput => ({
@@ -356,6 +422,81 @@ function ProductDialogCategoryPick(props: {
   )
 }
 
+/** Búsqueda remota para unificar marcas en modal «Unir». */
+function MergeBrandSearchPick(props: {
+  label: string
+  valueId: string
+  displayName: string | null
+  /** Evita seleccionar la misma marca en el segundo combo. */
+  excludeId?: string
+  onPick: (id: string, name: string) => void
+  onClear: () => void
+}) {
+  const { label, valueId, displayName, excludeId, onPick, onClear } = props
+  const [q, setQ] = useState('')
+  const dq = useDebouncedValue(q, 300)
+  const [busy, setBusy] = useState(false)
+  const [options, setOptions] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    async function load() {
+      if (normalizeSearchText(dq).length < 2) {
+        setOptions([])
+        return
+      }
+      setBusy(true)
+      const res = await searchCatalogBrandsAction(dq)
+      setBusy(false)
+      if (!res.ok) setOptions([])
+      else setOptions(res.rows.filter((o) => !excludeId || o.id !== excludeId))
+    }
+    void load()
+  }, [dq, excludeId])
+
+  return (
+    <div className="space-y-1.5">
+      <Label>{label}</Label>
+      {valueId ? (
+        <div className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+          <span>
+            Selección: <strong className="text-foreground">{displayName ?? '—'}</strong>
+          </span>
+          <Button type="button" variant="outline" size="sm" className="h-7 text-[11px]" onClick={onClear}>
+            Quitar
+          </Button>
+        </div>
+      ) : null}
+      <Input
+        className="app-input"
+        placeholder="Buscar marca (≥2 caracteres)…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      {normalizeSearchText(q).length > 0 && normalizeSearchText(q).length < 2 ? (
+        <p className="text-[12px] text-muted-foreground">Escribe al menos 2 caracteres para buscar.</p>
+      ) : null}
+      {busy ? <p className="text-[12px] text-muted-foreground">Buscando…</p> : null}
+      <ul className="max-h-40 overflow-auto rounded-md border border-border text-[13px]">
+        {options.map((o) => (
+          <li key={o.id} className="border-b border-border last:border-0">
+            <button
+              type="button"
+              className="w-full px-2 py-1.5 text-left hover:bg-muted"
+              onClick={() => {
+                onPick(o.id, o.name)
+                setQ('')
+                setOptions([])
+              }}
+            >
+              {o.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export function CatalogTabs(props: {
   profileId: string
   sections: SectionRow[]
@@ -384,21 +525,14 @@ export function CatalogTabs(props: {
     () => new Map(sections.map((s) => [s.id, s])),
     [sections]
   )
+
   const categoryById = useMemo(
     () => new Map(categories.map((c) => [c.id, c])),
     [categories]
   )
 
-  const sectionsSorted = useMemo(
-    () =>
-      [...sections].sort((a, b) =>
-        a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
-      ),
-    [sections]
-  )
-
   const [productSearch, setProductSearch] = useState('')
-  const debouncedProductSearch = useDebouncedValue(productSearch, 450)
+  const [productSearchSubmitted, setProductSearchSubmitted] = useState('')
   const [sectionFilter, setSectionFilter] = useState<string>('all')
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [categoryFilterLabel, setCategoryFilterLabel] = useState<string | null>(null)
@@ -413,6 +547,9 @@ export function CatalogTabs(props: {
   const [productsHasNext, setProductsHasNext] = useState(false)
   const [productsTruncated, setProductsTruncated] = useState(false)
 
+  const [productFilterSections, setProductFilterSections] = useState<
+    { id: string; name: string }[]
+  >([])
   const [productFilterCategories, setProductFilterCategories] = useState<
     { id: string; name: string }[]
   >([])
@@ -430,7 +567,7 @@ export function CatalogTabs(props: {
       sectionId: sectionFilter,
       categoryId: categoryFilter,
       brandId: brandFilter,
-      search: debouncedProductSearch,
+      search: productSearchSubmitted,
     })
     if (seq !== productsFetchSeq.current) return
     setProductsLoading(false)
@@ -446,7 +583,7 @@ export function CatalogTabs(props: {
   }, [
     brandFilter,
     categoryFilter,
-    debouncedProductSearch,
+    productSearchSubmitted,
     productPage,
     sectionFilter,
     showInactiveProducts,
@@ -458,7 +595,7 @@ export function CatalogTabs(props: {
     async function loadOpts() {
       setProductFilterOptionsLoading(true)
       const res = await fetchCatalogProductFilterOptions({
-        search: debouncedProductSearch,
+        search: productSearchSubmitted,
         sectionId: sectionFilter,
         categoryId: categoryFilter,
         brandId: brandFilter,
@@ -466,6 +603,7 @@ export function CatalogTabs(props: {
       })
       if (!cancelled) setProductFilterOptionsLoading(false)
       if (cancelled || !res.ok) return
+      setProductFilterSections(res.sections)
       setProductFilterCategories(res.categories)
       setProductFilterBrands(res.brands)
     }
@@ -475,7 +613,7 @@ export function CatalogTabs(props: {
     }
   }, [
     tab,
-    debouncedProductSearch,
+    productSearchSubmitted,
     sectionFilter,
     categoryFilter,
     brandFilter,
@@ -483,8 +621,37 @@ export function CatalogTabs(props: {
   ])
 
   useEffect(() => {
+    if (tab !== 'products') return
+    if (sectionFilter === 'all') return
+    if (productFilterSections.some((s) => s.id === sectionFilter)) return
+    setSectionFilter('all')
+    setCategoryFilter('all')
+    setCategoryFilterLabel(null)
+    setBrandFilter('all')
+    setBrandFilterLabel(null)
+  }, [tab, productFilterSections, sectionFilter])
+
+  useEffect(() => {
+    if (tab !== 'products') return
+    if (categoryFilter === 'all') return
+    if (productFilterCategories.some((c) => c.id === categoryFilter)) return
+    setCategoryFilter('all')
+    setCategoryFilterLabel(null)
+    setBrandFilter('all')
+    setBrandFilterLabel(null)
+  }, [tab, productFilterCategories, categoryFilter])
+
+  useEffect(() => {
+    if (tab !== 'products') return
+    if (brandFilter === 'all') return
+    if (productFilterBrands.some((b) => b.id === brandFilter)) return
+    setBrandFilter('all')
+    setBrandFilterLabel(null)
+  }, [tab, productFilterBrands, brandFilter])
+
+  useEffect(() => {
     setProductPage(0)
-  }, [debouncedProductSearch, sectionFilter, categoryFilter, brandFilter, showInactiveProducts])
+  }, [productSearchSubmitted, sectionFilter, categoryFilter, brandFilter, showInactiveProducts])
 
   useEffect(() => {
     void reloadProducts()
@@ -501,8 +668,22 @@ export function CatalogTabs(props: {
   )
   const [productForm, setProductForm] = useState<CatalogProductInput>(emptyProductInput)
 
-  const [brandDialogOpen, setBrandDialogOpen] = useState(false)
-  const [brandName, setBrandName] = useState('')
+  const [brandMergeOpen, setBrandMergeOpen] = useState(false)
+  const [brandMergeSurvivorId, setBrandMergeSurvivorId] = useState('')
+  const [brandMergeAbsorbedId, setBrandMergeAbsorbedId] = useState('')
+  const [brandMergeSurvivorName, setBrandMergeSurvivorName] = useState<string | null>(null)
+  const [brandMergeAbsorbedName, setBrandMergeAbsorbedName] = useState<string | null>(null)
+  const [brandMergeUnifiedName, setBrandMergeUnifiedName] = useState('')
+  const [brandMergeBusy, setBrandMergeBusy] = useState(false)
+
+  function resetBrandMergeForm() {
+    setBrandMergeSurvivorId('')
+    setBrandMergeAbsorbedId('')
+    setBrandMergeSurvivorName(null)
+    setBrandMergeAbsorbedName(null)
+    setBrandMergeUnifiedName('')
+    setBrandMergeBusy(false)
+  }
   const [selectedBrandId, setSelectedBrandId] = useState<string>('all')
   const [selectedBrandName, setSelectedBrandName] = useState<string | null>(null)
   const [brandTabIncludeInactiveProducts, setBrandTabIncludeInactiveProducts] = useState(false)
@@ -513,7 +694,7 @@ export function CatalogTabs(props: {
 
   const [brandListPage, setBrandListPage] = useState(0)
   const [brandListSearch, setBrandListSearch] = useState('')
-  const debouncedBrandListSearch = useDebouncedValue(brandListSearch, 300)
+  const [brandListSearchSubmitted, setBrandListSearchSubmitted] = useState('')
   const [brandListRows, setBrandListRows] = useState<CatalogBrandGridRow[]>([])
   const [brandListTotal, setBrandListTotal] = useState<number | null>(null)
   const [brandListHasNext, setBrandListHasNext] = useState(false)
@@ -543,11 +724,12 @@ export function CatalogTabs(props: {
   const [aliasHasNext, setAliasHasNext] = useState(false)
   const [aliasBusy, setAliasBusy] = useState(false)
   const [aliasTableSearch, setAliasTableSearch] = useState('')
-  const debouncedAliasSearch = useDebouncedValue(aliasTableSearch, 350)
+  const [aliasTableSearchSubmitted, setAliasTableSearchSubmitted] = useState('')
 
   const [categorySectionFilter, setCategorySectionFilter] = useState<string>('all')
+  const [categoryGridCategoryFilter, setCategoryGridCategoryFilter] = useState<string>('all')
   const [categoryGridSearch, setCategoryGridSearch] = useState('')
-  const debouncedCategoryGridSearch = useDebouncedValue(categoryGridSearch, 300)
+  const [categoryGridSearchSubmitted, setCategoryGridSearchSubmitted] = useState('')
   const [categoryGridPage, setCategoryGridPage] = useState(0)
   const [categoryGridRows, setCategoryGridRows] = useState<CatalogCategoryGridRow[]>([])
   const [categoryGridBusy, setCategoryGridBusy] = useState(false)
@@ -561,13 +743,34 @@ export function CatalogTabs(props: {
   const [catProdBusy, setCatProdBusy] = useState(false)
   const [catProdHasNext, setCatProdHasNext] = useState(false)
 
+  const categoriesScopedByMaintainSection = useMemo(() => {
+    if (categorySectionFilter === 'all') return categories
+    return categories.filter((c) => c.section_id === categorySectionFilter)
+  }, [categories, categorySectionFilter])
+
+  function submitProductSearch() {
+    setProductSearchSubmitted(productSearch.trim())
+  }
+
+  function submitBrandListSearch() {
+    setBrandListSearchSubmitted(brandListSearch.trim())
+  }
+
+  function submitCategoryGridSearch() {
+    setCategoryGridSearchSubmitted(categoryGridSearch.trim())
+  }
+
+  function submitAliasTableSearch() {
+    setAliasTableSearchSubmitted(aliasTableSearch.trim())
+  }
+
   useEffect(() => {
     async function load() {
       if (tab !== 'brands') return
       setBrandListBusy(true)
       const res = await fetchCatalogBrandsPage({
         page: brandListPage,
-        search: debouncedBrandListSearch,
+        search: brandListSearchSubmitted,
         productActiveOnly: !brandTabIncludeInactiveProducts,
       })
       setBrandListBusy(false)
@@ -580,11 +783,11 @@ export function CatalogTabs(props: {
       setBrandListHasNext(res.hasNextPage)
     }
     void load()
-  }, [tab, brandListPage, debouncedBrandListSearch, brandTabIncludeInactiveProducts])
+  }, [tab, brandListPage, brandListSearchSubmitted, brandTabIncludeInactiveProducts])
 
   useEffect(() => {
     setBrandListPage(0)
-  }, [debouncedBrandListSearch, brandTabIncludeInactiveProducts])
+  }, [brandListSearchSubmitted, brandTabIncludeInactiveProducts])
 
   useEffect(() => {
     async function load() {
@@ -624,7 +827,8 @@ export function CatalogTabs(props: {
       const res = await fetchCatalogCategoriesPage({
         page: categoryGridPage,
         sectionId: categorySectionFilter,
-        search: debouncedCategoryGridSearch,
+        categoryId: categoryGridCategoryFilter,
+        search: categoryGridSearchSubmitted,
         productActiveOnly: !categoryTabIncludeInactiveProducts,
       })
       setCategoryGridBusy(false)
@@ -637,11 +841,35 @@ export function CatalogTabs(props: {
       setCategoryGridHasNext(res.hasNextPage)
     }
     void load()
-  }, [tab, categoryGridPage, categorySectionFilter, debouncedCategoryGridSearch, categoryTabIncludeInactiveProducts])
+  }, [
+    tab,
+    categoryGridPage,
+    categorySectionFilter,
+    categoryGridCategoryFilter,
+    categoryGridSearchSubmitted,
+    categoryTabIncludeInactiveProducts,
+  ])
+
+  useEffect(() => {
+    setCategoryGridCategoryFilter('all')
+  }, [categorySectionFilter])
+
+  useEffect(() => {
+    if (categoryGridCategoryFilter === 'all') return
+    const allowed = new Set(categoriesScopedByMaintainSection.map((c) => c.id))
+    if (!allowed.has(categoryGridCategoryFilter)) {
+      setCategoryGridCategoryFilter('all')
+    }
+  }, [categoriesScopedByMaintainSection, categoryGridCategoryFilter])
 
   useEffect(() => {
     setCategoryGridPage(0)
-  }, [debouncedCategoryGridSearch, categorySectionFilter, categoryTabIncludeInactiveProducts])
+  }, [
+    categoryGridSearchSubmitted,
+    categorySectionFilter,
+    categoryGridCategoryFilter,
+    categoryTabIncludeInactiveProducts,
+  ])
 
   useEffect(() => {
     async function load() {
@@ -680,7 +908,7 @@ export function CatalogTabs(props: {
       setAliasBusy(true)
       const res = await fetchCatalogAliasesPage({
         page: aliasPage,
-        search: debouncedAliasSearch,
+        search: aliasTableSearchSubmitted,
       })
       setAliasBusy(false)
       if (!res.ok) {
@@ -691,11 +919,11 @@ export function CatalogTabs(props: {
       setAliasHasNext(res.hasNextPage)
     }
     void load()
-  }, [aliasDialogOpen, aliasPage, debouncedAliasSearch])
+  }, [aliasDialogOpen, aliasPage, aliasTableSearchSubmitted])
 
   useEffect(() => {
     setAliasPage(0)
-  }, [debouncedAliasSearch, aliasDialogOpen])
+  }, [aliasTableSearchSubmitted, aliasDialogOpen])
 
   function openNewProduct() {
     setEditingProductId(null)
@@ -748,17 +976,38 @@ export function CatalogTabs(props: {
     void reloadProducts()
   }
 
-  async function submitBrand() {
-    const res = await createCatalogBrandAction(brandName)
-    if (!res.ok) {
-      toast.error(res.error ?? 'No logramos completar la acción. Revisa los datos e intenta nuevamente.')
+  async function submitMergeBrands() {
+    if (!brandMergeSurvivorId.trim() || !brandMergeAbsorbedId.trim()) {
+      toast.error('Completa los campos obligatorios antes de guardar.')
       return
     }
-    toast.success('Marca creada')
-    setBrandName('')
-    setBrandDialogOpen(false)
-    router.refresh()
+    if (brandMergeSurvivorId === brandMergeAbsorbedId) {
+      toast.error('Elige dos marcas distintas para unificar.')
+      return
+    }
+    const label = brandMergeUnifiedName.trim()
+    if (!label) {
+      toast.error('Escribe el nombre final de la marca unificada.')
+      return
+    }
+    setBrandMergeBusy(true)
+    const res = await mergeCatalogBrandsAction({
+      survivorBrandId: brandMergeSurvivorId,
+      absorbedBrandId: brandMergeAbsorbedId,
+      unifiedName: label,
+    })
+    setBrandMergeBusy(false)
+    if (!res.ok) {
+      toast.error(res.error ?? 'No se pudo completar la acción. Intenta nuevamente.')
+      return
+    }
+    toast.success('Marcas unificadas')
+    resetBrandMergeForm()
+    setBrandMergeOpen(false)
     setBrandListPage(0)
+    setSelectedBrandId('all')
+    setSelectedBrandName(null)
+    router.refresh()
   }
 
   function openEditBrand(b: CatalogBrandGridRow) {
@@ -881,6 +1130,7 @@ export function CatalogTabs(props: {
     { id: 'products', label: 'Productos' },
     { id: 'brands', label: 'Marcas' },
     { id: 'categories', label: 'Categorías' },
+    { id: 'retail', label: 'Precios cadenas' },
   ]
 
   const productCountHint =
@@ -937,22 +1187,24 @@ export function CatalogTabs(props: {
         <div className="space-y-4">
           <CatalogTabHeader
             title="Productos del catálogo"
-            description="Consulta y administra productos maestros. Esta vista no modifica stock del hogar."
+            description="Consulta y administra productos maestros; no modifica stock del hogar. Lider, Jumbo y Central Mayorista: última captura importada por cadena cuando el ítem está homologado; columna Lider puede usar precio ref. del import masivo Lider si aún no hay captura vinculada."
           />
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-4">
             <div className="min-w-[min(100%,280px)] flex-[2] space-y-1.5">
               <Label className="text-[12px]">Búsqueda libre</Label>
-              <Input
-                className="app-input h-9"
+              <CatalogSearchBox
+                ariaLabel="Buscar productos"
                 placeholder="Buscar producto, marca, categoría o presentación..."
                 value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
+                onChange={setProductSearch}
+                onSubmit={submitProductSearch}
               />
             </div>
             <SectionSearchCombo
               label="Sección"
-              sections={sectionsSorted}
+              sections={productFilterSections}
+              loading={productFilterOptionsLoading}
               value={sectionFilter}
               onChange={(v) => {
                 setSectionFilter(v)
@@ -1030,31 +1282,18 @@ export function CatalogTabs(props: {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={productPage <= 0 || productsLoading}
-              onClick={() => setProductPage((p) => Math.max(0, p - 1))}
-            >
-              Anterior
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!productsHasNext || productsLoading}
-              onClick={() => setProductPage((p) => p + 1)}
-            >
-              Siguiente
-            </Button>
-            <span>
-              Página {productPage + 1} · Tamaño {CATALOG_GRID_PAGE_SIZE}
-              {productsTotal !== null ? ` · Total filtrado: ${productsTotal}` : null}
-            </span>
-            <span className="text-[12px]">{productCountHint}</span>
-          </div>
+          <GridPagingRow
+            disablePrev={productPage <= 0 || productsLoading}
+            disableNext={!productsHasNext || productsLoading}
+            onPrev={() => setProductPage((p) => Math.max(0, p - 1))}
+            onNext={() => setProductPage((p) => p + 1)}
+            pageIndex={productPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={
+              productsTotal !== null ? ` · Total filtrado: ${productsTotal}` : null
+            }
+            trailing={<span className="text-[12px]">{productCountHint}</span>}
+          />
 
           <div className="relative overflow-x-auto rounded-lg border border-border bg-card">
             {productsLoading ? (
@@ -1062,7 +1301,7 @@ export function CatalogTabs(props: {
                 Cargando productos…
               </p>
             ) : null}
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[1280px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left">
                   <th className="w-[52px] p-3 font-medium">Imagen</th>
@@ -1072,16 +1311,19 @@ export function CatalogTabs(props: {
                   <th className="p-3 font-medium">Marca</th>
                   <th className="p-3 font-medium">Presentación</th>
                   <th className="p-3 font-medium">Precio ref.</th>
+                  <th className="p-3 font-medium">Lider</th>
+                  <th className="p-3 font-medium">Jumbo</th>
+                  <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                   <th className="p-3 font-medium">Estado</th>
                   <th className="p-3 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {productsLoading ? (
-                  <CatalogProductsTableSkeleton colCount={9} rows={10} />
+                  <CatalogProductsTableSkeleton colCount={12} rows={10} />
                 ) : productRows.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={12} className="p-8 text-center text-muted-foreground">
                       No encontramos productos con esos filtros. Ajusta la búsqueda o limpia los filtros.
                     </td>
                   </tr>
@@ -1122,6 +1364,15 @@ export function CatalogTabs(props: {
                           ? `$${Number(row.default_reference_price).toFixed(0)}`
                           : '—'}
                       </td>
+                      <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
+                        {formatRetailLiderCell(row)}
+                      </td>
+                      <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
+                        {formatRetailJumboCell(row)}
+                      </td>
+                      <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
+                        {formatRetailCentralMayoristaCell(row)}
+                      </td>
                       <td className="p-3">
                         {row.active ? (
                           <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-200">
@@ -1133,33 +1384,12 @@ export function CatalogTabs(props: {
                           </span>
                         )}
                       </td>
-                      <td className="p-2">
-                        <div className="flex flex-nowrap items-center justify-end gap-1.5">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 gap-1 px-2 text-[12px] text-muted-foreground hover:text-foreground"
-                            onClick={() => openEditProduct(row)}
-                            title="Editar"
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                            <span className="hidden sm:inline">Editar</span>
-                          </Button>
-                          <Button
-                            type="button"
-                            variant={row.active ? 'outline' : 'secondary'}
-                            size="sm"
-                            className="h-8 gap-1 border-dashed px-2 text-[12px]"
-                            onClick={() => requestToggleProductActive(row)}
-                            title={row.active ? 'Desactivar' : 'Activar'}
-                          >
-                            <Power className="h-3.5 w-3.5" />
-                            <span className="hidden min-[1100px]:inline">
-                              {row.active ? 'Desactivar' : 'Activar'}
-                            </span>
-                          </Button>
-                        </div>
+                      <td className="p-1">
+                        <CatalogProductQuickActions
+                          row={row}
+                          onEdit={() => openEditProduct(row)}
+                          onToggleRequest={() => requestToggleProductActive(row)}
+                        />
                       </td>
                     </tr>
                   ))
@@ -1167,6 +1397,20 @@ export function CatalogTabs(props: {
               </tbody>
             </table>
           </div>
+
+          <GridPagingRow
+            disablePrev={productPage <= 0 || productsLoading}
+            disableNext={!productsHasNext || productsLoading}
+            onPrev={() => setProductPage((p) => Math.max(0, p - 1))}
+            onNext={() => setProductPage((p) => p + 1)}
+            pageIndex={productPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={
+              productsTotal !== null ? ` · Total filtrado: ${productsTotal}` : null
+            }
+            trailing={<span className="text-[12px]">{productCountHint}</span>}
+          />
+
           <Dialog open={deactivateProductRow != null} onOpenChange={(o) => !o && setDeactivateProductRow(null)}>
             <DialogContent className="sm:max-w-md">
               <DialogHeader>
@@ -1197,19 +1441,25 @@ export function CatalogTabs(props: {
         <div className="space-y-6">
           <CatalogTabHeader
             title="Marcas"
-            description="Administra marcas del catálogo y revisa sus productos asociados."
+            description="Revisión y mantenimiento de marcas del catálogo maestro y productos enlazados. Las nuevas marcas canónicas se generan automáticamente al crear productos."
           />
 
           <GridInactiveNote entity="Las marcas" />
 
+          <p className="text-[12px] text-muted-foreground">
+            Si existen equivalencias escritas distinto (ej. «excel» y «excell»), usa «Unir marcas» para una
+            sola marca y un nombre común sin colisionar con otra marca fuera del par elegido.
+          </p>
+
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-4">
             <div className="min-w-[200px] flex-1 space-y-1.5">
               <Label className="text-[12px]">Búsqueda marca</Label>
-              <Input
-                className="app-input h-9"
+              <CatalogSearchBox
+                ariaLabel="Buscar marcas"
                 placeholder="Mínimo 2 caracteres en servidor…"
                 value={brandListSearch}
-                onChange={(e) => setBrandListSearch(e.target.value)}
+                onChange={setBrandListSearch}
+                onSubmit={submitBrandListSearch}
               />
             </div>
             <label className="flex cursor-pointer items-center gap-2 text-[13px]">
@@ -1221,35 +1471,29 @@ export function CatalogTabs(props: {
               />
               Mostrar inactivos
             </label>
-            <Button type="button" className="h-9 shrink-0" onClick={() => setBrandDialogOpen(true)}>
-              Nueva marca
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 shrink-0 gap-2"
+              onClick={() => {
+                resetBrandMergeForm()
+                setBrandMergeOpen(true)
+              }}
+            >
+              <GitMerge className="h-4 w-4" aria-hidden />
+              Unir marcas
             </Button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={brandListPage <= 0 || brandListBusy}
-              onClick={() => setBrandListPage((p) => Math.max(0, p - 1))}
-            >
-              Anterior
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!brandListHasNext || brandListBusy}
-              onClick={() => setBrandListPage((p) => p + 1)}
-            >
-              Siguiente
-            </Button>
-            <span>
-              Página {brandListPage + 1} · Tamaño {CATALOG_GRID_PAGE_SIZE}
-              {brandListTotal !== null ? ` · Total: ${brandListTotal}` : null}
-            </span>
-          </div>
+          <GridPagingRow
+            disablePrev={brandListPage <= 0 || brandListBusy}
+            disableNext={!brandListHasNext || brandListBusy}
+            onPrev={() => setBrandListPage((p) => Math.max(0, p - 1))}
+            onNext={() => setBrandListPage((p) => p + 1)}
+            pageIndex={brandListPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={brandListTotal !== null ? ` · Total: ${brandListTotal}` : null}
+          />
 
           <GridLoadingMask show={brandListBusy}>
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -1323,6 +1567,16 @@ export function CatalogTabs(props: {
             </div>
           </GridLoadingMask>
 
+          <GridPagingRow
+            disablePrev={brandListPage <= 0 || brandListBusy}
+            disableNext={!brandListHasNext || brandListBusy}
+            onPrev={() => setBrandListPage((p) => Math.max(0, p - 1))}
+            onNext={() => setBrandListPage((p) => p + 1)}
+            pageIndex={brandListPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={brandListTotal !== null ? ` · Total: ${brandListTotal}` : null}
+          />
+
           <div className="rounded-lg border border-border bg-card">
             <div className="border-b border-border bg-muted/30 px-4 py-3">
               <h3 className="text-sm font-semibold">
@@ -1338,38 +1592,26 @@ export function CatalogTabs(props: {
             </div>
             {selectedBrandId !== 'all' ? (
               <div className="space-y-3 p-4">
-                <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={brandProductsPage <= 0 || brandProductsBusy}
-                    onClick={() => setBrandProductsPage((p) => Math.max(0, p - 1))}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!brandProductsHasNext || brandProductsBusy}
-                    onClick={() => setBrandProductsPage((p) => p + 1)}
-                  >
-                    Siguiente
-                  </Button>
-                  <span>
-                    Página {brandProductsPage + 1} · Tamaño {CATALOG_GRID_PAGE_SIZE}
-                  </span>
-                </div>
+                <GridPagingRow
+                  disablePrev={brandProductsPage <= 0 || brandProductsBusy}
+                  disableNext={!brandProductsHasNext || brandProductsBusy}
+                  onPrev={() => setBrandProductsPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setBrandProductsPage((p) => p + 1)}
+                  pageIndex={brandProductsPage}
+                  pageSize={CATALOG_GRID_PAGE_SIZE}
+                />
                 <GridLoadingMask show={brandProductsBusy}>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full min-w-[720px] text-sm">
+                    <table className="w-full min-w-[1040px] text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
                           <th className="p-3 font-medium">Producto</th>
                           <th className="p-3 font-medium">Categoría</th>
                           <th className="p-3 font-medium">Presentación</th>
                           <th className="p-3 font-medium">Precio ref.</th>
+                          <th className="p-3 font-medium">Lider</th>
+                          <th className="p-3 font-medium">Jumbo</th>
+                          <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1377,7 +1619,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!brandProductsBusy && brandProductsRows.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta marca y filtros.
                             </td>
                           </tr>
@@ -1396,6 +1638,15 @@ export function CatalogTabs(props: {
                                   ? `$${Number(p.default_reference_price).toFixed(0)}`
                                   : '—'}
                               </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailLiderCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailJumboCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailCentralMayoristaCell(p)}
+                              </td>
                               <td className="p-3">
                                 {p.active ?
                                   <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[12px] text-emerald-800 dark:text-emerald-200">
@@ -1403,27 +1654,12 @@ export function CatalogTabs(props: {
                                   </span>
                                 : <span className="rounded-full bg-muted px-2 py-0.5 text-[12px]">Inactivo</span>}
                               </td>
-                              <td className="p-3">
-                                <div className="flex justify-end gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8"
-                                    onClick={() => openEditProduct(p)}
-                                  >
-                                    Editar
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    className="h-8"
-                                    onClick={() => void toggleProductActiveRow(p)}
-                                  >
-                                    {p.active ? 'Desactivar' : 'Activar'}
-                                  </Button>
-                                </div>
+                              <td className="p-2">
+                                <CatalogProductQuickActions
+                                  row={p}
+                                  onEdit={() => openEditProduct(p)}
+                                  onToggleRequest={() => requestToggleProductActive(p)}
+                                />
                               </td>
                             </tr>
                           ))
@@ -1432,10 +1668,22 @@ export function CatalogTabs(props: {
                     </table>
                   </div>
                 </GridLoadingMask>
+                <GridPagingRow
+                  disablePrev={brandProductsPage <= 0 || brandProductsBusy}
+                  disableNext={!brandProductsHasNext || brandProductsBusy}
+                  onPrev={() => setBrandProductsPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setBrandProductsPage((p) => p + 1)}
+                  pageIndex={brandProductsPage}
+                  pageSize={CATALOG_GRID_PAGE_SIZE}
+                />
               </div>
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {tab === 'retail' ? (
+        <RetailPricingTab sections={sectionsSorted} categories={categories} />
       ) : null}
 
       {tab === 'categories' ? (
@@ -1446,6 +1694,12 @@ export function CatalogTabs(props: {
           />
 
           <GridInactiveNote entity="Las categorías y secciones" />
+
+          <p className="text-[12px] text-muted-foreground">
+            Primero se elige la sección: el combo de categoría muestra solo las categorías de esa sección
+            (o todas si la sección es «Todas»). Para usar «Nueva categoría», la sección del filtro no puede
+            ser «Todas».
+          </p>
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-4">
             <SectionSearchCombo
@@ -1459,13 +1713,30 @@ export function CatalogTabs(props: {
               }}
               className="min-w-[220px] flex-1"
             />
+            <CatalogFilterCombo
+              label="Categoría"
+              options={categoriesScopedByMaintainSection.map((c) => ({ id: c.id, name: c.name }))}
+              value={categoryGridCategoryFilter}
+              onChange={setCategoryGridCategoryFilter}
+              allLabel={
+                categorySectionFilter === 'all' ? 'Todas las categorías' : 'Todas (esta sección)'
+              }
+              placeholder="Filtrar categorías…"
+              className="min-w-[220px] flex-1"
+              emptyHint={
+                categorySectionFilter === 'all'
+                  ? 'No hay categorías cargadas.'
+                  : 'No hay categorías en esta sección.'
+              }
+            />
             <div className="min-w-[220px] flex-[2] space-y-1.5">
-              <Label className="text-[12px]">Búsqueda categoría</Label>
-              <Input
-                className="app-input h-9"
-                placeholder="Nombre de categoría (servidor, ≥2 caracteres recomendado)"
+              <Label className="text-[12px]">Refinar nombre (servidor)</Label>
+              <CatalogSearchBox
+                ariaLabel="Buscar categorías por nombre"
+                placeholder="Nombre (≥2 caracteres recomendado; Enter / lupa)"
                 value={categoryGridSearch}
-                onChange={(e) => setCategoryGridSearch(e.target.value)}
+                onChange={setCategoryGridSearch}
+                onSubmit={submitCategoryGridSearch}
               />
             </div>
             <label className="flex cursor-pointer items-center gap-2 text-[13px]">
@@ -1480,35 +1751,34 @@ export function CatalogTabs(props: {
             <Button type="button" variant="outline" className="h-9 shrink-0" onClick={() => setSectionDialogOpen(true)}>
               Nueva sección
             </Button>
-            <Button type="button" className="h-9 shrink-0" onClick={() => setCategoryDialogOpen(true)}>
+            <Button
+              type="button"
+              className="h-9 shrink-0"
+              disabled={categorySectionFilter === 'all'}
+              title={
+                categorySectionFilter === 'all'
+                  ? 'Elegí una sección antes: las categorías no existen aisladas de una sección.'
+                  : 'Crear categoría dentro de la sección seleccionada en el filtro.'
+              }
+              onClick={() => {
+                setCatSectionId(categorySectionFilter === 'all' ? '' : categorySectionFilter)
+                setCatName('')
+                setCategoryDialogOpen(true)
+              }}
+            >
               Nueva categoría
             </Button>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={categoryGridPage <= 0 || categoryGridBusy}
-              onClick={() => setCategoryGridPage((p) => Math.max(0, p - 1))}
-            >
-              Anterior
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!categoryGridHasNext || categoryGridBusy}
-              onClick={() => setCategoryGridPage((p) => p + 1)}
-            >
-              Siguiente
-            </Button>
-            <span>
-              Página {categoryGridPage + 1} · Tamaño {CATALOG_GRID_PAGE_SIZE}
-              {categoryGridTotal !== null ? ` · Total: ${categoryGridTotal}` : null}
-            </span>
-          </div>
+          <GridPagingRow
+            disablePrev={categoryGridPage <= 0 || categoryGridBusy}
+            disableNext={!categoryGridHasNext || categoryGridBusy}
+            onPrev={() => setCategoryGridPage((p) => Math.max(0, p - 1))}
+            onNext={() => setCategoryGridPage((p) => p + 1)}
+            pageIndex={categoryGridPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={categoryGridTotal !== null ? ` · Total: ${categoryGridTotal}` : null}
+          />
 
           <GridLoadingMask show={categoryGridBusy}>
             <div className="overflow-x-auto rounded-lg border border-border bg-card">
@@ -1584,6 +1854,16 @@ export function CatalogTabs(props: {
             </div>
           </GridLoadingMask>
 
+          <GridPagingRow
+            disablePrev={categoryGridPage <= 0 || categoryGridBusy}
+            disableNext={!categoryGridHasNext || categoryGridBusy}
+            onPrev={() => setCategoryGridPage((p) => Math.max(0, p - 1))}
+            onNext={() => setCategoryGridPage((p) => p + 1)}
+            pageIndex={categoryGridPage}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={categoryGridTotal !== null ? ` · Total: ${categoryGridTotal}` : null}
+          />
+
           <div className="rounded-lg border border-border bg-card">
             <div className="border-b border-border bg-muted/30 px-4 py-3">
               <h3 className="text-sm font-semibold">
@@ -1599,38 +1879,26 @@ export function CatalogTabs(props: {
             </div>
             {selectedCategoryId !== 'all' ? (
               <div className="space-y-3 p-4">
-                <div className="flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={catProdPage <= 0 || catProdBusy}
-                    onClick={() => setCatProdPage((p) => Math.max(0, p - 1))}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={!catProdHasNext || catProdBusy}
-                    onClick={() => setCatProdPage((p) => p + 1)}
-                  >
-                    Siguiente
-                  </Button>
-                  <span>
-                    Página {catProdPage + 1} · Tamaño {CATALOG_GRID_PAGE_SIZE}
-                  </span>
-                </div>
+                <GridPagingRow
+                  disablePrev={catProdPage <= 0 || catProdBusy}
+                  disableNext={!catProdHasNext || catProdBusy}
+                  onPrev={() => setCatProdPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setCatProdPage((p) => p + 1)}
+                  pageIndex={catProdPage}
+                  pageSize={CATALOG_GRID_PAGE_SIZE}
+                />
                 <GridLoadingMask show={catProdBusy}>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full min-w-[800px] text-sm">
+                    <table className="w-full min-w-[1120px] text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
                           <th className="p-3 font-medium">Producto</th>
                           <th className="p-3 font-medium">Marca</th>
                           <th className="p-3 font-medium">Presentación</th>
                           <th className="p-3 font-medium">Precio ref.</th>
+                          <th className="p-3 font-medium">Lider</th>
+                          <th className="p-3 font-medium">Jumbo</th>
+                          <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1638,7 +1906,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!catProdBusy && catProdRows.length === 0 ? (
                           <tr>
-                            <td colSpan={6} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta categoría y filtros.
                             </td>
                           </tr>
@@ -1657,6 +1925,15 @@ export function CatalogTabs(props: {
                                   ? `$${Number(p.default_reference_price).toFixed(0)}`
                                   : '—'}
                               </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailLiderCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailJumboCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailCentralMayoristaCell(p)}
+                              </td>
                               <td className="p-3">
                                 {p.active ?
                                   <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[12px] text-emerald-800 dark:text-emerald-200">
@@ -1664,27 +1941,12 @@ export function CatalogTabs(props: {
                                   </span>
                                 : <span className="rounded-full bg-muted px-2 py-0.5 text-[12px]">Inactivo</span>}
                               </td>
-                              <td className="p-3">
-                                <div className="flex justify-end gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    className="h-8"
-                                    onClick={() => openEditProduct(p)}
-                                  >
-                                    Editar
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    className="h-8"
-                                    onClick={() => void toggleProductActiveRow(p)}
-                                  >
-                                    {p.active ? 'Desactivar' : 'Activar'}
-                                  </Button>
-                                </div>
+                              <td className="p-2">
+                                <CatalogProductQuickActions
+                                  row={p}
+                                  onEdit={() => openEditProduct(p)}
+                                  onToggleRequest={() => requestToggleProductActive(p)}
+                                />
                               </td>
                             </tr>
                           ))
@@ -1693,6 +1955,14 @@ export function CatalogTabs(props: {
                     </table>
                   </div>
                 </GridLoadingMask>
+                <GridPagingRow
+                  disablePrev={catProdPage <= 0 || catProdBusy}
+                  disableNext={!catProdHasNext || catProdBusy}
+                  onPrev={() => setCatProdPage((p) => Math.max(0, p - 1))}
+                  onNext={() => setCatProdPage((p) => p + 1)}
+                  pageIndex={catProdPage}
+                  pageSize={CATALOG_GRID_PAGE_SIZE}
+                />
               </div>
             ) : null}
           </div>
@@ -1714,29 +1984,79 @@ export function CatalogTabs(props: {
       </div>
 
       {/* Modales */}
-      <Dialog open={brandDialogOpen} onOpenChange={setBrandDialogOpen}>
+      <Dialog
+        open={brandMergeOpen}
+        onOpenChange={(open) => {
+          setBrandMergeOpen(open)
+          if (!open) resetBrandMergeForm()
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Nueva marca</DialogTitle>
+            <DialogTitle>Unir marcas</DialogTitle>
             <DialogDescription>
-              Las marcas canónicas ayudan a evitar duplicados por nombre equivalente.
+              La primera marca es la que permanece en el catálogo; la segunda se elimina y todos sus
+              productos maestros pasan a la primera. El nombre final no puede coincidir con una tercera
+              marca (sí puede repetir el de una de las dos que unís).
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-2">
-            <Label>Nombre</Label>
-            <Input
-              className="app-input"
-              placeholder="Ej.: Collico"
-              value={brandName}
-              onChange={(e) => setBrandName(e.target.value)}
+          <div className="grid gap-4">
+            <MergeBrandSearchPick
+              label="Marca que permanece (canónica)"
+              valueId={brandMergeSurvivorId}
+              displayName={brandMergeSurvivorName}
+              excludeId={brandMergeAbsorbedId || undefined}
+              onClear={() => {
+                setBrandMergeSurvivorId('')
+                setBrandMergeSurvivorName(null)
+              }}
+              onPick={(id, name) => {
+                setBrandMergeSurvivorId(id)
+                setBrandMergeSurvivorName(name)
+                setBrandMergeUnifiedName((prev) => (prev.trim() ? prev : name))
+              }}
             />
+            <MergeBrandSearchPick
+              label="Marca que se une (se elimina)"
+              valueId={brandMergeAbsorbedId}
+              displayName={brandMergeAbsorbedName}
+              excludeId={brandMergeSurvivorId || undefined}
+              onClear={() => {
+                setBrandMergeAbsorbedId('')
+                setBrandMergeAbsorbedName(null)
+              }}
+              onPick={(id, name) => {
+                setBrandMergeAbsorbedId(id)
+                setBrandMergeAbsorbedName(name)
+                setBrandMergeUnifiedName((prev) => (prev.trim() ? prev : name))
+              }}
+            />
+            <div className="space-y-2">
+              <Label>Nombre final de la marca</Label>
+              <Input
+                className="app-input"
+                placeholder="Ej.: excell"
+                value={brandMergeUnifiedName}
+                onChange={(e) => setBrandMergeUnifiedName(e.target.value)}
+              />
+            </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setBrandDialogOpen(false)}>
+            <Button type="button" variant="outline" onClick={() => setBrandMergeOpen(false)}>
               Cancelar
             </Button>
-            <Button type="button" onClick={() => void submitBrand()}>
-              Crear
+            <Button
+              type="button"
+              disabled={
+                brandMergeBusy
+                || !brandMergeSurvivorId.trim()
+                || !brandMergeAbsorbedId.trim()
+                || brandMergeSurvivorId === brandMergeAbsorbedId
+                || !brandMergeUnifiedName.trim()
+              }
+              onClick={() => void submitMergeBrands()}
+            >
+              {brandMergeBusy ? 'Unificando…' : 'Unir'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1793,18 +2113,32 @@ export function CatalogTabs(props: {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
+      <Dialog
+        open={categoryDialogOpen}
+        onOpenChange={(open) => {
+          setCategoryDialogOpen(open)
+          if (!open) {
+            setCatName('')
+            setCatSectionId('')
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Nueva categoría</DialogTitle>
-            <DialogDescription>La categoría cuelga de una sección.</DialogDescription>
+            <DialogDescription>
+              Hace falta una sección padre y el nombre de la categoría. Si falta la sección, crearla antes
+              con «Nueva sección».
+            </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
               <SectionSearchCombo
+                omitAllOption
+                emptyPickLabel="Selecciona la sección padre"
                 label="Sección"
                 sections={sections}
-                value={catSectionId || 'all'}
+                value={catSectionId || ''}
                 onChange={(v) => setCatSectionId(v === 'all' ? '' : v)}
               />
             </div>
@@ -1822,7 +2156,11 @@ export function CatalogTabs(props: {
             <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(false)}>
               Cancelar
             </Button>
-            <Button type="button" onClick={() => void submitCategory()}>
+            <Button
+              type="button"
+              disabled={!catSectionId.trim() || !normalizeSearchText(catName)}
+              onClick={() => void submitCategory()}
+            >
               Crear
             </Button>
           </DialogFooter>
@@ -1837,9 +2175,11 @@ export function CatalogTabs(props: {
           </DialogHeader>
           <div className="grid gap-3">
             <SectionSearchCombo
+              omitAllOption
+              emptyPickLabel="Selecciona la sección"
               label="Sección"
               sections={sections}
-              value={categoryEditSectionId || 'all'}
+              value={categoryEditSectionId || ''}
               onChange={(v) => setCategoryEditSectionId(v === 'all' ? '' : v)}
             />
             <div className="space-y-2">
@@ -1905,36 +2245,24 @@ export function CatalogTabs(props: {
             <div className="space-y-2">
               <div className="space-y-1.5 max-w-md">
                 <Label className="app-field-label">Buscar en tabla (servidor)</Label>
-                <Input
-                  className="app-input"
+                <CatalogSearchBox
+                  ariaLabel="Buscar alias"
+                  size="default"
                   placeholder="≥2 caracteres para filtrar alias_normalized por ilike…"
                   value={aliasTableSearch}
-                  onChange={(e) => setAliasTableSearch(e.target.value)}
+                  onChange={setAliasTableSearch}
+                  onSubmit={submitAliasTableSearch}
                 />
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-[13px]">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={aliasPage <= 0 || aliasBusy}
-                  onClick={() => setAliasPage((p) => Math.max(0, p - 1))}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!aliasHasNext || aliasBusy}
-                  onClick={() => setAliasPage((p) => p + 1)}
-                >
-                  Siguiente
-                </Button>
-                <span className="text-muted-foreground">
-                  Página {aliasPage + 1} · {aliasBusy ? 'Cargando…' : `${aliasRows.length} filas`}
-                </span>
-              </div>
+              <GridPagingRow
+                disablePrev={aliasPage <= 0 || aliasBusy}
+                disableNext={!aliasHasNext || aliasBusy}
+                onPrev={() => setAliasPage((p) => Math.max(0, p - 1))}
+                onNext={() => setAliasPage((p) => p + 1)}
+                pageIndex={aliasPage}
+                hidePageSize
+                metaSuffix={` · ${aliasBusy ? 'Cargando…' : `${aliasRows.length} filas`}`}
+              />
 
               <div className="overflow-x-auto rounded-lg border border-border">
                 <table className="w-full min-w-[560px] text-sm">
@@ -1962,6 +2290,16 @@ export function CatalogTabs(props: {
                   </tbody>
                 </table>
               </div>
+
+              <GridPagingRow
+                disablePrev={aliasPage <= 0 || aliasBusy}
+                disableNext={!aliasHasNext || aliasBusy}
+                onPrev={() => setAliasPage((p) => Math.max(0, p - 1))}
+                onNext={() => setAliasPage((p) => p + 1)}
+                pageIndex={aliasPage}
+                hidePageSize
+                metaSuffix={` · ${aliasBusy ? 'Cargando…' : `${aliasRows.length} filas`}`}
+              />
             </div>
 
             <p className="text-[12px] text-muted-foreground">

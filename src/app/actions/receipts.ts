@@ -14,6 +14,14 @@ function purchaseReceiptItemNote(lineId: string) {
   return `${PURCHASE_RECEIPT_ITEM_NOTE_PREFIX}${lineId}`
 }
 
+/** Cantidad válida para persistir; la BD puede exigir NOT NULL aunque el análisis omita cantidad. */
+function receiptLineQuantity(value: unknown): number {
+  const n =
+    typeof value === 'number' ? value : value != null && value !== '' ? Number(value) : NaN
+  if (Number.isFinite(n) && n > 0) return n
+  return 1
+}
+
 export async function getPurchaseReceipts() {
   const { activeProfileId } = await getProfileContext()
   if (!activeProfileId) {
@@ -139,9 +147,10 @@ export async function savePurchaseReceiptDraft(
   if (items.length > 0) {
     const rows = items.map((it, i) => ({
       receipt_id: receipt.id,
+      profile_id: activeProfileId,
       product_id: null,
       name_raw: it.nameRaw || 'Ítem',
-      quantity: it.quantity ?? null,
+      quantity: receiptLineQuantity(it.quantity),
       unit_price: it.unitPrice ?? null,
       line_total: it.lineTotal ?? null,
       sort_order: i,
@@ -205,6 +214,8 @@ export type ProductPickerRow = {
   brand: string | null
   format: string | null
   unit: string | null
+  /** Último precio registrado en inventario; ayuda a sugerir emparejos con la boleta. */
+  last_price: number | null
 }
 
 export async function listProductsPicker() {
@@ -219,7 +230,7 @@ export async function listProductsPicker() {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('products')
-    .select('id, name, brand, format, unit')
+    .select('id, name, brand, format, unit, last_price')
     .eq('profile_id', activeProfileId)
     .eq('active', true)
     .order('name')

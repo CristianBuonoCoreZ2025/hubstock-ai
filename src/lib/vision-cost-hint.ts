@@ -10,7 +10,7 @@ export function visionCostHint(
     case 'openrouter':
       return 'OpenRouter con saldo de cuenta'
     case 'gemini':
-      return 'Google Gemini (según cuota de tu proyecto)'
+      return 'Cuota según el proveedor de visión configurado'
     case 'ollama':
       return 'Equipo local — sin API en la nube'
     default:

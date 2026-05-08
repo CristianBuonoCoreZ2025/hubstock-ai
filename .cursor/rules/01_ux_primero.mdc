@@ -1,4 +1,11 @@
+---
+description: UX primero y criterios de pantalla; debe leerse antes de implementar
+alwaysApply: true
+---
+
 # Regla madre del proyecto HUB-STOCK-AI
+
+Antes de planificar código, modificaciones de pantalla o cambios en flujos, el asistente debe **leer por completo este archivo (`01_ux_primero.mdc`)** y aplicarlo. Las demás reglas del proyecto amplían estos criterios; no sustituyen UX primero.
 
 ## UX primero
 
@@ -79,7 +86,7 @@ Estructura base:
 3. Barra de filtros.
 4. Botón principal de creación.
 5. Grilla principal.
-6. Paginación.
+6. Paginación (antes y después del bloque de tabla si la grilla está paginada).
 7. Acciones por fila.
 8. Modales para crear y editar.
 
@@ -103,6 +110,10 @@ Cada grilla debe tener:
 5. Mensaje vacío dentro de la grilla.
 6. Loader dentro del área de datos.
 
+### Paginación en grillas grandes
+
+Cuando la grilla use paginación en servidor («Anterior», «Siguiente», texto de página y total si aplica), esos mismos controles deben mostrarse **dos veces**: justo **antes** de la tabla o contenedor principal de datos y **otra vez justo después** del cierre de ese mismo bloque. Así quien llega abajo después de revisar filas no tiene que volver arriba para cambiar de página.
+
 No usar listas simples para datos administrativos.
 No usar bullets para productos, marcas, categorías o registros.
 No mostrar datos maestros como texto plano si requieren acciones.
@@ -122,6 +133,19 @@ No duplicar controles.
 No poner una búsqueda arriba y otra abajo para lo mismo.
 No separar filtros en bloques sin razón.
 No hacer que el usuario busque en tres lugares distintos.
+
+## Regla estándar de búsqueda (caja principal)
+
+Estándar para **toda** caja de búsqueda de texto que dispare una consulta a servidor o cambie filtros globales del listado (no aplica al texto interno de un combobox que solo filtra opciones locales).
+
+Reglas obligatorias:
+
+1. La consulta efectiva debe ejecutarse solo cuando el usuario presiona **Enter** en la caja o hace clic en el **control de búsqueda con ícono de lupa**.
+2. La lupa forma parte del **mismo control visual que el input**: debe ir **integrada dentro del borde de la caja** (p. ej. botón absoluto al final del campo), **no** como botón separado a un costado fuera del campo.
+3. El botón lupa interno debe ser accesible (`aria-label` o `title` claro, foco por teclado).
+4. Mientras escribe, **no** se debe disparar búsqueda remota solo por teclear; el texto puede quedar como borrador hasta confirmar.
+
+Excepción coherente: los **combobox/selectores remotos** (ver reglas de combobox del proyecto) siguen con debounce mientras escribes dentro del desplegable, porque el objetivo es elegir una opción, no lanzar una búsqueda de página completa.
 
 ## Regla de combos
 
@@ -144,13 +168,15 @@ La rapidez forma parte de la UX.
 
 Una pantalla lenta se considera mala pantalla.
 
+**Umbral de producto:** las consultas que alimentan datos en pantalla deben cumplir objetivo **&lt; 1 segundo** de respuesta en uso habitual; si no, optimizar consultas, índices, RPC o alcance. Detalle en `.cursor/rules/ui-product-rules.mdc` y `.cursor/rules/data-grid-performance-rules.mdc`.
+
 Reglas:
 
 1. No cargar miles de registros completos en cliente.
 2. No filtrar catálogos grandes con useMemo.
 3. Usar paginación server-side.
-4. Usar debounce en búsquedas.
-5. No consultar servidor en cada tecla sin control.
+4. En **cajas de búsqueda principal de página**, no usar debounce para ejecutar servidor: usar disparo explícito (Enter + botón lupa). En combobox/async remoto sí aplicar debounce según reglas de combobox.
+5. No consultar servidor en cada tecla para búsquedas de página completa.
 6. No renderizar miles de filas.
 7. No bloquear toda la pantalla si solo carga una grilla.
 8. No borrar los filtros mientras carga.

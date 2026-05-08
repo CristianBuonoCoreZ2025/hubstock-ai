@@ -4,9 +4,10 @@ import { useMemo, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { Minus } from 'lucide-react'
+import { AppSearchBox } from '@/components/search/app-search-box'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { consumeProduct } from '@/app/actions/inventory'
+import { filterBySearch, normalizeSearchText } from '@/lib/search'
 
 export type ConsumptionProduct = {
   id: string
@@ -21,13 +22,13 @@ type Props = {
 export function ConsumptionView({ products }: Props) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
-  const [query, setQuery] = useState('')
+  const [searchDraft, setSearchDraft] = useState('')
+  const [searchSubmitted, setSearchSubmitted] = useState('')
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return products
-    return products.filter((p) => p.name.toLowerCase().includes(q))
-  }, [products, query])
+    if (!normalizeSearchText(searchSubmitted)) return products
+    return filterBySearch(products, searchSubmitted, (p) => p.name)
+  }, [products, searchSubmitted])
 
   function runConsume(id: string, qty: number) {
     startTransition(async () => {
@@ -52,17 +53,19 @@ export function ConsumptionView({ products }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <div className="glass-panel rounded-xl p-4">
-        <label className="sr-only" htmlFor="consumption-search">
+        <label className="mb-2 block text-xs font-medium text-muted-foreground" htmlFor="consumption-search">
           Buscar producto
         </label>
-        <Input
-          id="consumption-search"
-          type="search"
-          placeholder="Buscar por nombre…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="max-w-md"
-        />
+        <div className="max-w-md">
+          <AppSearchBox
+            id="consumption-search"
+            ariaLabel="Buscar producto para consumo"
+            placeholder="Nombre (Enter o lupa)"
+            value={searchDraft}
+            onChange={setSearchDraft}
+            onSubmit={() => setSearchSubmitted(searchDraft.trim())}
+          />
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

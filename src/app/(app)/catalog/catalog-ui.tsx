@@ -1,6 +1,6 @@
 'use client'
 
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, Search } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -10,6 +10,50 @@ import { filterBySearch, normalizeSearchText } from '@/lib/search'
 import { cn } from '@/lib/utils'
 
 type SectionOpt = { id: string; name: string }
+
+/**
+ * Caja de búsqueda con lupa integrada dentro del campo (Enter o clic en lupa).
+ * Ver `.cursor/rules/01_ux_primero.mdc` § Regla estándar de búsqueda.
+ */
+export function CatalogSearchBox(props: {
+  id?: string
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  placeholder?: string
+  ariaLabel: string
+  /** `compact` altura h-9 en barras de filtros; `default` usa la altura estándar del Input. */
+  size?: 'compact' | 'default'
+}) {
+  const { size = 'compact' } = props
+  return (
+    <div className="relative w-full">
+      <Input
+        id={props.id}
+        className={cn('app-input pr-10', size === 'compact' && 'h-9')}
+        placeholder={props.placeholder}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key !== 'Enter') return
+          e.preventDefault()
+          props.onSubmit()
+        }}
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        className="absolute top-1/2 right-1 h-8 w-8 -translate-y-1/2 rounded-lg text-foreground hover:bg-muted"
+        onClick={props.onSubmit}
+        aria-label={props.ariaLabel}
+        title={props.ariaLabel}
+      >
+        <Search className="h-4 w-4 shrink-0" aria-hidden />
+      </Button>
+    </div>
+  )
+}
 
 /** Combo único: muestra selección, permite escribir para filtrar y elegir; opciones ordenadas alfabéticamente. */
 export function SectionSearchCombo(props: {
@@ -21,9 +65,21 @@ export function SectionSearchCombo(props: {
   allLabel?: string
   placeholder?: string
   className?: string
+  loading?: boolean
+  /** Sin fila «todas»; el valor debe ser un id real (vacío muestra texto de espera). */
+  omitAllOption?: boolean
+  emptyPickLabel?: string
 }) {
-  const { sections, value, onChange, allLabel = 'Todas las secciones', placeholder = 'Escribe para filtrar…' } =
-    props
+  const {
+    sections,
+    value,
+    onChange,
+    allLabel = 'Todas las secciones',
+    placeholder = 'Escribe para filtrar…',
+    loading = false,
+    omitAllOption = false,
+    emptyPickLabel = 'Selecciona una sección',
+  } = props
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
@@ -37,8 +93,14 @@ export function SectionSearchCombo(props: {
     [sorted, q]
   )
 
-  const selectedLabel =
-    value === 'all' ? allLabel : sorted.find((s) => s.id === value)?.name ?? '—'
+  const selectedLabel = omitAllOption
+    ? (sorted.find((s) => s.id === value)?.name ?? emptyPickLabel)
+    : value === 'all'
+      ? allLabel
+      : (sorted.find((s) => s.id === value)?.name ?? '—')
+
+  /** Mientras carga no se muestra el panel (evita setState en efecto solo para cerrar). */
+  const panelOpen = open && !loading
 
   useEffect(() => {
     function onDoc(e: MouseEvent) {
@@ -55,14 +117,17 @@ export function SectionSearchCombo(props: {
         id={props.id}
         type="button"
         variant="outline"
-        aria-expanded={open}
+        aria-expanded={panelOpen}
+        disabled={loading}
         className="h-9 w-full justify-between gap-2 px-3 font-normal"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => !loading && setOpen((o) => !o)}
       >
-        <span className="truncate text-left text-[13px]">{selectedLabel}</span>
+        <span className="truncate text-left text-[13px]">
+          {loading ? 'Cargando opciones…' : selectedLabel}
+        </span>
         <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
       </Button>
-      {open ? (
+      {panelOpen ? (
         <div className="absolute z-50 mt-1 w-full rounded-md border border-border bg-popover p-2 shadow-md">
           <Input
             className="app-input mb-2 h-8 text-[13px]"
@@ -72,23 +137,32 @@ export function SectionSearchCombo(props: {
             autoFocus
           />
           <ul className="max-h-56 overflow-auto text-[13px]">
-            <li className="border-b border-border last:border-0">
-              <button
-                type="button"
-                className={cn(
-                  'flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-muted',
-                  value === 'all' && 'bg-muted font-medium'
-                )}
-                onClick={() => {
-                  onChange('all')
-                  setOpen(false)
-                  setQ('')
-                }}
-              >
-                {value === 'all' ? <Check className="h-3.5 w-3.5" /> : <span className="w-3.5" />}
-                {allLabel}
-              </button>
-            </li>
+            {!omitAllOption ? (
+              <li className="border-b border-border last:border-0">
+                <button
+                  type="button"
+                  className={cn(
+                    'flex w-full items-center gap-2 px-2 py-1.5 text-left hover:bg-muted',
+                    value === 'all' && 'bg-muted font-medium'
+                  )}
+                  onClick={() => {
+                    onChange('all')
+                    setOpen(false)
+                    setQ('')
+                  }}
+                >
+                  {value === 'all' ? <Check className="h-3.5 w-3.5" /> : <span className="w-3.5" />}
+                  {allLabel}
+                </button>
+              </li>
+            ) : null}
+            {sorted.length === 0 ? (
+              <li className="px-2 py-2 text-[12px] text-muted-foreground">
+                No hay secciones en este contexto.
+              </li>
+            ) : filtered.length === 0 ? (
+              <li className="px-2 py-2 text-[12px] text-muted-foreground">No se encontraron resultados.</li>
+            ) : null}
             {filtered.map((s) => (
               <li key={s.id} className="border-b border-border last:border-0">
                 <button

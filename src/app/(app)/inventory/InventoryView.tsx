@@ -3,8 +3,9 @@
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { GridPagingRow } from '@/components/grid/grid-paging-row'
+import { AppSearchBox } from '@/components/search/app-search-box'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
   Select,
@@ -59,8 +60,11 @@ function statusClass(s: InventoryRow['status']) {
 }
 
 export function InventoryView({ categories, sections, rows, lead, query }: Props) {
+  /* eslint-disable react-hooks/set-state-in-effect --
+     Inventario: efectos sincronizan query URL y categoría dependiente de sección. */
+
   const router = useRouter()
-  const [q, setQ] = useState(query.q)
+  const [searchDraft, setSearchDraft] = useState(query.q)
   const [categoryFilter, setCategoryFilter] = useState<string>(query.category)
   const [sectionFilter, setSectionFilter] = useState<string>(query.section)
   const [statusFilter, setStatusFilter] = useState<string>(query.status)
@@ -81,7 +85,7 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
 
   useEffect(() => {
     // Sincroniza cambios de navegación (atrás/adelante) con el estado local.
-    setQ(query.q)
+    setSearchDraft(query.q)
     setCategoryFilter(query.category)
     setSectionFilter(query.section)
     setStatusFilter(query.status)
@@ -98,15 +102,14 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
       return true
     })
 
-    // Búsqueda tipo Google (tolerante) local sobre la página.
-    if (q.trim().length < 2) return base
-    return filterBySearch(base, q, (item) => item.name)
-  }, [rows, categoryFilter, sectionFilter, statusFilter, q])
+    // Búsqueda tipo Google (tolerante) sobre la página cargada; el texto aplicado viene del URL (Enter / lupa).
+    if (query.q.trim().length < 2) return base
+    return filterBySearch(base, query.q, (item) => item.name)
+  }, [rows, categoryFilter, sectionFilter, statusFilter, query.q])
 
   function pushQuery(next: Partial<Props['query']>) {
     const merged: Props['query'] = {
       ...query,
-      q,
       section: sectionFilter,
       category: categoryFilter,
       status: statusFilter,
@@ -156,11 +159,12 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
           <div className="grid w-full gap-3 sm:max-w-4xl sm:grid-cols-4">
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Búsqueda</span>
-              <Input
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-                onBlur={() => pushQuery({ page: 1, q })}
-                placeholder="Escribe al menos 2 caracteres…"
+              <AppSearchBox
+                ariaLabel="Buscar en inventario"
+                placeholder="Nombre del producto (Enter o lupa)"
+                value={searchDraft}
+                onChange={setSearchDraft}
+                onSubmit={() => pushQuery({ page: 1, q: searchDraft.trim() })}
               />
             </div>
           <div className="space-y-1.5">
@@ -246,33 +250,28 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
           </div>
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-sm text-muted-foreground">
-            {query.total != null
-              ? `Mostrando ${filtered.length} de ${query.total} (página ${query.page}).`
-              : `Mostrando ${filtered.length} (página ${query.page}).`}
-          </p>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={query.page <= 1}
-              onClick={() => pushQuery({ page: Math.max(1, query.page - 1) })}
-            >
-              Anterior
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={query.total != null ? query.page * query.pageSize >= query.total : rows.length < query.pageSize}
-              onClick={() => pushQuery({ page: query.page + 1 })}
-            >
-              Siguiente
-            </Button>
-          </div>
-        </div>
+        <GridPagingRow
+          disablePrev={query.page <= 1}
+          disableNext={
+            query.total != null
+              ? query.page * query.pageSize >= query.total
+              : rows.length < query.pageSize
+          }
+          onPrev={() => pushQuery({ page: Math.max(1, query.page - 1) })}
+          onNext={() => pushQuery({ page: query.page + 1 })}
+          pageIndex={query.page - 1}
+          pageSize={query.pageSize}
+          metaSuffix={
+            query.total != null ? ` · Total en servidor: ${query.total}` : null
+          }
+          trailing={
+            <span className="text-[12px] text-muted-foreground">
+              {query.total != null
+                ? `Visibles en esta página tras filtrar: ${filtered.length}.`
+                : `Filas en esta página: ${filtered.length}.`}
+            </span>
+          }
+        />
       </div>
       ) : null}
 
@@ -281,6 +280,7 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
       ) : null}
 
       {hasProducts && filtered.length > 0 ? (
+        <>
         <div className="app-data-table-wrap">
           <table className="app-data-table min-w-[640px]">
             <thead>
@@ -351,6 +351,30 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
             </tbody>
           </table>
         </div>
+
+        <GridPagingRow
+          disablePrev={query.page <= 1}
+          disableNext={
+            query.total != null
+              ? query.page * query.pageSize >= query.total
+              : rows.length < query.pageSize
+          }
+          onPrev={() => pushQuery({ page: Math.max(1, query.page - 1) })}
+          onNext={() => pushQuery({ page: query.page + 1 })}
+          pageIndex={query.page - 1}
+          pageSize={query.pageSize}
+          metaSuffix={
+            query.total != null ? ` · Total en servidor: ${query.total}` : null
+          }
+          trailing={
+            <span className="text-[12px] text-muted-foreground">
+              {query.total != null
+                ? `Visibles en esta página tras filtrar: ${filtered.length}.`
+                : `Filas en esta página: ${filtered.length}.`}
+            </span>
+          }
+          />
+        </>
       ) : null}
     </div>
   )

@@ -2,7 +2,7 @@
 
 import { Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { ProductPickerRow } from '@/app/actions/receipts'
 import {
@@ -18,6 +18,7 @@ import {
   type StockCheckDetailHeader,
   type StockCheckDetailItem,
 } from '@/app/actions/stock-checks'
+import { AppSearchBox } from '@/components/search/app-search-box'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -39,9 +40,14 @@ import { StockCheckReviewDialog } from '@/components/stock-check-review-dialog'
 import { StockCheckScanEditTable } from '@/components/stock-check-scan-edit-table'
 import { VisionOpenRouterTierSelect } from '@/components/vision-openrouter-tier-select'
 import { VisionAnalysisNote } from '@/components/vision-analysis-note'
-import { messageFromAiApiError, readAiApiJsonBody } from '@/lib/ai-api-error'
+import {
+  messageFromAiApiError,
+  messageWhenAiApiBodyNotJson,
+  readAiApiJsonBody,
+} from '@/lib/ai-api-error'
 import { buildVisionAnalysisImagePayload } from '@/lib/capture-vision-image'
 import { STOCK_ZONE_OPTIONS, stockZoneLabel } from '@/lib/stock-zones'
+import { filterBySearch, normalizeSearchText } from '@/lib/search'
 import {
   analysisToScanRows,
   scanRowsToAnalysisJson,
@@ -116,6 +122,22 @@ export function StockChecksClient({
   )
 
   const [historyModalOpen, setHistoryModalOpen] = useState(false)
+  const [historySearchDraft, setHistorySearchDraft] = useState('')
+  const [historySearchSubmitted, setHistorySearchSubmitted] = useState('')
+
+  const filteredHistoryChecks = useMemo(() => {
+    const rows = initialChecks ?? []
+    if (!normalizeSearchText(historySearchSubmitted)) return rows
+    return filterBySearch(rows, historySearchSubmitted, (c) => {
+      const zone = stockZoneLabel(c.zone)
+      const st = statusLabel(c.status)
+      const dateStr = new Date(c.created_at).toLocaleString('es')
+      const ai = parseStockCheckAiMeta(c.ai_meta)
+      const aiHint = ai?.vision?.providerLabel ?? ai?.vision?.model ?? ''
+      return `${zone} ${st} ${dateStr} ${aiHint}`
+    })
+  }, [initialChecks, historySearchSubmitted])
+
   const [reviewModalOpen, setReviewModalOpen] = useState(false)
   const [detailCheckId, setDetailCheckId] = useState<string | null>(null)
   const [detailCheck, setDetailCheck] = useState<StockCheckDetailHeader | null>(
@@ -238,7 +260,7 @@ export function StockChecksClient({
         vision?: VisionAnalysisMeta
       }>(res)
       if (parsed.kind === 'invalid_json') {
-        toast.error('La respuesta del servidor no es válida.')
+        toast.error(messageWhenAiApiBodyNotJson(parsed.rawPreview))
         return
       }
       if (parsed.kind === 'empty') {
@@ -486,6 +508,16 @@ export function StockChecksClient({
           {listError ? (
             <p className="text-[13px] text-destructive">{listError}</p>
           ) : null}
+          <div className="max-w-md shrink-0 space-y-1.5">
+            <span className="text-[12px] text-muted-foreground">Filtrar historial</span>
+            <AppSearchBox
+              ariaLabel="Filtrar chequeos en historial"
+              placeholder="Zona, estado, fecha… (Enter o lupa)"
+              value={historySearchDraft}
+              onChange={setHistorySearchDraft}
+              onSubmit={() => setHistorySearchSubmitted(historySearchDraft.trim())}
+            />
+          </div>
           <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-border">
             <table className="app-data-table w-full min-w-[720px]">
               <thead>
@@ -504,8 +536,14 @@ export function StockChecksClient({
                       No hay chequeos registrados.
                     </td>
                   </tr>
+                ) : filteredHistoryChecks.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-muted-foreground">
+                      Ningún chequeo coincide con el filtro.
+                    </td>
+                  </tr>
                 ) : (
-                  initialChecks.map((c) => (
+                  filteredHistoryChecks.map((c) => (
                     <tr key={c.id}>
                       <td className="whitespace-nowrap text-muted-foreground">
                         {new Date(c.created_at).toLocaleString('es')}
