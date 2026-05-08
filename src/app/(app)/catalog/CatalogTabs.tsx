@@ -12,6 +12,7 @@ import {
   GridLoadingMask,
   SectionSearchCombo,
 } from '@/app/(app)/catalog/catalog-ui'
+import { RetailPricingTab } from '@/app/(app)/catalog/RetailPricingTab'
 import { CopyCatalogButton } from '@/components/catalog/CopyCatalogButton'
 import {
   createCatalogAliasAction,
@@ -72,18 +73,20 @@ export type CategoryRow = {
   sort_order: number
 }
 
-type TabKey = 'products' | 'brands' | 'categories'
+type TabKey = 'products' | 'brands' | 'categories' | 'retail'
 
 const TAB_QUERY: Record<TabKey, string> = {
   products: 'productos',
   brands: 'marcas',
   categories: 'categorias',
+  retail: 'cadenas',
 }
 
 const QUERY_TO_TAB = new Map<string, TabKey>([
   ['productos', 'products'],
   ['marcas', 'brands'],
   ['categorias', 'categories'],
+  ['cadenas', 'retail'],
 ])
 
 function tabFromUrl(tabParam: string | null): TabKey {
@@ -881,6 +884,7 @@ export function CatalogTabs(props: {
     { id: 'products', label: 'Productos' },
     { id: 'brands', label: 'Marcas' },
     { id: 'categories', label: 'Categorías' },
+    { id: 'retail', label: 'Precios cadenas' },
   ]
 
   const productCountHint =
@@ -1436,6 +1440,10 @@ export function CatalogTabs(props: {
             ) : null}
           </div>
         </div>
+      ) : null}
+
+      {tab === 'retail' ? (
+        <RetailPricingTab sections={sectionsSorted} categories={categories} />
       ) : null}
 
       {tab === 'categories' ? (
