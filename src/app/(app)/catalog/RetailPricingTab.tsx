@@ -243,7 +243,7 @@ export function RetailPricingTab(props: {
     <div className="space-y-4">
       <CatalogTabHeader
         title="Precios por cadena"
-        description="Datos locales desde tus scrapers (Lider, Jumbo, Central Mayorista — ver centralmayorista.cl). Homologá cada ítem al maestro del catálogo para comparar precios y registrar historial."
+        description="Flujo y anti-duplicados: scripts/RETAIL_CAPTURE.md · Datos locales desde scrapers; homologación manual aquí o --auto-match en import_retail_snapshots.py (misma RPC inteligente que las sugerencias)."
       />
 
       <div className="rounded-lg border border-border bg-muted/20 p-4">

@@ -13,7 +13,10 @@ Variables de entorno: igual que import_lider_sqlite.py (SUPABASE_URL, SUPABASE_S
 Ejemplos:
   python scripts/import_retail_snapshots.py --retailer jumbo
   python scripts/import_retail_snapshots.py --retailer central_mayorista
+  python scripts/import_retail_snapshots.py --retailer jumbo --auto-match --auto-match-min-score 0.62
   python scripts/import_retail_snapshots.py --retailer lider --sqlite lider/productos_lider.db --dry-run --limit 50
+
+Flujo documentado: scripts/RETAIL_CAPTURE.md
 """
 
 from __future__ import annotations
@@ -83,6 +86,70 @@ def external_ref_from_row(row: sqlite3.Row) -> str:
     return f"sqlite_id:{row['id']}"
 
 
+def retail_link_exists(supabase: object, retailer: str, external_ref: str) -> bool:
+    res = (
+        supabase.table("catalog_retail_links")
+        .select("catalog_product_id")
+        .eq("retailer", retailer)
+        .eq("external_ref", external_ref)
+        .limit(1)
+        .execute()
+    )
+    return bool(res.data)
+
+
+def try_auto_homologate(
+    supabase: object,
+    *,
+    retailer: str,
+    external_ref: str,
+    title: str,
+    price: float,
+    min_score: float,
+) -> tuple[bool, str | None]:
+    """
+    Usa la misma RPC que la UI (nombre + precio + trigram).
+    Devuelve (éxito, catalog_product_id o None).
+    """
+    try:
+        res = supabase.rpc(
+            "catalog_retail_match_candidates",
+            {
+                "p_search_title": title,
+                "p_price": price,
+                "p_category_id": None,
+                "p_limit": 3,
+            },
+        ).execute()
+    except Exception as e:
+        print(f"Aviso RPC catalog_retail_match_candidates: {e}", file=sys.stderr)
+        return False, None
+
+    rows = res.data or []
+    if not rows:
+        return False, None
+    top = rows[0]
+    score = float(top.get("match_score") or 0)
+    cp_id = top.get("catalog_product_id")
+    if not cp_id or score < min_score:
+        return False, None
+
+    try:
+        supabase.table("catalog_retail_links").upsert(
+            {
+                "retailer": retailer,
+                "external_ref": external_ref,
+                "catalog_product_id": cp_id,
+            },
+            on_conflict="retailer,external_ref",
+        ).execute()
+    except Exception as e:
+        print(f"Error upsert link {external_ref}: {e}", file=sys.stderr)
+        return False, None
+
+    return True, str(cp_id)
+
+
 def main() -> int:
     load_local_env()
 
@@ -97,6 +164,18 @@ def main() -> int:
     parser.add_argument("--sqlite", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument(
+        "--auto-match",
+        action="store_true",
+        help="Tras cada captura, intentar homologar con catalog_retail_match_candidates "
+        "(misma lógica que la UI) si el puntaje >= --auto-match-min-score.",
+    )
+    parser.add_argument(
+        "--auto-match-min-score",
+        type=float,
+        default=0.62,
+        help="Umbral mínimo de match_score para crear catalog_retail_links (default 0.62).",
+    )
     args = parser.parse_args()
 
     retailer = norm_taxonomy_label(args.retailer).lower().replace(" ", "_")
@@ -141,10 +220,19 @@ def main() -> int:
     if args.limit > 0:
         rows = rows[: args.limit]
 
+    if args.auto_match and args.dry_run:
+        print(
+            "Nota: --auto-match no aplica con --dry-run (no hay escritura en Supabase).",
+            file=sys.stderr,
+        )
+
     print(f"Capturas a insertar: {len(rows)} de {total} (retailer={retailer})")
 
     ok = 0
     errors = 0
+    auto_linked = 0
+    auto_skipped_existing = 0
+    auto_skipped_weak = 0
     for i, row in enumerate(rows, start=1):
         title = norm_taxonomy_label(row["nombre"] or "") or "Sin nombre"
         price = parse_clp(row["precio"])
@@ -177,12 +265,38 @@ def main() -> int:
         except Exception as e:
             errors += 1
             print(f"Error fila {i}: {e}", file=sys.stderr)
+            if i % 200 == 0:
+                print(f"  … {i}/{len(rows)}", flush=True)
+            continue
+
+        if args.auto_match:
+            if retail_link_exists(supabase, retailer, ref):
+                auto_skipped_existing += 1
+            else:
+                linked, _ = try_auto_homologate(
+                    supabase,
+                    retailer=retailer,
+                    external_ref=ref,
+                    title=title,
+                    price=float(price),
+                    min_score=args.auto_match_min_score,
+                )
+                if linked:
+                    auto_linked += 1
+                else:
+                    auto_skipped_weak += 1
 
         if i % 200 == 0:
             print(f"  … {i}/{len(rows)}", flush=True)
 
     conn.close()
     print(f"Listo. Insertadas: {ok}, errores u omitidas: {errors}")
+    if args.auto_match and not args.dry_run:
+        print(
+            f"Auto-homologación: nuevos vínculos={auto_linked}, "
+            f"ya homologados={auto_skipped_existing}, "
+            f"sin candidato fuerte={auto_skipped_weak}"
+        )
     return 0 if errors == 0 else 1
 
 
