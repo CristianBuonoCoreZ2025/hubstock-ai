@@ -2,7 +2,7 @@
 
 # HUB-STOCK-AI
 
-Este proyecto trabaja bajo la regla UX primero. Toda pantalla debe ser clara, rápida, consistente y entendible antes de considerarse terminada. Ver .cursor/rules/01_ux_primero.mdc.
+Este proyecto trabaja bajo la regla UX primero. Toda pantalla debe ser clara, rápida, consistente y entendible antes de considerarse terminada. Antes de cambiar UX o pantallas, leer **por completo** `.cursor/rules/01_ux_primero.mdc` (incluye estándar de búsqueda: Enter + lupa **dentro** de la caja de texto). El contrato de UI común (consultas &lt; 1 s, paginación arriba y abajo, botones de ancho uniforme, acciones de fila solo ícono + tooltip, combobox inteligente) está en `.cursor/rules/ui-product-rules.mdc` con refuerzo en `.cursor/rules/data-grid-performance-rules.mdc`.
 
 
 Este proyecto es una aplicación de inventario doméstico con IA.

@@ -7,6 +7,8 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  /** pdfjs-dist usa `import("./pdf.worker.mjs")`; si se bundlea, la ruta cae en `.next/.../chunks/` y falla el fake worker. */
+  serverExternalPackages: ["pdf-parse", "pdfjs-dist"],
 };
 
 export default nextConfig;

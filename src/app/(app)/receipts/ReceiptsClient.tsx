@@ -1,15 +1,18 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import {
   confirmPurchaseReceipt,
   getReceiptDetail,
+  type ProductPickerRow,
   type ReceiptDetailItem,
   savePurchaseReceiptDraft,
   setReceiptLineProduct,
 } from '@/app/actions/receipts'
+import { AppSearchBox } from '@/components/search/app-search-box'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -22,11 +25,17 @@ import {
 } from '@/components/ui/select'
 import { VisionOpenRouterTierSelect } from '@/components/vision-openrouter-tier-select'
 import { VisionAnalysisNote } from '@/components/vision-analysis-note'
-import { messageFromAiApiError, readAiApiJsonBody } from '@/lib/ai-api-error'
+import {
+  messageFromAiApiError,
+  messageWhenAiApiBodyNotJson,
+  readAiApiJsonBody,
+} from '@/lib/ai-api-error'
 import { fileToBase64 } from '@/lib/ai-mime'
 import { buildVisionAnalysisImagePayload } from '@/lib/capture-vision-image'
 import type { OpenRouterStockCheckTier } from '@/types/open-router-stock-check-tier'
 import type { VisionAnalysisMeta } from '@/types/vision-meta'
+import { suggestInventoryProductsForReceiptLine } from '@/lib/receipt-line-product-suggestions'
+import { filterBySearch, normalizeSearchText } from '@/lib/search'
 import type { ReceiptStatus } from '@/types/database'
 
 type ReceiptRow = {
@@ -64,17 +73,15 @@ function statusLabel(s: ReceiptStatus): string {
   }
 }
 
-type ProductOption = { id: string; name: string }
-
 const NONE = '__none__'
 
-/** Misma idea que captura: foto (visión) vs documento (texto / PDF). */
-type BoletaSource = 'image' | 'document_pdf' | 'document_text'
+/** Foto (visión) o PDF (texto extraído en servidor). Sin texto pegado. */
+type BoletaSource = 'image' | 'document_pdf'
 
 interface ReceiptsClientProps {
   profileId: string
   initialReceipts: ReceiptRow[]
-  products: ProductOption[]
+  products: ProductPickerRow[]
   listError: string | null
 }
 
@@ -94,13 +101,25 @@ export function ReceiptsClient({
     useState<OpenRouterStockCheckTier>('free_first')
   const [boletaSource, setBoletaSource] = useState<BoletaSource>('image')
   const [file, setFile] = useState<File | null>(null)
-  const [documentPlainText, setDocumentPlainText] = useState('')
   const [analyzing, setAnalyzing] = useState(false)
   const [saving, setSaving] = useState(false)
   const [analysis, setAnalysis] = useState<ReceiptAnalysis | null>(null)
   const [receiptVision, setReceiptVision] = useState<VisionAnalysisMeta | null>(
     null
   )
+
+  const [receiptListSearchDraft, setReceiptListSearchDraft] = useState('')
+  const [receiptListSearchSubmitted, setReceiptListSearchSubmitted] = useState('')
+
+  const filteredReceiptRows = useMemo(() => {
+    const rows = initialReceipts ?? []
+    if (!normalizeSearchText(receiptListSearchSubmitted)) return rows
+    return filterBySearch(rows, receiptListSearchSubmitted, (r) => {
+      const dateStr = new Date(r.created_at).toLocaleString('es')
+      const totalStr = r.total != null ? String(r.total) : ''
+      return `${r.store_name ?? ''} ${statusLabel(r.status)} ${totalStr} ${dateStr}`
+    })
+  }, [initialReceipts, receiptListSearchSubmitted])
 
   const [storeName, setStoreName] = useState('')
   const [purchasedAt, setPurchasedAt] = useState('')
@@ -116,7 +135,6 @@ export function ReceiptsClient({
 
   function resetBoletaInputs() {
     setFile(null)
-    setDocumentPlainText('')
     clearReceiptAiDraft()
   }
 
@@ -142,7 +160,7 @@ export function ReceiptsClient({
           mimeType: img.mimeType,
           openRouterTier,
         }
-      } else if (boletaSource === 'document_pdf') {
+      } else {
         if (!file) {
           toast.error('Selecciona un PDF')
           return
@@ -161,18 +179,6 @@ export function ReceiptsClient({
           pdfBase64,
           openRouterTier,
         }
-      } else {
-        const t = documentPlainText.trim()
-        if (t.length < 10) {
-          toast.error('Pega al menos unas pocas líneas del ticket (10 caracteres).')
-          return
-        }
-        body = {
-          profileId,
-          inputKind: 'document_text',
-          plainText: t,
-          openRouterTier,
-        }
       }
 
       const res = await fetch('/api/ai/analyze-receipt', {
@@ -187,7 +193,7 @@ export function ReceiptsClient({
         vision?: VisionAnalysisMeta
       }>(res)
       if (parsed.kind === 'invalid_json') {
-        toast.error('La respuesta del servidor no es válida.')
+        toast.error(messageWhenAiApiBodyNotJson(parsed.rawPreview))
         return
       }
       if (parsed.kind === 'empty') {
@@ -233,9 +239,7 @@ export function ReceiptsClient({
   }
 
   function canAnalyze(): boolean {
-    if (boletaSource === 'image') return Boolean(file)
-    if (boletaSource === 'document_pdf') return Boolean(file)
-    return documentPlainText.trim().length >= 10
+    return Boolean(file)
   }
 
   async function onSave(e: React.FormEvent<HTMLFormElement>) {
@@ -265,7 +269,6 @@ export function ReceiptsClient({
       }
       toast.success('Boleta guardada como borrador')
       setFile(null)
-      setDocumentPlainText('')
       setReceiptVision(null)
       setAnalysis(null)
       setStoreName('')
@@ -339,9 +342,8 @@ export function ReceiptsClient({
             Mismo criterio que <strong>Inventario · Cargar por fotos</strong>: eliges
             si OpenRouter intenta primero modelos gratuitos, solo gratuitos o solo de
             pago. La <strong>zona física del hogar</strong> no aplica en boletas (solo
-            en carga por fotos). Puedes procesar la boleta como{' '}
-            <strong>foto</strong> (visión) o como <strong>documento</strong> (PDF con
-            texto extraído o texto pegado).
+            en carga por fotos). Entrada permitida: <strong>foto</strong> del ticket
+            (visión) o <strong>PDF</strong> (texto extraído en el servidor).
           </p>
 
           <div className="flex flex-wrap gap-2">
@@ -362,15 +364,6 @@ export function ReceiptsClient({
               disabled={analyzing}
             >
               PDF (documento)
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={boletaSource === 'document_text' ? 'default' : 'outline'}
-              onClick={() => changeBoletaSource('document_text')}
-              disabled={analyzing}
-            >
-              Texto pegado
             </Button>
           </div>
 
@@ -428,25 +421,6 @@ export function ReceiptsClient({
             </div>
           ) : null}
 
-          {boletaSource === 'document_text' ? (
-            <div className="space-y-1.5">
-              <Label htmlFor="receipt-plain" className="app-field-label">
-                Texto del ticket
-              </Label>
-              <textarea
-                id="receipt-plain"
-                rows={10}
-                className="app-input min-h-[160px] w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 text-[13px] shadow-xs outline-none"
-                placeholder="Pega aquí el contenido del ticket (desde correo, OCR o PDF)."
-                value={documentPlainText}
-                onChange={(e) => {
-                  setDocumentPlainText(e.target.value)
-                  clearReceiptAiDraft()
-                }}
-              />
-            </div>
-          ) : null}
-
           <Button
             type="button"
             variant="secondary"
@@ -463,8 +437,10 @@ export function ReceiptsClient({
             2. Revisar y guardar borrador
           </h2>
           <p className="app-page-lead text-[13px] text-muted-foreground">
-            Al guardar solo queda un borrador (sin cambiar inventario) hasta que
-            confirmes la boleta en la tabla inferior.
+            Al guardar solo queda un borrador (sin cambiar inventario). En{' '}
+            <strong>Registro guardado → Revisar</strong> emparejas cada línea con un
+            producto del inventario (los ítems vienen del catálogo global ligado al
+            hogar). Al confirmar se aplican cantidades al stock.
           </p>
 
           {!analysis ? (
@@ -573,6 +549,16 @@ export function ReceiptsClient({
         {listError ? (
           <p className="text-[13px] text-destructive">{listError}</p>
         ) : null}
+        <div className="mb-3 max-w-md space-y-1.5">
+          <Label className="text-[12px] text-muted-foreground">Filtrar listado</Label>
+          <AppSearchBox
+            ariaLabel="Filtrar boletas guardadas"
+            placeholder="Comercio, estado, fecha… (Enter o lupa)"
+            value={receiptListSearchDraft}
+            onChange={setReceiptListSearchDraft}
+            onSubmit={() => setReceiptListSearchSubmitted(receiptListSearchDraft.trim())}
+          />
+        </div>
         <div className="app-data-table-wrap">
           <table className="app-data-table">
             <thead>
@@ -591,8 +577,14 @@ export function ReceiptsClient({
                     No hay boletas registradas.
                   </td>
                 </tr>
+              ) : filteredReceiptRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="text-muted-foreground">
+                    Ningún registro coincide con el filtro.
+                  </td>
+                </tr>
               ) : (
-                initialReceipts.map((r) => (
+                filteredReceiptRows.map((r) => (
                   <tr key={r.id}>
                     <td className="whitespace-nowrap text-muted-foreground">
                       {new Date(r.created_at).toLocaleString('es')}
@@ -653,9 +645,23 @@ export function ReceiptsClient({
               </div>
             </div>
             <p className="app-page-lead">
-              Empareja cada línea con un producto del inventario. Al confirmar se
-              suma la cantidad de la línea al stock y se registra el movimiento
-              como compra.
+              Empareja cada línea con un producto de tu inventario (mismo listado que
+              en esta pantalla: nombre comercial del hogar ligado al catálogo). Verás
+              sugerencias por nombre, marca y precio unitario cercano al último
+              precio guardado. Al confirmar se suma la cantidad de la línea al stock y
+              se registra la compra en historial.
+            </p>
+            <p className="text-[13px] text-muted-foreground">
+              ¿No existe el producto? Créalo en{' '}
+              <Link href="/inventory" className="underline underline-offset-2">
+                Inventario
+              </Link>{' '}
+              (alta desde catálogo o nombre nuevo maestro) o en{' '}
+              <Link href="/catalog" className="underline underline-offset-2">
+                Catálogo
+              </Link>
+              ; luego vuelve aquí, pulsa <strong>Revisar</strong> de nuevo y el nuevo
+              ítem aparecerá en el selector.
             </p>
             {reviewLoading ? (
               <p className="text-[13px] text-muted-foreground">Cargando…</p>
@@ -677,36 +683,75 @@ export function ReceiptsClient({
                         </td>
                       </tr>
                     ) : (
-                      reviewItems.map((line) => (
-                        <tr key={line.id}>
-                          <td className="font-medium">{line.name_raw}</td>
-                          <td className="text-right tabular-nums">
-                            {line.quantity ?? '—'}
-                          </td>
-                          <td className="min-w-[200px]">
-                            <Select
-                              value={line.product_id ?? NONE}
-                              onValueChange={(v) =>
-                                void onLineProduct(line.id, v)
-                              }
-                            >
-                              <SelectTrigger className="app-input h-9 w-full border-input text-[13px]">
-                                <SelectValue placeholder="Emparejar…" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value={NONE}>
-                                  Sin emparejar
-                                </SelectItem>
-                                {products.map((p) => (
-                                  <SelectItem key={p.id} value={p.id}>
-                                    {p.name}
+                      reviewItems.map((line) => {
+                        const suggestions = suggestInventoryProductsForReceiptLine(
+                          {
+                            name_raw: line.name_raw,
+                            unit_price: line.unit_price,
+                          },
+                          products,
+                          3,
+                        )
+                        return (
+                          <tr key={line.id}>
+                            <td className="max-w-[min(280px,36vw)] align-top">
+                              <div className="font-medium leading-snug">
+                                {line.name_raw}
+                              </div>
+                              {suggestions.length > 0 ? (
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  <span className="text-[11px] text-muted-foreground">
+                                    Sugerencias:
+                                  </span>
+                                  {suggestions.map((p) => (
+                                    <Button
+                                      key={p.id}
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-7 max-w-[200px] truncate px-2 text-[11px]"
+                                      title={`${p.name}${p.brand ? ` · ${p.brand}` : ''}`}
+                                      onClick={() =>
+                                        void onLineProduct(line.id, p.id)
+                                      }
+                                    >
+                                      {p.name.length > 28
+                                        ? `${p.name.slice(0, 26)}…`
+                                        : p.name}
+                                    </Button>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="text-right tabular-nums align-top">
+                              {line.quantity ?? '—'}
+                            </td>
+                            <td className="min-w-[200px] align-top">
+                              <Select
+                                value={line.product_id ?? NONE}
+                                onValueChange={(v) =>
+                                  void onLineProduct(line.id, v)
+                                }
+                              >
+                                <SelectTrigger className="app-input h-9 w-full border-input text-[13px]">
+                                  <SelectValue placeholder="Emparejar…" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value={NONE}>
+                                    Sin emparejar
                                   </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                        </tr>
-                      ))
+                                  {products.map((p) => (
+                                    <SelectItem key={p.id} value={p.id}>
+                                      {p.name}
+                                      {p.brand ? ` · ${p.brand}` : ''}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                          </tr>
+                        )
+                      })
                     )}
                   </tbody>
                 </table>

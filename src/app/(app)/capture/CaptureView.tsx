@@ -21,7 +21,11 @@ import { VisionAnalysisNote } from '@/components/vision-analysis-note'
 import { pickCatalogTaxonomyFromGuess } from '@/lib/catalog-taxonomy-match'
 import { createThumbnailPreviewUrl } from '@/lib/capture-preview-thumb'
 import { captureTrace } from '@/lib/capture-trace'
-import { messageFromAiApiError, readAiApiJsonBody } from '@/lib/ai-api-error'
+import {
+  messageFromAiApiError,
+  messageWhenAiApiBodyNotJson,
+  readAiApiJsonBody,
+} from '@/lib/ai-api-error'
 import { buildVisionAnalysisImagePayload } from '@/lib/capture-vision-image'
 import { STOCK_ZONE_OPTIONS, stockZoneLabel } from '@/lib/stock-zones'
 import type { OpenRouterStockCheckTier } from '@/types/open-router-stock-check-tier'
@@ -248,7 +252,7 @@ export function CaptureView({
         vision?: VisionAnalysisMeta
       }>(res)
       if (parsed.kind === 'invalid_json') {
-        toast.error('La respuesta del servidor no es válida.')
+        toast.error(messageWhenAiApiBodyNotJson(parsed.rawPreview))
         return
       }
       if (parsed.kind === 'empty') {

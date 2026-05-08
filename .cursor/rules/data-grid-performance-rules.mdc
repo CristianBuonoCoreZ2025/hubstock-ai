@@ -7,6 +7,14 @@ alwaysApply: true
 
 Estas reglas aplican a toda pantalla con grillas, tablas, listados, selectores y combobox.
 
+## Contrato de tiempo de respuesta
+
+Las consultas que pintan grillas o combos remotos deben diseñarse para responder en **menos de 1 segundo** en condiciones normales de uso. Si no es viable, acotar volumen (paginación, filtros server-side, RPC acotada, índices existentes) antes de ceder lentitud. Ver también `.cursor/rules/ui-product-rules.mdc` § Contrato de rendimiento.
+
+## Combobox y filtros relacionados
+
+Los combobox no deben ignorar el contexto del resto de filtros: donde aplique, las opciones deben **reducir el espacio de búsqueda** (ej.: categorías según sección; marcas según universo de productos filtrado). Combinar con búsqueda remota, límites y orden alfabético según secciones posteriores de este archivo.
+
 ## Inactivos
 
 Toda grilla debe tener un switch visible:
@@ -46,6 +54,10 @@ Cada grilla debe tener:
 - Botón siguiente.
 - Texto de cantidad visible.
 - Tamaño de página inicial 100.
+
+### Controles de paginación: arriba y abajo
+
+En grillas paginadas, repetir los mismos controles de página (**Anterior**, **Siguiente** y texto con página actual / tamaño / total cuando aplique) **antes** del contenedor principal de la tabla y **después** de cerrarlo, para poder paginar tanto al revisar cabeceras como al llegar al final del listado.
 
 ## Filtros y búsqueda
 

@@ -9,11 +9,11 @@ import { createServiceRoleClient } from '@/server/supabase-admin'
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
 import {
-  matchesSearch,
+  getSearchTermPairs,
   normalizeSearchText,
-  rankCatalogProductRelevance,
   searchTermsFromQuery,
 } from '@/lib/search'
+import { perfLog, withPerfTiming } from '@/lib/perf-log'
 import {
   getUserFriendlyErrorMessage,
   isUniqueViolation,
@@ -454,6 +454,107 @@ export async function updateCatalogBrandAction(
   return { ok: true }
 }
 
+/**
+ * Une dos marcas canónicas: conserva una fila, reasigna productos maestros de la absorbida,
+ * borra la absorbida y deja la superviviente con `unifiedName`.
+ * La regla de nombre único es la misma que `catalog_brand_id_for_label` / índice en BD:
+ * otro nombre resuelvable a ese id que no sea una de las dos marcas seleccionadas → error.
+ */
+export async function mergeCatalogBrandsAction(input: {
+  survivorBrandId: string
+  absorbedBrandId: string
+  unifiedName: string
+}): Promise<{ ok: boolean; error?: string }> {
+  const ctx = await requireCatalogEditor()
+  if (!ctx.ok) return { ok: false, error: ctx.error }
+
+  const survivor = input.survivorBrandId.trim()
+  const absorbed = input.absorbedBrandId.trim()
+  const label = input.unifiedName.trim()
+
+  if (!survivor || !absorbed) {
+    return { ok: false, error: 'Completa los campos obligatorios antes de guardar.' }
+  }
+  if (survivor === absorbed) {
+    return { ok: false, error: 'Elige dos marcas distintas para unificar.' }
+  }
+  if (!label) {
+    return { ok: false, error: 'El nombre final de la marca es obligatorio.' }
+  }
+
+  const { data: existRows, error: loadErr } = await ctx.admin
+    .from('catalog_brands')
+    .select('id')
+    .in('id', [survivor, absorbed])
+
+  if (loadErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(loadErr, 'generic') }
+  }
+  const found = new Set((existRows ?? []).map((r) => String((r as { id: string }).id)))
+  if (!found.has(survivor) || !found.has(absorbed)) {
+    return { ok: false, error: 'No se encontró una de las marcas seleccionadas.' }
+  }
+
+  const { data: conflictingIdRaw, error: rpcErr } = await rpcCatalogBrandIdForLabel(
+    ctx.admin,
+    label
+  )
+  if (rpcErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(rpcErr, 'generic') }
+  }
+  const conflictingId =
+    conflictingIdRaw != null && String(conflictingIdRaw).length > 0 ?
+      String(conflictingIdRaw)
+    : ''
+
+  if (conflictingId && conflictingId !== survivor && conflictingId !== absorbed) {
+    return {
+      ok: false,
+      error:
+        'Ya existe una marca con ese nombre. Revisa la marca existente o usa otro nombre.',
+    }
+  }
+
+  const { error: migrateErr } = await ctx.admin
+    .from('catalog_products')
+    .update({
+      brand_id: survivor,
+      brand: label,
+    } as never)
+    .eq('brand_id', absorbed)
+
+  if (migrateErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(migrateErr, 'generic') }
+  }
+
+  const { error: delBrandErr } = await ctx.admin.from('catalog_brands').delete().eq('id', absorbed)
+
+  if (delBrandErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(delBrandErr, 'brand') }
+  }
+
+  const { error: renameErr } = await ctx.admin
+    .from('catalog_brands')
+    .update({ name: label } as never)
+    .eq('id', survivor)
+
+  if (renameErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(renameErr, 'brand') }
+  }
+
+  const { error: alignTextErr } = await ctx.admin
+    .from('catalog_products')
+    .update({ brand: label } as never)
+    .eq('brand_id', survivor)
+
+  if (alignTextErr) {
+    return { ok: false, error: getUserFriendlyErrorMessage(alignTextErr, 'generic') }
+  }
+
+  revalidatePath('/catalog')
+  return { ok: true }
+}
+
 export async function updateSectionAction(
   id: string,
   name: string
@@ -588,7 +689,7 @@ export type FetchCatalogProductsPageParams = {
   sectionId: string
   categoryId: string
   brandId: string
-  /** Texto de búsqueda libre (`matchesSearch` en servidor sobre datos hidratados). */
+  /** Texto de búsqueda libre; resuelto en Postgres (`catalog_products_search_page`). */
   search: string
 }
 
@@ -620,15 +721,80 @@ type RawProductRow = {
 }
 
 /** Fila mínima para rankear sin traer `catalog_product_media`. */
-type LeanCatalogProductRow = {
+/** Fila devuelta por la RPC `catalog_products_search_page` (PostgREST). */
+type CatalogSearchRpcRow = {
   id: string
   name: string
   brand: string | null
   brand_id: string | null
   format: string | null
   unit: string | null
+  default_reference_price: number | null
+  sort_order: number
+  active: boolean
   section_id: string
   category_id: string
+  thumb_url: string | null
+  brand_label: string | null
+  total_count: number | string | null
+  source_system?: string | null
+}
+
+/** Booleanos desde Postgres/JSON en respuestas RPC ocasionales. */
+function rpcBool(value: unknown): boolean {
+  if (value === true) return true
+  if (value === false) return false
+  if (typeof value === 'string') {
+    const s = value.trim().toLowerCase()
+    return s === 't' || s === 'true' || s === '1'
+  }
+  return false
+}
+
+/** Detecta una fila devuelta por una RPC `returns table` (PostgREST). */
+function isProbablyRpcTableRow(o: Record<string, unknown>): boolean {
+  if (typeof o.id === 'string') return true
+  if (o.id != null && typeof o.name === 'string') return true
+  return typeof o.name === 'string' && (o.section_id != null || o.total_count != null)
+}
+
+/**
+ * PostgREST / cliente puede devolver:
+ * - array de filas
+ * - una sola fila como objeto (sin `[ ]`)
+ * - objeto con claves `"0","1",…` **mezcladas con metadatos** (`length`, etc.): antes fallaba el chequeo
+ *   `keys.every(numérico)` y se devolvía `[]` → grilla vacía.
+ * - `{ data: [...] }` / `{ rows: [...] }`
+ */
+function rowsFromRpcTableData<T extends Record<string, unknown>>(data: unknown): T[] {
+  if (data == null) return []
+
+  if (Array.isArray(data)) {
+    return data.filter((r): r is T => r != null && typeof r === 'object') as T[]
+  }
+
+  if (typeof data !== 'object') return []
+
+  const o = data as Record<string, unknown>
+
+  const nested = o.data ?? o.rows
+  if (Array.isArray(nested)) {
+    return nested.filter((r): r is T => r != null && typeof r === 'object') as T[]
+  }
+
+  const numericKeys = Object.keys(o).filter((k) => /^\d+$/.test(k))
+  if (numericKeys.length > 0) {
+    return numericKeys
+      .sort((a, b) => Number(a) - Number(b))
+      .map((k) => o[k])
+      .filter((r): r is T => r != null && typeof r === 'object') as T[]
+  }
+
+  if (isProbablyRpcTableRow(o)) {
+    return [data as T]
+  }
+
+  return []
 }
 
 async function collectMatchedProductIds(
@@ -644,6 +810,8 @@ async function collectMatchedProductIds(
   const norm = normalizeSearchText(searchRaw)
   const terms = searchTermsFromQuery(searchRaw)
   if (!norm || terms.length === 0) return { ids: [], truncated: false }
+  // Evita consultas masivas para prefijos muy cortos.
+  if (norm.length < 3) return { ids: [], truncated: false }
 
   const buildIdsOnly = () => {
     let q = supabase.from('catalog_products').select('id')
@@ -668,48 +836,32 @@ async function collectMatchedProductIds(
     return false
   }
 
-  const orName = terms.map((t) => `name.ilike.%${escapeIlikePattern(t)}%`).join(',')
-  const orBrandCol = terms.map((t) => `brand.ilike.%${escapeIlikePattern(t)}%`).join(',')
-  const [{ data: w1 }, { data: w2 }] = await Promise.all([
-    buildIdsOnly().or(orName).limit(1800),
-    buildIdsOnly().or(orBrandCol).limit(1200),
-  ])
-  if (take(w1 as { id: string }[])) return { ids: [...idSet], truncated }
-  if (take(w2 as { id: string }[])) return { ids: [...idSet], truncated }
-
-  const refNameOr = terms.map((t) => `name.ilike.%${escapeIlikePattern(t)}%`).join(',')
-  const [{ data: brandRows }, { data: catRowsRaw }, { data: secRowsRaw }] = await Promise.all([
-    supabase.from('catalog_brands').select('id').or(refNameOr).limit(400),
-    supabase.from('categories').select('id,section_id').or(refNameOr).limit(500),
-    supabase.from('sections').select('id').or(refNameOr).limit(400),
-  ])
-  const canonBrandIds = [...new Set((brandRows ?? []).map((b: { id: string }) => b.id))]
-  const CHUNK_IN = 120
-  for (let i = 0; i < canonBrandIds.length; i += CHUNK_IN) {
-    const chunk = canonBrandIds.slice(i, i + CHUNK_IN)
-    const { data: w3 } = await buildIdsOnly().in('brand_id', chunk).limit(1200)
-    if (take(w3 as { id: string }[])) return { ids: [...idSet], truncated }
+  // Caso común (una palabra >= 3 chars): evitar múltiples round-trips.
+  // Para búsquedas típicas ("mayo", "mostaza") basta con name/brand/format/unit + alias.
+  if (terms.length === 1 && norm.length >= 3) {
+    const t = escapeIlikePattern(terms[0] ?? norm)
+    const orQuick = [
+      `name.ilike.%${t}%`,
+      `brand.ilike.%${t}%`,
+      `format.ilike.%${t}%`,
+      `unit.ilike.%${t}%`,
+    ].join(',')
+    const { data: q1 } = await buildIdsOnly().or(orQuick).limit(2200)
+    if (take(q1 as { id: string }[])) return { ids: [...idSet], truncated }
+  } else {
+    const orName = terms.map((t) => `name.ilike.%${escapeIlikePattern(t)}%`).join(',')
+    const orBrandCol = terms.map((t) => `brand.ilike.%${escapeIlikePattern(t)}%`).join(',')
+    const [{ data: w1 }, { data: w2 }] = await Promise.all([
+      buildIdsOnly().or(orName).limit(1800),
+      buildIdsOnly().or(orBrandCol).limit(1200),
+    ])
+    if (take(w1 as { id: string }[])) return { ids: [...idSet], truncated }
+    if (take(w2 as { id: string }[])) return { ids: [...idSet], truncated }
   }
 
-  const catIds = (catRowsRaw ?? [])
-    .filter(
-      (c: { section_id: string }) =>
-        filterParams.sectionId === 'all' || c.section_id === filterParams.sectionId
-    )
-    .map((c: { id: string }) => c.id)
-  const uniqCat = [...new Set(catIds)]
-  for (let i = 0; i < uniqCat.length; i += CHUNK_IN) {
-    const chunk = uniqCat.slice(i, i + CHUNK_IN)
-    const { data: w4 } = await buildIdsOnly().in('category_id', chunk).limit(1200)
-    if (take(w4 as { id: string }[])) return { ids: [...idSet], truncated }
-  }
-
-  const secIds = [...new Set((secRowsRaw ?? []).map((s: { id: string }) => s.id))]
-  for (let i = 0; i < secIds.length; i += CHUNK_IN) {
-    const chunk = secIds.slice(i, i + CHUNK_IN)
-    const { data: w5 } = await buildIdsOnly().in('section_id', chunk).limit(1200)
-    if (take(w5 as { id: string }[])) return { ids: [...idSet], truncated }
-  }
+  // Para /catalog priorizamos velocidad: no expandimos por coincidencias de tablas auxiliares
+  // (sections/categories/catalog_brands). Si el usuario escribe exactamente el nombre de una sección/categoría,
+  // igual encontrará productos relevantes por name/brand/alias y filtros explícitos.
 
   const orFmt = [
     ...terms.map((t) => `format.ilike.%${escapeIlikePattern(t)}%`),
@@ -729,6 +881,7 @@ async function collectMatchedProductIds(
   const aliasPids = [
     ...new Set((aliasRows ?? []).map((a: { catalog_product_id: string }) => a.catalog_product_id)),
   ]
+  const CHUNK_IN = 120
   for (let i = 0; i < aliasPids.length; i += CHUNK_IN) {
     const chunk = aliasPids.slice(i, i + CHUNK_IN)
     const { data: w7 } = await buildIdsOnly().in('id', chunk).limit(1200)
@@ -871,27 +1024,29 @@ async function hydrateCatalogProductRows(
   })
 }
 
-/** Lista paginada de productos maestros. Sin búsqueda libre: `range` + conteo servidor. Con búsqueda: barrido paginado con `matchesSearch`. */
+/** Lista paginada de productos maestros. Sin búsqueda: `range` + conteo. Con búsqueda: RPC `catalog_products_search_page` en BD. */
 export async function fetchCatalogProductsPage(
   params: FetchCatalogProductsPageParams
 ): Promise<FetchCatalogProductsPageOk | { ok: false; error: string }> {
+  const reqId = globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const baseMeta = {
+    reqId,
+    feature: 'catalog_products_page',
+    page: params.page,
+    pageSize: params.pageSize ?? CATALOG_GRID_PAGE_SIZE,
+    includeInactive: params.includeInactive,
+    sectionId: params.sectionId,
+    categoryId: params.categoryId,
+    brandId: params.brandId,
+    searchLen: params.search?.trim?.().length ?? 0,
+  }
+  perfLog('catalog.fetchCatalogProductsPage.start', baseMeta)
+
   const supabase = await createClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { ok: false, error: 'No hay sesión activa.' }
-
-  const [{ data: secRows }, { data: catRows }] = await Promise.all([
-    supabase.from('sections').select('id,name'),
-    supabase.from('categories').select('id,name'),
-  ])
-
-  const sectionNameById = new Map<string, string>(
-    ((secRows ?? []) as { id: string; name: string }[]).map((s) => [s.id, s.name])
-  )
-  const categoryNameById = new Map<string, string>(
-    ((catRows ?? []) as { id: string; name: string }[]).map((c) => [c.id, c.name])
-  )
 
   const buildBase = (withCount: boolean) => {
     const opts = withCount ? ({ count: 'exact', head: false } as const) : ({ head: false } as const)
@@ -910,11 +1065,16 @@ export async function fetchCatalogProductsPage(
 
   const PAGE = params.pageSize ?? CATALOG_GRID_PAGE_SIZE
   const trimmedSearch = normalizeSearchText(params.search)
+  const searchReady = trimmedSearch.length >= 3
 
-  if (!trimmedSearch) {
+  if (!searchReady) {
     const from = Math.max(0, params.page) * PAGE
     const to = from + PAGE - 1
-    const { data, error, count } = await buildBase(true).range(from, to)
+    const { data, error, count } = await withPerfTiming(
+      'catalog.fetchCatalogProductsPage.range',
+      { ...baseMeta, reqId, from, to, mode: 'range' },
+      () => buildBase(true).range(from, to)
+    )
 
     if (error)
       return {
@@ -922,7 +1082,11 @@ export async function fetchCatalogProductsPage(
         error: 'No logramos cargar los productos. Intenta nuevamente.',
       }
 
-    const rows = await hydrateCatalogProductRows(supabase, (data ?? []) as RawProductRow[])
+    const rows = await withPerfTiming(
+      'catalog.fetchCatalogProductsPage.hydrate',
+      { ...baseMeta, reqId, rows: (data ?? []).length, mode: 'range' },
+      () => hydrateCatalogProductRows(supabase, (data ?? []) as RawProductRow[])
+    )
 
     const total = typeof count === 'number' ? count : null
     const hasNextPage =
@@ -938,134 +1102,130 @@ export async function fetchCatalogProductsPage(
     }
   }
 
-  const searchParams = {
-    includeInactive: params.includeInactive,
-    sectionId: params.sectionId,
-    categoryId: params.categoryId,
-    brandId: params.brandId,
+  const pageIdx = Math.max(0, params.page)
+  const pairs = getSearchTermPairs(params.search)
+  let strict = pairs.strict
+  let loose = pairs.loose
+  if (strict.length !== loose.length) {
+    loose = strict.map((t, i) => loose[i] ?? t)
+  }
+  const normFull = normalizeSearchText(params.search)
+
+  if (strict.length === 0 && normFull.length >= 2) {
+    strict = [normFull]
+    loose = [normFull]
   }
 
-  const { ids: candidateIds, truncated: poolTruncated } = await collectMatchedProductIds(
-    supabase,
-    searchParams,
-    params.search
-  )
-
-  if (candidateIds.length === 0) {
+  if (strict.length === 0) {
     return {
       ok: true,
       items: [],
       total: 0,
-      page: params.page,
-      pageSize: PAGE,
-      hasNextPage: false,
-      ...(poolTruncated ? { truncated: true } : {}),
-    }
-  }
-
-  let leanRows: LeanCatalogProductRow[]
-  try {
-    leanRows = await fetchLeanCatalogRowsForIds(supabase, candidateIds)
-  } catch {
-    return {
-      ok: false,
-      error: 'No logramos cargar los productos. Intenta nuevamente.',
-    }
-  }
-
-  const brandIdsLean = [...new Set(leanRows.map((r) => r.brand_id).filter(Boolean))] as string[]
-  const brandNameLeanById = new Map<string, string>()
-  if (brandIdsLean.length > 0) {
-    const { data: br } = await supabase.from('catalog_brands').select('id,name').in('id', brandIdsLean)
-    for (const b of br ?? []) brandNameLeanById.set((b as { id: string; name: string }).id, (b as { name: string }).name)
-  }
-
-  const aliasByProductId = await fetchAliasMapForProductIds(supabase, candidateIds)
-
-  const qSearch = params.search
-  type Scored = { lean: LeanCatalogProductRow; score: number }
-  const scored: Scored[] = []
-
-  for (const lean of leanRows) {
-    const brandLabel = lean.brand_id ? brandNameLeanById.get(lean.brand_id) ?? null : null
-    const aliases = aliasByProductId.get(lean.id) ?? []
-    const haystack = [
-      lean.name,
-      brandLabel ?? '',
-      lean.brand ?? '',
-      sectionNameById.get(lean.section_id) ?? '',
-      categoryNameById.get(lean.category_id) ?? '',
-      [lean.format, lean.unit].filter(Boolean).join(' '),
-      ...aliases,
-    ]
-    if (!matchesSearch(haystack, qSearch)) continue
-
-    const score = rankCatalogProductRelevance(qSearch, {
-      productName: lean.name,
-      brandCanonical: brandLabel,
-      brandText: lean.brand,
-      categoryName: categoryNameById.get(lean.category_id) ?? null,
-      sectionName: sectionNameById.get(lean.section_id) ?? null,
-      presentation: [lean.format, lean.unit].filter(Boolean).join(' '),
-      aliasTexts: aliases,
-    })
-    scored.push({ lean, score })
-  }
-
-  scored.sort((a, b) => {
-    if (a.score !== b.score) return a.score - b.score
-    return a.lean.name.localeCompare(b.lean.name, 'es', { sensitivity: 'base' })
-  })
-
-  const totalRanked = scored.length
-  const pageIdx = Math.max(0, params.page)
-  const from = pageIdx * PAGE
-  const slice = scored.slice(from, from + PAGE)
-  const pageIds = slice.map((s) => s.lean.id)
-
-  if (pageIds.length === 0) {
-    return {
-      ok: true,
-      items: [],
-      total: totalRanked,
       page: pageIdx,
       pageSize: PAGE,
       hasNextPage: false,
-      ...(poolTruncated ? { truncated: true } : {}),
     }
   }
 
-  const { data: rawPage, error: rawErr } = await supabase
-    .from('catalog_products')
-    .select(
-      `id, name, brand, brand_id, format, unit, default_reference_price, sort_order, active, section_id, category_id, source_system,
-        catalog_product_media(public_url, kind)`
-    )
-    .in('id', pageIds)
+  // Una sola RPC: comportamiento esperado por el catálogo (haystack con sección/categoría/marca/alias).
+  const { data: rpcData, error: rpcError } = await withPerfTiming(
+    'catalog.fetchCatalogProductsPage.rpc.catalog_products_search_page',
+    {
+      ...baseMeta,
+      reqId,
+      mode: 'rpc',
+      termsStrict: strict.length,
+      termsLoose: loose.length,
+      fullNormLen: normFull.length,
+      pageIdx,
+    },
+    () =>
+      supabase.rpc('catalog_products_search_page', {
+        p_terms_strict: strict,
+        p_terms_loose: loose,
+        p_full_norm: normFull,
+        p_section_id: params.sectionId === 'all' ? null : params.sectionId,
+        p_category_id: params.categoryId === 'all' ? null : params.categoryId,
+        p_brand_filter_id: params.brandId === 'all' ? null : params.brandId,
+        p_include_inactive: params.includeInactive,
+        p_page: pageIdx,
+        p_page_size: PAGE,
+      })
+  )
 
-  if (rawErr)
+  if (rpcError) {
+    console.error('[fetchCatalogProductsPage] catalog_products_search_page', rpcError)
     return {
       ok: false,
       error: 'No logramos cargar los productos. Intenta nuevamente.',
     }
+  }
 
-  const rawById = new Map(
-    (rawPage ?? []).map((r) => [(r as RawProductRow).id, r as RawProductRow])
-  )
-  const orderedRaw = pageIds.map((id) => rawById.get(id)).filter(Boolean) as RawProductRow[]
+  const rows = rowsFromRpcTableData<CatalogSearchRpcRow>(rpcData)
+  if (rows.length === 0) {
+    return {
+      ok: true,
+      items: [],
+      total: 0,
+      page: pageIdx,
+      pageSize: PAGE,
+      hasNextPage: false,
+    }
+  }
 
-  const hydrated = await hydrateCatalogProductRows(supabase, orderedRaw)
+  const totalRaw = rows[0]?.total_count
+  const total =
+    totalRaw === null || totalRaw === undefined
+      ? rows.length
+      : typeof totalRaw === 'string'
+        ? Number(totalRaw)
+        : totalRaw
 
-  const hasNextPage = from + hydrated.length < totalRanked
+  const items: CatalogProductGridRow[] = rows.map((r) => ({
+    id: typeof r.id === 'string' ? r.id : String(r.id ?? ''),
+    name: r.name,
+    brand: r.brand,
+    brand_id: r.brand_id,
+    brand_label: r.brand_label,
+    format: r.format,
+    unit: r.unit,
+    default_reference_price: r.default_reference_price,
+    sort_order: r.sort_order,
+    active: rpcBool(r.active),
+    section_id: r.section_id,
+    category_id: r.category_id,
+    thumb_url: r.thumb_url,
+    retail_price_lider: null,
+    retail_price_jumbo: null,
+    retail_price_central_mayorista: null,
+    source_system: typeof r.source_system === 'string' ? r.source_system : null,
+  }))
+
+  try {
+    const retailById = await fetchRetailPricesForProductIds(
+      supabase,
+      items.map((i) => i.id)
+    )
+    for (const it of items) {
+      const rp = retailById.get(it.id)
+      if (!rp) continue
+      it.retail_price_lider = rp.lider
+      it.retail_price_jumbo = rp.jumbo
+      it.retail_price_central_mayorista = rp.central_mayorista
+    }
+  } catch {
+    /* RPC ausente hasta aplicar migración: la grilla sigue funcionando sin columnas retail. */
+  }
+
+  const hasNextPage = (pageIdx + 1) * PAGE < total
 
   return {
     ok: true,
-    items: hydrated,
-    total: totalRanked,
+    items,
+    total,
     page: pageIdx,
     pageSize: PAGE,
     hasNextPage,
-    ...(poolTruncated ? { truncated: true } : {}),
   }
 }
 
@@ -1108,8 +1268,11 @@ export async function fetchProductsByCategoryPage(params: {
 }
 
 /**
- * Categorías y marcas presentes en productos que cumplen los filtros actuales (y búsqueda si hay texto).
- * Sirve para acotar combos sin cargar taxonomías completas sin relación.
+ * Secciones, categorías y marcas presentes en productos que cumplen el contexto actual.
+ * - Secciones: siempre respecto a categoría/marca/búsqueda; **no** se restringe por la sección ya elegida
+ *   (así el usuario puede cambiar de sección dentro del mismo resultado).
+ * - Categorías: respecto a sección/marca/búsqueda (categoría “libre” en el filtro).
+ * - Marcas: respecto a sección/categoría/búsqueda.
  */
 export async function fetchCatalogProductFilterOptions(params: {
   search: string
@@ -1120,11 +1283,22 @@ export async function fetchCatalogProductFilterOptions(params: {
 }): Promise<
   | {
       ok: true
+      sections: { id: string; name: string }[]
       categories: { id: string; name: string }[]
       brands: { id: string; name: string }[]
     }
   | { ok: false; error: string }
 > {
+  const reqId = globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const baseMeta = {
+    reqId,
+    feature: 'catalog_product_filter_options',
+    sectionId: params.sectionId,
+    categoryId: params.categoryId,
+    brandId: params.brandId,
+    includeInactive: params.includeInactive,
+    searchLen: params.search?.trim?.().length ?? 0,
+  }
   const supabase = await createClient()
   const {
     data: { user },
@@ -1132,7 +1306,44 @@ export async function fetchCatalogProductFilterOptions(params: {
   if (!user) return { ok: false, error: 'No hay sesión activa.' }
 
   const norm = normalizeSearchText(params.search)
-  const searchActive = norm.length >= 1 && params.search.trim()
+  // Acotamos búsqueda de opciones para evitar scans/chunks costosos con 1-2 letras.
+  const searchActive = norm.length >= 3 && params.search.trim().length >= 3
+
+  async function distinctSectionIds(): Promise<string[]> {
+    if (searchActive) {
+      const { ids } = await collectMatchedProductIds(
+        supabase,
+        {
+          includeInactive: params.includeInactive,
+          sectionId: 'all',
+          categoryId: params.categoryId,
+          brandId: params.brandId,
+        },
+        params.search
+      )
+      if (ids.length === 0) return []
+      const secSet = new Set<string>()
+      const chunkSize = 400
+      for (let i = 0; i < ids.length; i += chunkSize) {
+        const slice = ids.slice(i, i + chunkSize)
+        const { data } = await supabase.from('catalog_products').select('section_id').in('id', slice)
+        for (const r of data ?? []) {
+          secSet.add((r as { section_id: string }).section_id)
+        }
+      }
+      return [...secSet]
+    }
+    let q = supabase.from('catalog_products').select('section_id')
+    if (!params.includeInactive) q = q.eq('active', true)
+    if (params.categoryId !== 'all') q = q.eq('category_id', params.categoryId)
+    if (params.brandId !== 'all') q = q.eq('brand_id', params.brandId)
+    const { data } = await q.limit(6000)
+    const set = new Set<string>()
+    for (const r of data ?? []) {
+      set.add((r as { section_id: string }).section_id)
+    }
+    return [...set]
+  }
 
   async function distinctCategoryIds(): Promise<string[]> {
     if (searchActive) {
@@ -1208,51 +1419,86 @@ export async function fetchCatalogProductFilterOptions(params: {
     return [...set]
   }
 
+  let secIds: string[]
   let catIds: string[]
   let brandIds: string[]
 
   if (
     searchActive &&
+    params.sectionId === 'all' &&
     params.categoryId === 'all' &&
     params.brandId === 'all'
   ) {
-    const { ids } = await collectMatchedProductIds(
-      supabase,
-      {
-        includeInactive: params.includeInactive,
-        sectionId: params.sectionId,
-        categoryId: 'all',
-        brandId: 'all',
-      },
-      params.search
+    const { ids } = await withPerfTiming(
+      'catalog.fetchCatalogProductFilterOptions.collectMatchedProductIds',
+      { ...baseMeta, mode: 'triple', path: 'fast-path' },
+      () =>
+        collectMatchedProductIds(
+          supabase,
+          {
+            includeInactive: params.includeInactive,
+            sectionId: 'all',
+            categoryId: 'all',
+            brandId: 'all',
+          },
+          params.search
+        )
     )
+    const secSet = new Set<string>()
     const catSet = new Set<string>()
     const brandSet = new Set<string>()
     const chunkSize = 400
     for (let i = 0; i < ids.length; i += chunkSize) {
       const slice = ids.slice(i, i + chunkSize)
-      const { data } = await supabase
-        .from('catalog_products')
-        .select('category_id, brand_id')
-        .in('id', slice)
+      const { data } = await withPerfTiming(
+        'catalog.fetchCatalogProductFilterOptions.catalog_products.in.id',
+        { ...baseMeta, mode: 'triple', chunkSize: slice.length },
+        () =>
+          supabase
+            .from('catalog_products')
+            .select('section_id, category_id, brand_id')
+            .in('id', slice)
+      )
       for (const r of data ?? []) {
+        secSet.add((r as { section_id: string }).section_id)
         catSet.add((r as { category_id: string }).category_id)
         const bid = (r as { brand_id: string | null }).brand_id
         if (bid) brandSet.add(bid)
       }
     }
+    secIds = [...secSet]
     catIds = [...catSet]
     brandIds = [...brandSet]
   } else {
-    ;[catIds, brandIds] = await Promise.all([
-      distinctCategoryIds(),
-      distinctBrandIds(),
-    ])
+    ;[secIds, catIds, brandIds] = await withPerfTiming(
+      'catalog.fetchCatalogProductFilterOptions.distinctIds',
+      { ...baseMeta, mode: 'split' },
+      () => Promise.all([distinctSectionIds(), distinctCategoryIds(), distinctBrandIds()])
+    )
+  }
+
+  const sections: { id: string; name: string }[] = []
+  if (secIds.length > 0) {
+    const { data, error } = await withPerfTiming(
+      'catalog.fetchCatalogProductFilterOptions.sections.in.id',
+      { ...baseMeta, secIds: secIds.length },
+      () => supabase.from('sections').select('id,name').in('id', secIds)
+    )
+    if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    for (const s of data ?? []) {
+      const row = s as { id: string; name: string }
+      sections.push({ id: row.id, name: row.name })
+    }
+    sections.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
   }
 
   const categories: { id: string; name: string }[] = []
   if (catIds.length > 0) {
-    const { data, error } = await supabase.from('categories').select('id,name').in('id', catIds)
+    const { data, error } = await withPerfTiming(
+      'catalog.fetchCatalogProductFilterOptions.categories.in.id',
+      { ...baseMeta, catIds: catIds.length },
+      () => supabase.from('categories').select('id,name').in('id', catIds)
+    )
     if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
     for (const c of data ?? []) {
       const row = c as { id: string; name: string }
@@ -1263,7 +1509,11 @@ export async function fetchCatalogProductFilterOptions(params: {
 
   const brands: { id: string; name: string }[] = []
   if (brandIds.length > 0) {
-    const { data, error } = await supabase.from('catalog_brands').select('id,name').in('id', brandIds)
+    const { data, error } = await withPerfTiming(
+      'catalog.fetchCatalogProductFilterOptions.catalog_brands.in.id',
+      { ...baseMeta, brandIds: brandIds.length },
+      () => supabase.from('catalog_brands').select('id,name').in('id', brandIds)
+    )
     if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
     for (const b of data ?? []) {
       const row = b as { id: string; name: string }
@@ -1272,7 +1522,7 @@ export async function fetchCatalogProductFilterOptions(params: {
     brands.sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }))
   }
 
-  return { ok: true, categories, brands }
+  return { ok: true, sections, categories, brands }
 }
 
 /** Opciones de sección ordenadas alfabéticamente (lista corta). */
@@ -1327,6 +1577,8 @@ export async function fetchCatalogCategoriesPage(params: {
   page: number
   pageSize?: number
   sectionId: string | 'all'
+  /** Acota a una categoría concreta (combo dependiente de sección). */
+  categoryId?: string | 'all'
   search: string
   productActiveOnly: boolean
 }): Promise<
@@ -1356,9 +1608,11 @@ export async function fetchCatalogCategoriesPage(params: {
 
   const norm = normalizeSearchText(params.search)
   const searchActive = norm.length >= 2
+  const categoryPick = params.categoryId && params.categoryId !== 'all' ? params.categoryId : null
 
   let countQ = supabase.from('categories').select('id', { count: 'exact', head: true })
   if (params.sectionId !== 'all') countQ = countQ.eq('section_id', params.sectionId)
+  if (categoryPick) countQ = countQ.eq('id', categoryPick)
   if (searchActive) countQ = countQ.ilike('name', `%${escapeIlikePattern(norm)}%`)
 
   const { count: totalHead, error: countErr } = await countQ
@@ -1373,6 +1627,7 @@ export async function fetchCatalogCategoriesPage(params: {
     .order('section_id', { ascending: true })
     .order('sort_order', { ascending: true })
   if (params.sectionId !== 'all') listQ = listQ.eq('section_id', params.sectionId)
+  if (categoryPick) listQ = listQ.eq('id', categoryPick)
   if (searchActive) listQ = listQ.ilike('name', `%${escapeIlikePattern(norm)}%`)
 
   const { data: catData, error: listErr } = await listQ.range(from, to)
@@ -1388,13 +1643,16 @@ export async function fetchCatalogCategoriesPage(params: {
   const ids = rawCats.map((c) => c.id)
   const countMap = new Map<string, number>()
   if (ids.length > 0) {
-    let pq = supabase.from('catalog_products').select('category_id').in('category_id', ids)
-    if (params.productActiveOnly) pq = pq.eq('active', true)
-    const { data: pc, error: pcErr } = await pq
+    const { data: countRows, error: pcErr } = await supabase.rpc(
+      'catalog_product_counts_by_category_ids',
+      {
+        p_category_ids: ids,
+        p_active_only: params.productActiveOnly,
+      },
+    )
     if (pcErr) return { ok: false, error: getUserFriendlyErrorMessage(pcErr, 'generic') }
-    for (const r of pc ?? []) {
-      const row = r as { category_id: string }
-      countMap.set(row.category_id, (countMap.get(row.category_id) ?? 0) + 1)
+    for (const r of (countRows ?? []) as { category_id: string; product_count: number | string }[]) {
+      countMap.set(r.category_id, Number(r.product_count))
     }
   }
 
@@ -1483,6 +1741,9 @@ export async function searchCatalogCategoriesAction(
 export async function searchCatalogProductsForPickerAction(query: string, activeOnly?: boolean): Promise<
   { ok: boolean; rows: { id: string; name: string }[]; error?: string }
 > {
+  const reqId =
+    globalThis.crypto?.randomUUID?.() ??
+    `req_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const supabase = await createClient()
   const {
     data: { user },
@@ -1498,7 +1759,16 @@ export async function searchCatalogProductsForPickerAction(query: string, active
 
   if (active) pq = pq.eq('active', true)
 
-  const { data, error } = await pq.order('name', { ascending: true }).limit(50)
+  const { data, error } = await withPerfTiming(
+    'catalog.searchCatalogProductsForPickerAction.query',
+    {
+      reqId,
+      feature: 'catalog_product_picker',
+      qLen: t.length,
+      activeOnly: active,
+    },
+    () => pq.order('name', { ascending: true }).limit(50)
+  )
 
   if (error) return { ok: false, rows: [], error: getUserFriendlyErrorMessage(error, 'generic') }
   return { ok: true, rows: (data ?? []) as { id: string; name: string }[] }
@@ -1557,14 +1827,16 @@ export async function fetchCatalogBrandsPage(params: {
   const ids = raw.map((r) => r.id)
   const countMap = new Map<string, number>()
   if (ids.length > 0) {
-    let pq = supabase.from('catalog_products').select('brand_id').in('brand_id', ids)
-    if (params.productActiveOnly) pq = pq.eq('active', true)
-    const { data: pc, error: pcErr } = await pq
+    const { data: countRows, error: pcErr } = await supabase.rpc(
+      'catalog_product_counts_by_brand_ids',
+      {
+        p_brand_ids: ids,
+        p_active_only: params.productActiveOnly,
+      },
+    )
     if (pcErr) return { ok: false, error: getUserFriendlyErrorMessage(pcErr, 'generic') }
-    for (const r of pc ?? []) {
-      const row = r as { brand_id: string | null }
-      if (!row.brand_id) continue
-      countMap.set(row.brand_id, (countMap.get(row.brand_id) ?? 0) + 1)
+    for (const r of (countRows ?? []) as { brand_id: string; product_count: number | string }[]) {
+      countMap.set(r.brand_id, Number(r.product_count))
     }
   }
 
