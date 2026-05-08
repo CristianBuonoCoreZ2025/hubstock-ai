@@ -294,6 +294,70 @@ export interface Database {
           created_at?: string
         }
       }
+      catalog_retail_snapshots: {
+        Row: {
+          id: string
+          retailer: string
+          external_ref: string
+          source_url: string | null
+          title: string
+          price: number
+          category_hint: string | null
+          brand_hint: string | null
+          description_hint: string | null
+          captured_at: string
+          match_method: string | null
+        }
+        Insert: {
+          id?: string
+          retailer: string
+          external_ref: string
+          source_url?: string | null
+          title: string
+          price: number
+          category_hint?: string | null
+          brand_hint?: string | null
+          description_hint?: string | null
+          captured_at?: string
+          match_method?: string | null
+        }
+        Update: {
+          id?: string
+          retailer?: string
+          external_ref?: string
+          source_url?: string | null
+          title?: string
+          price?: number
+          category_hint?: string | null
+          brand_hint?: string | null
+          description_hint?: string | null
+          captured_at?: string
+          match_method?: string | null
+        }
+      }
+      catalog_retail_links: {
+        Row: {
+          retailer: string
+          external_ref: string
+          catalog_product_id: string
+          created_at: string
+          updated_at: string
+        }
+        Insert: {
+          retailer: string
+          external_ref: string
+          catalog_product_id: string
+          created_at?: string
+          updated_at?: string
+        }
+        Update: {
+          retailer?: string
+          external_ref?: string
+          catalog_product_id?: string
+          created_at?: string
+          updated_at?: string
+        }
+      }
       products: {
         Row: {
           id: string
@@ -801,6 +865,53 @@ export interface Database {
       catalog_brand_id_for_label: {
         Args: { p_name: string }
         Returns: string | null
+      }
+      catalog_retail_listings_page: {
+        Args: {
+          p_retailer: string | null
+          p_unlinked_only: boolean
+          p_search: string | null
+          p_page: number
+          p_page_size: number
+        }
+        Returns: {
+          snapshot_id: string
+          retailer: string
+          external_ref: string
+          source_url: string | null
+          title: string
+          price: number
+          category_hint: string | null
+          brand_hint: string | null
+          captured_at: string
+          catalog_product_id: string | null
+          linked_product_name: string | null
+          total_count: number
+        }[]
+      }
+      catalog_retail_match_candidates: {
+        Args: {
+          p_search_title: string
+          p_price: number | null
+          p_category_id: string | null
+          p_limit: number | null
+        }
+        Returns: {
+          catalog_product_id: string
+          product_name: string
+          category_id: string
+          default_reference_price: number | null
+          match_score: number
+        }[]
+      }
+      catalog_retail_prices_for_products: {
+        Args: { p_product_ids: string[] }
+        Returns: {
+          catalog_product_id: string
+          retail_price_lider: number | null
+          retail_price_jumbo: number | null
+          retail_price_central_mayorista: number | null
+        }[]
       }
     }
     Enums: {

@@ -566,6 +566,14 @@ export type CatalogProductGridRow = {
   format: string | null
   unit: string | null
   default_reference_price: number | null
+  /** Última captura SQLite/import con vínculo retailer=lider */
+  retail_price_lider: number | null
+  /** Última captura SQLite/import con vínculo retailer=jumbo */
+  retail_price_jumbo: number | null
+  /** Última captura con vínculo retailer=central_mayorista (Central Mayorista) */
+  retail_price_central_mayorista: number | null
+  /** Origen del maestro (p. ej. lider_sqlite); usado solo como respaldo visual en columna Lider */
+  source_system: string | null
   sort_order: number
   active: boolean
   section_id: string
@@ -607,6 +615,7 @@ type RawProductRow = {
   active: boolean
   section_id: string
   category_id: string
+  source_system: string | null
   catalog_product_media: RawProdMedia[] | null
 }
 
@@ -768,6 +777,46 @@ async function fetchAliasMapForProductIds(
   return map
 }
 
+async function fetchRetailPricesForProductIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[]
+): Promise<
+  Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >
+> {
+  const out = new Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >()
+  const chunkSize = 150
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize)
+    const { data, error } = await supabase.rpc('catalog_retail_prices_for_products', {
+      p_product_ids: slice,
+    } as never)
+    if (error) throw error
+    for (const row of data ?? []) {
+      const r = row as {
+        catalog_product_id: string
+        retail_price_lider: number | null
+        retail_price_jumbo: number | null
+        retail_price_central_mayorista: number | null
+      }
+      out.set(r.catalog_product_id, {
+        lider: r.retail_price_lider != null ? Number(r.retail_price_lider) : null,
+        jumbo: r.retail_price_jumbo != null ? Number(r.retail_price_jumbo) : null,
+        central_mayorista:
+          r.retail_price_central_mayorista != null
+            ? Number(r.retail_price_central_mayorista)
+            : null,
+      })
+    }
+  }
+  return out
+}
+
 /** Solo enriquece marca canónica y miniatura; los alias ya se usan en la ruta de búsqueda antes de paginar. */
 async function hydrateCatalogProductRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -782,10 +831,24 @@ async function hydrateCatalogProductRows(
     for (const b of br ?? []) brandNameById.set(b.id, b.name)
   }
 
+  let retailById = new Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >()
+  try {
+    retailById = await fetchRetailPricesForProductIds(
+      supabase,
+      rawRows.map((r) => r.id)
+    )
+  } catch {
+    /* RPC ausente hasta aplicar migración: la grilla sigue funcionando sin columnas retail. */
+  }
+
   return rawRows.map((row) => {
     const thumb =
       row.catalog_product_media?.find((m) => m.kind === 'thumbnail')?.public_url ?? null
     const brand_label = row.brand_id ? brandNameById.get(row.brand_id) ?? null : null
+    const rp = retailById.get(row.id)
     return {
       id: row.id,
       name: row.name,
@@ -795,6 +858,10 @@ async function hydrateCatalogProductRows(
       format: row.format,
       unit: row.unit,
       default_reference_price: row.default_reference_price,
+      retail_price_lider: rp?.lider ?? null,
+      retail_price_jumbo: rp?.jumbo ?? null,
+      retail_price_central_mayorista: rp?.central_mayorista ?? null,
+      source_system: row.source_system ?? null,
       sort_order: row.sort_order,
       active: row.active,
       section_id: row.section_id,
@@ -829,7 +896,7 @@ export async function fetchCatalogProductsPage(
   const buildBase = (withCount: boolean) => {
     const opts = withCount ? ({ count: 'exact', head: false } as const) : ({ head: false } as const)
     let q = supabase.from('catalog_products').select(
-      `id, name, brand, brand_id, format, unit, default_reference_price, sort_order, active, section_id, category_id,
+      `id, name, brand, brand_id, format, unit, default_reference_price, sort_order, active, section_id, category_id, source_system,
         catalog_product_media(public_url, kind)`,
       opts
     )
@@ -971,7 +1038,7 @@ export async function fetchCatalogProductsPage(
   const { data: rawPage, error: rawErr } = await supabase
     .from('catalog_products')
     .select(
-      `id, name, brand, brand_id, format, unit, default_reference_price, sort_order, active, section_id, category_id,
+      `id, name, brand, brand_id, format, unit, default_reference_price, sort_order, active, section_id, category_id, source_system,
         catalog_product_media(public_url, kind)`
     )
     .in('id', pageIds)

@@ -13,6 +13,8 @@
 # testing
 /coverage
 /lider 
+/jumbo
+/central_mayorista
 
 # next.js
 /.next/
