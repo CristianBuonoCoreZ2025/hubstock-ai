@@ -62,14 +62,23 @@ Umbrales ajustables: `--link-min` (default 0.58), `--ambiguous-min` (0.38), `--n
 
 Si ya existe vínculo para (`retailer`, `external_ref`), no se sobrescribe.
 
-### 5. Recapturas (historial de precios)
+### 5. Marca propia de cadena → «Marca genérica»
 
-Volvé a ejecutar el mismo comando de snapshots cuando quieras actualizar precios: se inserta una **nueva** fila en `catalog_retail_snapshots`; el historial queda por fecha. Los vínculos en `catalog_retail_links` siguen apuntando al mismo maestro.
+En **verduras, frutas, pan / panadería** y afines, si la marca del SQLite es marca propia (Lider, Jumbo, Central Mayorista, …),
+los scripts **`import_lider_sqlite.py`** y **`import_retail_snapshots.py`** sustituyen la marca por el texto canónico **«Marca genérica»**
+(entrada en `catalog_brands`) antes de resolver `brand_id`. Así el mismo tomate o marraqueta no queda partido por retailer en el comparativo.
+
+No se reescribe la marca en otros rubros (p. ej. lácteos empaquetados con marca propia) si el nombre/categoría no coincide con el contexto fresco/pan.
+
+### 6. Recapturas e historial de precios
+
+Cada vez que ejecutes el mismo comando de import de snapshots para actualizar precios, se inserta una **nueva** fila en `catalog_retail_snapshots`; el historial queda ordenado por fecha. Los vínculos en `catalog_retail_links` siguen apuntando al mismo maestro.
 
 ## Cómo evitar duplicados
 
 | Riesgo | Mitigación |
 |--------|------------|
+| Mismo producto fresco/pan partido por marca de cadena | Normalización a **«Marca genérica»** en import (paso 5) para comparar sin multiplicar ítems equivalentes. |
 | Dos maestros para el mismo producto | Unificar en catálogo (editar / alias) y homologar cada cadena al **mismo** `catalog_product_id`. |
 | Import retail crea maestros sin control | Por defecto **no**. Solo con `--create-if-novel` y decisión “producto nuevo”; si no, solo snapshots / vínculos. |
 | Mismo ítem de tienda dos veces | `external_ref` estable (URL o SKU); el vínculo es único por (`retailer`, `external_ref`). |

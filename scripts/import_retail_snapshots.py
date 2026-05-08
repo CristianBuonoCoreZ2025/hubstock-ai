@@ -39,7 +39,8 @@ from import_lider_sqlite import (  # type: ignore  # noqa: E402
     resolve_brand,
 )
 from retail_import_decision import decide_retail_master  # noqa: E402
-from sqlite_taxonomy_sync import map_sqlite_taxonomy_to_pg  # noqa: E402
+from retail_private_label import fold_private_label_brand  # noqa: E402
+from sqlite_taxonomy_sync import map_sqlite_taxonomy_to_pg, sqlite_category_hint  # noqa: E402
 
 
 def default_sqlite_path(retailer: str) -> Path:
@@ -55,25 +56,7 @@ def default_sqlite_path(retailer: str) -> Path:
 
 
 def category_hint(cur: sqlite3.Cursor, subcat_id: int | None) -> str | None:
-    if subcat_id is None:
-        return None
-    cur.execute(
-        """
-        SELECT c.nombre AS sec, sc.nombre AS sub
-        FROM subcategorias sc
-        JOIN categorias c ON c.id = sc.categoria_id
-        WHERE sc.id = ?
-        """,
-        (subcat_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
-    sec = norm_taxonomy_label(row[0] or "")
-    sub = norm_taxonomy_label(row[1] or "")
-    if sec and sub:
-        return f"{sec} › {sub}"
-    return sec or sub or None
+    return sqlite_category_hint(cur, subcat_id, norm_taxonomy_label)
 
 
 def external_ref_from_row(row: sqlite3.Row) -> str:
@@ -141,6 +124,7 @@ def insert_novel_catalog_product(
     title: str,
     price: float,
     category_uuid: str,
+    category_hint_str: str | None,
     brand_by_key: dict[str, dict[str, str]],
     use_catalog_brands: bool,
 ) -> str | None:
@@ -157,13 +141,25 @@ def insert_novel_catalog_product(
         return None
     section_uuid = cat_row.data["section_id"]
 
+    brand_raw = norm_taxonomy_label(row["marca"] or "") or None
+    folded_marca, _ = fold_private_label_brand(
+        brand_raw,
+        product_name=title,
+        category_hint=category_hint_str,
+    )
+    marca_for_resolve = folded_marca if folded_marca else brand_raw
+
     brand_id: str | None = None
     marca_txt: str | None = None
-    if use_catalog_brands:
-        brand_id, marca_txt = resolve_brand(supabase, row["marca"], brand_by_key)
-    else:
-        m = norm_taxonomy_label(row["marca"] or "")
-        marca_txt = m if m else None
+        if use_catalog_brands:
+            brand_id, marca_txt = resolve_brand(
+                supabase,
+                marca_for_resolve if marca_for_resolve is not None else "",
+                brand_by_key,
+            )
+        else:
+            m = norm_taxonomy_label(marca_for_resolve or "")
+            marca_txt = m if m else None
 
     payload: dict = {
         "section_id": section_uuid,
@@ -332,7 +328,13 @@ def main() -> int:
             continue
         ref = external_ref_from_row(row)
         hint = category_hint(cur, row["subcategoria_id"])
-        brand = norm_taxonomy_label(row["marca"] or "") or None
+        brand_raw = norm_taxonomy_label(row["marca"] or "") or None
+        folded_brand, _gen = fold_private_label_brand(
+            brand_raw,
+            product_name=title,
+            category_hint=hint or None,
+        )
+        brand_for_snapshot = folded_brand if folded_brand else brand_raw
         desc_raw = row["descripcion_corta"] if "descripcion_corta" in row.keys() else ""
         desc_short = norm_taxonomy_label(desc_raw or "") or None
 
@@ -343,7 +345,7 @@ def main() -> int:
             "title": title,
             "price": float(price),
             "category_hint": hint,
-            "brand_hint": brand,
+            "brand_hint": brand_for_snapshot,
             "description_hint": desc_short,
             "match_method": "sqlite_import",
         }
@@ -378,7 +380,7 @@ def main() -> int:
                 )
                 decision = decide_retail_master(
                     candidates=cands,
-                    brand_hint=brand,
+                    brand_hint=brand_for_snapshot,
                     description_hint=desc_short,
                     link_min=args.link_min,
                     ambiguous_min=args.ambiguous_min,
@@ -403,6 +405,7 @@ def main() -> int:
                             title=title,
                             price=float(price),
                             category_uuid=cat_uuid,
+                            category_hint_str=hint,
                             brand_by_key=brand_by_key,
                             use_catalog_brands=use_catalog_brands,
                         )

@@ -103,3 +103,30 @@ def map_sqlite_taxonomy_to_pg(
         sub_sqlite_to_pg[row["id"]] = kid
 
     return section_sqlite_to_pg, sub_sqlite_to_pg
+
+
+def sqlite_category_hint(
+    cur: "sqlite3.Cursor",
+    subcat_id: int | None,
+    norm_taxonomy_label: Any,
+) -> str | None:
+    """Texto Sección › Subcategoría para heurísticas de marca (misma consulta que import retail)."""
+    if subcat_id is None:
+        return None
+    cur.execute(
+        """
+        SELECT c.nombre AS sec, sc.nombre AS sub
+        FROM subcategorias sc
+        JOIN categorias c ON c.id = sc.categoria_id
+        WHERE sc.id = ?
+        """,
+        (subcat_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    sec = norm_taxonomy_label(row[0] or "")
+    sub = norm_taxonomy_label(row[1] or "")
+    if sec and sub:
+        return f"{sec} › {sub}"
+    return sec or sub or None
