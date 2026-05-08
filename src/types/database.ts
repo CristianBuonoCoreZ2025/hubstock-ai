@@ -544,6 +544,7 @@ export interface Database {
         Row: {
           id: string
           receipt_id: string
+          profile_id: string
           product_id: string | null
           name_raw: string
           quantity: number | null
@@ -556,6 +557,7 @@ export interface Database {
         Insert: {
           id?: string
           receipt_id: string
+          profile_id: string
           product_id?: string | null
           name_raw: string
           quantity?: number | null
@@ -568,6 +570,7 @@ export interface Database {
         Update: {
           id?: string
           receipt_id?: string
+          profile_id?: string
           product_id?: string | null
           name_raw?: string
           quantity?: number | null

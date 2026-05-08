@@ -1,5 +1,5 @@
 /**
- * Normaliza errores de Gemini u OpenRouter para respuestas HTTP legibles.
+ * Normaliza errores de OpenRouter (visión / texto) para respuestas HTTP legibles.
  */
 
 export type VisionRouteFailure = {
@@ -11,8 +11,9 @@ export type VisionRouteFailure = {
   }
 }
 
+/** 429 en OpenRouter suele ser rate limit / límites del modelo (sobre todo :free), no “saldo en cero”. */
 const QUOTA_HINT =
-  'Límite de uso o cuota de IA alcanzada (429). Si usas Google Gemini directo: revisa https://aistudio.google.com/ y GEMINI_MODEL. Si usas OpenRouter: revisa saldo en https://openrouter.ai/ o prueba otro modelo en OPENROUTER_VISION_MODEL (incluidos modelos gratuitos con sufijo :free cuando existan en el catálogo). Espera unos minutos y reintenta.'
+  'OpenRouter respondió con 429 (límite temporal de uso). Suele ser por ritmo de solicitudes por minuto o por límites del modelo elegido (en especial gratuitos con sufijo :free); no implica por sí solo falta de saldo. Espera un minuto, prueba otro modelo en OPENROUTER_VISION_MODEL o revisa el modelo en https://openrouter.ai/ .'
 
 const PAYMENT_HINT =
   'OpenRouter reportó falta de saldo o método de pago (402). Recarga en https://openrouter.ai/ o define OPENROUTER_VISION_MODEL con un modelo más económico o gratuito según el catálogo actual.'

@@ -4,6 +4,8 @@ const serverEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  /** Token para rutas de debug locales (no exponer al cliente). */
+  DEBUG_API_TOKEN: z.string().min(1).optional(),
   /** Solo rutas /api/ai — opcional en build local hasta configurar Gemini */
   GEMINI_API_KEY: z.string().min(1).optional(),
   /** Ej.: gemini-1.5-flash si gemini-2.0-flash devuelve 429 por cuota */
