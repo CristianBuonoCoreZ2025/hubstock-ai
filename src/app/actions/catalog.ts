@@ -570,6 +570,8 @@ export type CatalogProductGridRow = {
   retail_price_lider: number | null
   /** Última captura SQLite/import con vínculo retailer=jumbo */
   retail_price_jumbo: number | null
+  /** Última captura con vínculo retailer=central_mayorista (Central Mayorista) */
+  retail_price_central_mayorista: number | null
   /** Origen del maestro (p. ej. lider_sqlite); usado solo como respaldo visual en columna Lider */
   source_system: string | null
   sort_order: number
@@ -778,8 +780,16 @@ async function fetchAliasMapForProductIds(
 async function fetchRetailPricesForProductIds(
   supabase: Awaited<ReturnType<typeof createClient>>,
   ids: string[]
-): Promise<Map<string, { lider: number | null; jumbo: number | null }>> {
-  const out = new Map<string, { lider: number | null; jumbo: number | null }>()
+): Promise<
+  Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >
+> {
+  const out = new Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >()
   const chunkSize = 150
   for (let i = 0; i < ids.length; i += chunkSize) {
     const slice = ids.slice(i, i + chunkSize)
@@ -792,10 +802,15 @@ async function fetchRetailPricesForProductIds(
         catalog_product_id: string
         retail_price_lider: number | null
         retail_price_jumbo: number | null
+        retail_price_central_mayorista: number | null
       }
       out.set(r.catalog_product_id, {
         lider: r.retail_price_lider != null ? Number(r.retail_price_lider) : null,
         jumbo: r.retail_price_jumbo != null ? Number(r.retail_price_jumbo) : null,
+        central_mayorista:
+          r.retail_price_central_mayorista != null
+            ? Number(r.retail_price_central_mayorista)
+            : null,
       })
     }
   }
@@ -816,7 +831,10 @@ async function hydrateCatalogProductRows(
     for (const b of br ?? []) brandNameById.set(b.id, b.name)
   }
 
-  let retailById = new Map<string, { lider: number | null; jumbo: number | null }>()
+  let retailById = new Map<
+    string,
+    { lider: number | null; jumbo: number | null; central_mayorista: number | null }
+  >()
   try {
     retailById = await fetchRetailPricesForProductIds(
       supabase,
@@ -842,6 +860,7 @@ async function hydrateCatalogProductRows(
       default_reference_price: row.default_reference_price,
       retail_price_lider: rp?.lider ?? null,
       retail_price_jumbo: rp?.jumbo ?? null,
+      retail_price_central_mayorista: rp?.central_mayorista ?? null,
       source_system: row.source_system ?? null,
       sort_order: row.sort_order,
       active: row.active,

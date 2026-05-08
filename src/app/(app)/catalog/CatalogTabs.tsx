@@ -107,6 +107,12 @@ function formatRetailJumboCell(row: CatalogProductGridRow): string {
   return row.retail_price_jumbo != null ? `$${Number(row.retail_price_jumbo).toFixed(0)}` : '—'
 }
 
+function formatRetailCentralMayoristaCell(row: CatalogProductGridRow): string {
+  return row.retail_price_central_mayorista != null
+    ? `$${Number(row.retail_price_central_mayorista).toFixed(0)}`
+    : '—'
+}
+
 const emptyProductInput = (): CatalogProductInput => ({
   name: '',
   section_id: '',
@@ -954,7 +960,7 @@ export function CatalogTabs(props: {
         <div className="space-y-4">
           <CatalogTabHeader
             title="Productos del catálogo"
-            description="Consulta y administra productos maestros; no modifica stock del hogar. Lider y Jumbo: última captura importada por cadena cuando el ítem externo está homologado al maestro (un producto canónico)."
+            description="Consulta y administra productos maestros; no modifica stock del hogar. Lider, Jumbo y Central Mayorista: última captura importada por cadena cuando el ítem está homologado; columna Lider puede usar precio ref. del import masivo Lider si aún no hay captura vinculada."
           />
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-4">
@@ -1079,7 +1085,7 @@ export function CatalogTabs(props: {
                 Cargando productos…
               </p>
             ) : null}
-            <table className="w-full min-w-[1120px] text-sm">
+            <table className="w-full min-w-[1280px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left">
                   <th className="w-[52px] p-3 font-medium">Imagen</th>
@@ -1091,16 +1097,17 @@ export function CatalogTabs(props: {
                   <th className="p-3 font-medium">Precio ref.</th>
                   <th className="p-3 font-medium">Lider</th>
                   <th className="p-3 font-medium">Jumbo</th>
+                  <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                   <th className="p-3 font-medium">Estado</th>
                   <th className="p-3 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {productsLoading ? (
-                  <CatalogProductsTableSkeleton colCount={11} rows={10} />
+                  <CatalogProductsTableSkeleton colCount={12} rows={10} />
                 ) : productRows.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={12} className="p-8 text-center text-muted-foreground">
                       No encontramos productos con esos filtros. Ajusta la búsqueda o limpia los filtros.
                     </td>
                   </tr>
@@ -1146,6 +1153,9 @@ export function CatalogTabs(props: {
                       </td>
                       <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
                         {formatRetailJumboCell(row)}
+                      </td>
+                      <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
+                        {formatRetailCentralMayoristaCell(row)}
                       </td>
                       <td className="p-3">
                         {row.active ? (
@@ -1388,7 +1398,7 @@ export function CatalogTabs(props: {
                 </div>
                 <GridLoadingMask show={brandProductsBusy}>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full min-w-[880px] text-sm">
+                    <table className="w-full min-w-[1040px] text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
                           <th className="p-3 font-medium">Producto</th>
@@ -1397,6 +1407,7 @@ export function CatalogTabs(props: {
                           <th className="p-3 font-medium">Precio ref.</th>
                           <th className="p-3 font-medium">Lider</th>
                           <th className="p-3 font-medium">Jumbo</th>
+                          <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1404,7 +1415,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!brandProductsBusy && brandProductsRows.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta marca y filtros.
                             </td>
                           </tr>
@@ -1428,6 +1439,9 @@ export function CatalogTabs(props: {
                               </td>
                               <td className="p-3 tabular-nums text-muted-foreground">
                                 {formatRetailJumboCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailCentralMayoristaCell(p)}
                               </td>
                               <td className="p-3">
                                 {p.active ?
@@ -1661,7 +1675,7 @@ export function CatalogTabs(props: {
                 </div>
                 <GridLoadingMask show={catProdBusy}>
                   <div className="overflow-x-auto rounded-md border border-border">
-                    <table className="w-full min-w-[960px] text-sm">
+                    <table className="w-full min-w-[1120px] text-sm">
                       <thead>
                         <tr className="border-b border-border bg-muted/40 text-left">
                           <th className="p-3 font-medium">Producto</th>
@@ -1670,6 +1684,7 @@ export function CatalogTabs(props: {
                           <th className="p-3 font-medium">Precio ref.</th>
                           <th className="p-3 font-medium">Lider</th>
                           <th className="p-3 font-medium">Jumbo</th>
+                          <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1677,7 +1692,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!catProdBusy && catProdRows.length === 0 ? (
                           <tr>
-                            <td colSpan={8} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta categoría y filtros.
                             </td>
                           </tr>
@@ -1701,6 +1716,9 @@ export function CatalogTabs(props: {
                               </td>
                               <td className="p-3 tabular-nums text-muted-foreground">
                                 {formatRetailJumboCell(p)}
+                              </td>
+                              <td className="p-3 tabular-nums text-muted-foreground">
+                                {formatRetailCentralMayoristaCell(p)}
                               </td>
                               <td className="p-3">
                                 {p.active ?

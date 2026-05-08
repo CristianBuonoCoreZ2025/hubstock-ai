@@ -907,6 +907,7 @@ export interface Database {
           catalog_product_id: string
           retail_price_lider: number | null
           retail_price_jumbo: number | null
+          retail_price_central_mayorista: number | null
         }[]
       }
     }

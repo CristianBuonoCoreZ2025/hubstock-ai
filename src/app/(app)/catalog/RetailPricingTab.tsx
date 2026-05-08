@@ -51,6 +51,7 @@ function retailerLabel(code: string): string {
   const m: Record<string, string> = {
     lider: 'Lider',
     jumbo: 'Jumbo',
+    central_mayorista: 'Central Mayorista',
   }
   return m[code] ?? code
 }
@@ -242,7 +243,7 @@ export function RetailPricingTab(props: {
     <div className="space-y-4">
       <CatalogTabHeader
         title="Precios por cadena"
-        description="Datos capturados por scripts locales (por ejemplo lider/ y jumbo/). Homologá cada ítem externo a un producto maestro para comparar precios y mantener historial al volver a importar."
+        description="Datos locales desde tus scrapers (Lider, Jumbo, Central Mayorista — ver centralmayorista.cl). Homologá cada ítem al maestro del catálogo para comparar precios y registrar historial."
       />
 
       <div className="rounded-lg border border-border bg-muted/20 p-4">
@@ -257,6 +258,7 @@ export function RetailPricingTab(props: {
                 <SelectItem value="all">Todas</SelectItem>
                 <SelectItem value="lider">Lider</SelectItem>
                 <SelectItem value="jumbo">Jumbo</SelectItem>
+                <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -332,11 +334,11 @@ export function RetailPricingTab(props: {
             {!loading && rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                  No hay capturas retail. Ejecutá el importador (por ejemplo{' '}
+                  No hay capturas retail. Ejecutá el importador, por ejemplo{' '}
                   <code className="rounded bg-muted px-1 text-[12px]">
-                    python scripts/import_retail_snapshots.py --retailer jumbo
+                    python scripts/import_retail_snapshots.py --retailer central_mayorista
                   </code>
-                  ).
+                  .
                 </td>
               </tr>
             ) : (

@@ -8,10 +8,11 @@ No crea filas en catalog_products: sirve para Jumbo u otras cadenas que querés 
 
 Variables de entorno: igual que import_lider_sqlite.py (SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY).
 
-  RETAIL_SQLITE  ruta al .db (default: jumbo/productos_jumbo.db si --retailer jumbo)
+  RETAIL_SQLITE  ruta al .db (default por --retailer: jumbo/, central_mayorista/, o lider/)
 
 Ejemplos:
   python scripts/import_retail_snapshots.py --retailer jumbo
+  python scripts/import_retail_snapshots.py --retailer central_mayorista
   python scripts/import_retail_snapshots.py --retailer lider --sqlite lider/productos_lider.db --dry-run --limit 50
 """
 
@@ -45,6 +46,8 @@ def default_sqlite_path(retailer: str) -> Path:
         return Path(raw)
     if retailer == "jumbo":
         return ROOT / "jumbo" / "productos_jumbo.db"
+    if retailer == "central_mayorista":
+        return ROOT / "central_mayorista" / "productos_central_mayorista.db"
     return ROOT / "lider" / "productos_lider.db"
 
 
@@ -89,7 +92,7 @@ def main() -> int:
     parser.add_argument(
         "--retailer",
         required=True,
-        help="Identificador de cadena (ej. jumbo, lider)",
+        help="Identificador de cadena (ej. jumbo, lider, central_mayorista)",
     )
     parser.add_argument("--sqlite", type=Path, default=None)
     parser.add_argument("--dry-run", action="store_true")
