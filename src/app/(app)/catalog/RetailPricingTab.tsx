@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { History, Link2, Link2Off, Loader2 } from 'lucide-react'
+import { CloudDownload, History, Link2, Link2Off, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   CatalogTabHeader,
@@ -11,8 +11,11 @@ import {
   fetchRetailListingsPage,
   fetchRetailMatchCandidatesAction,
   fetchRetailPriceHistory,
+  importRetailSnapshotsFromJsonAction,
   linkRetailListingAction,
+  runRetailWebCaptureAction,
   unlinkRetailListingAction,
+  type CaptureRetailer,
   type RetailListingRow,
   type RetailMatchCandidate,
   type RetailHistoryRow,
@@ -212,6 +215,15 @@ export function RetailPricingTab(props: {
   const [historyRows, setHistoryRows] = useState<RetailHistoryRow[]>([])
   const [historyBusy, setHistoryBusy] = useState(false)
 
+  const [captureOpen, setCaptureOpen] = useState(false)
+  const [captureRetailer, setCaptureRetailer] = useState<CaptureRetailer>('jumbo')
+  const [captureQuery, setCaptureQuery] = useState('')
+  const [captureMax, setCaptureMax] = useState(40)
+  const [captureWebBusy, setCaptureWebBusy] = useState(false)
+  const [jsonImportText, setJsonImportText] = useState('')
+  const [jsonBaseUrl, setJsonBaseUrl] = useState('')
+  const [jsonBusy, setJsonBusy] = useState(false)
+
   async function openHistory(row: RetailListingRow) {
     setHistoryRow(row)
     setHistoryOpen(true)
@@ -242,11 +254,52 @@ export function RetailPricingTab(props: {
     void reload()
   }
 
+  async function submitWebCapture() {
+    const q = normalizeSearchText(captureQuery)
+    if (q.length < 2) {
+      toast.error('Escribe al menos 2 caracteres para buscar.')
+      return
+    }
+    setCaptureWebBusy(true)
+    const res = await runRetailWebCaptureAction({
+      retailer: captureRetailer,
+      searchQuery: captureQuery,
+      maxItems: captureMax,
+    })
+    setCaptureWebBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success(`Se importaron ${res.inserted} precios al historial.`)
+    setCaptureOpen(false)
+    setCaptureQuery('')
+    void reload()
+  }
+
+  async function submitJsonImport() {
+    setJsonBusy(true)
+    const res = await importRetailSnapshotsFromJsonAction({
+      retailer: captureRetailer,
+      jsonText: jsonImportText,
+      vtexBaseUrlOverride: jsonBaseUrl.trim() || null,
+    })
+    setJsonBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success(`Se importaron ${res.inserted} precios al historial.`)
+    setCaptureOpen(false)
+    setJsonImportText('')
+    void reload()
+  }
+
   return (
     <div className="space-y-4">
       <CatalogTabHeader
         title="Precios por cadena"
-        description="Flujo y anti-duplicados: scripts/RETAIL_CAPTURE.md · Datos locales desde scrapers; homologación manual aquí o --auto-match en import_retail_snapshots.py (misma RPC inteligente que las sugerencias)."
+        description="Captura desde la app (VTEX / JSON), anti-duplicados en scripts/RETAIL_CAPTURE.md · Homologación aquí con las mismas sugerencias inteligentes que la base."
       />
 
       <div className="rounded-lg border border-border bg-muted/20 p-4">
@@ -274,14 +327,25 @@ export function RetailPricingTab(props: {
             />
             Solo sin homologar
           </label>
-          <div className="min-w-[min(100%,280px)] flex-[2] space-y-1.5">
-            <Label className="text-[12px]">Buscar</Label>
-            <Input
-              className="app-input h-9"
-              placeholder="Nombre, referencia, categoría o descripción del ítem…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex min-w-[min(100%,320px)] flex-[2] flex-wrap items-end gap-2">
+            <div className="min-w-[200px] flex-1 space-y-1.5">
+              <Label className="text-[12px]">Buscar</Label>
+              <Input
+                className="app-input h-9"
+                placeholder="Nombre, referencia, categoría o descripción del ítem…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-9 shrink-0 gap-1.5"
+              onClick={() => setCaptureOpen(true)}
+            >
+              <CloudDownload className="h-4 w-4" aria-hidden />
+              Capturar precios
+            </Button>
           </div>
         </div>
         <p className="mt-3 text-[12px] text-muted-foreground">
@@ -337,11 +401,7 @@ export function RetailPricingTab(props: {
             {!loading && rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                  No hay capturas retail. Ejecuta el importador, por ejemplo{' '}
-                  <code className="rounded bg-muted px-1 text-[12px]">
-                    python scripts/import_retail_snapshots.py --retailer central_mayorista
-                  </code>
-                  .
+                  No hay capturas retail. Usá «Capturar precios» arriba o revisá permisos y configuración del servidor.
                 </td>
               </tr>
             ) : (
@@ -602,6 +662,131 @@ export function RetailPricingTab(props: {
           )}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setHistoryOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={captureOpen} onOpenChange={setCaptureOpen}>
+        <DialogContent className="max-h-[min(92vh,760px)] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Capturar precios al historial</DialogTitle>
+            <DialogDescription>
+              La búsqueda web usa la API pública estilo VTEX (Jumbo con URL por defecto). Si el sitio no responde
+              desde el servidor, pega el JSON de la misma API desde tu navegador. Requiere rol editor y la clave
+              de servicio en el servidor.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 text-[13px]">
+            <div className="space-y-1.5">
+              <Label className="text-[12px]">Cadena</Label>
+              <Select
+                value={captureRetailer}
+                onValueChange={(v) => setCaptureRetailer(v as CaptureRetailer)}
+              >
+                <SelectTrigger className="app-input h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="jumbo">Jumbo</SelectItem>
+                  <SelectItem value="lider">Lider</SelectItem>
+                  <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Lider y Central Mayorista requieren variable de entorno con la URL base del catálogo (formato
+                VTEX) o importación por JSON.
+              </p>
+            </div>
+
+            <div className="rounded-md border border-border bg-muted/20 p-3">
+              <p className="mb-2 text-[12px] font-medium text-foreground">Búsqueda en la tienda</p>
+              <div className="space-y-2">
+                <div className="space-y-1.5">
+                  <Label className="text-[12px]">Término (≥2 caracteres)</Label>
+                  <Input
+                    className="app-input h-9"
+                    placeholder="Ej. aceite maravilla"
+                    value={captureQuery}
+                    onChange={(e) => setCaptureQuery(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[12px]">Máximo de resultados</Label>
+                  <Input
+                    className="app-input h-9"
+                    type="number"
+                    min={1}
+                    max={100}
+                    value={captureMax}
+                    onChange={(e) => setCaptureMax(Number(e.target.value) || 40)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  className="w-full gap-2 sm:w-auto"
+                  disabled={captureWebBusy}
+                  onClick={() => void submitWebCapture()}
+                >
+                  {captureWebBusy ?
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                    </>
+                  : <>
+                      <CloudDownload className="h-4 w-4" aria-hidden /> Buscar e importar
+                    </>
+                  }
+                </Button>
+              </div>
+            </div>
+
+            <div className="rounded-md border border-border p-3">
+              <p className="mb-2 text-[12px] font-medium text-foreground">Importar desde JSON</p>
+              <p className="mb-2 text-[11px] text-muted-foreground">
+                Pega la respuesta del endpoint de búsqueda (array de productos o objeto con lista). Opcional:
+                URL base para armar enlaces canónicos.
+              </p>
+              <div className="space-y-2">
+                <div className="space-y-1.5">
+                  <Label className="text-[12px]">URL base VTEX (opcional)</Label>
+                  <Input
+                    className="app-input h-9 font-mono text-[12px]"
+                    placeholder="https://www.jumbo.cl"
+                    value={jsonBaseUrl}
+                    onChange={(e) => setJsonBaseUrl(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-[12px]">JSON</Label>
+                  <textarea
+                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[140px] w-full rounded-md border px-3 py-2 text-[13px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    spellCheck={false}
+                    placeholder='[{"productId":"…","productName":"…",…}]'
+                    value={jsonImportText}
+                    onChange={(e) => setJsonImportText(e.target.value)}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2 sm:w-auto"
+                  disabled={jsonBusy}
+                  onClick={() => void submitJsonImport()}
+                >
+                  {jsonBusy ?
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                    </>
+                  : 'Importar JSON'}
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCaptureOpen(false)}>
               Cerrar
             </Button>
           </DialogFooter>
