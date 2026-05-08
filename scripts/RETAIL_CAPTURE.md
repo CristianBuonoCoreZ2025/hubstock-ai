@@ -6,7 +6,7 @@
 - **`catalog_retail_snapshots`**: cada corrida de import guarda **precio + fecha** por ítem de tienda (`retailer` + `external_ref`). No crea productos nuevos del catálogo.
 - **`catalog_retail_links`**: tabla de **homologación**: “este ítem de Jumbo/Lider/Central Mayorista” = “este `catalog_product_id`”. Una fila por (`retailer`, `external_ref`) → un maestro.
 
-La **comparativa inteligente** usa la RPC `catalog_retail_match_candidates` en Postgres (similitud de nombre con `pg_trgm`, cercanía de precio, categoría opcional). La app la usa en **Catálogo → Precios cadenas → Homologar**. El script puede usar la misma lógica con `--auto-match`.
+La **comparativa inteligente** usa la RPC `catalog_retail_match_candidates` en Postgres (similitud de nombre con `pg_trgm`, cercanía de precio, categoría opcional). La app la usa en **Catálogo → Precios cadenas → Homologar**. El script puede usar la misma RPC más reglas en Python (`retail_import_decision.py`: marca, descripción, umbrales) con `--smart-resolve` y, opcionalmente, alta de maestro con `--create-if-novel`.
 
 ## Flujo recomendado
 
@@ -38,20 +38,29 @@ python scripts/import_retail_snapshots.py --retailer central_mayorista
 python scripts/import_retail_snapshots.py --retailer lider --sqlite lider/productos_lider.db
 ```
 
-### 4. Homologación (igualar ítem externo → maestro)
+### 4. Homologación y alta de maestro (sin duplicar al azar)
 
-**Opción A — Manual (revisión humana)**  
-**Catálogo → Precios cadenas**: filtros, **Homologar**, sugerencias ordenadas por puntaje, o búsqueda del maestro.
+**Opción A — Manual**  
+**Catálogo → Precios cadenas → Homologar**: mismas sugerencias inteligentes que en servidor (`catalog_retail_match_candidates`: nombre + categoría + precio).
 
-**Opción B — Automática al importar (umbral de confianza)**
+**Opción B — Import inteligente**
 
 ```bash
-python scripts/import_retail_snapshots.py --retailer jumbo --auto-match --auto-match-min-score 0.62
+# Solo intenta vínculo cuando el puntaje es alto; zona gris = queda sin vínculo (revisar en UI)
+python scripts/import_retail_snapshots.py --retailer jumbo --smart-resolve
+
+# Además crea un maestro nuevo solo cuando la decisión es “producto totalmente nuevo”
+# (baja similitud vs catálogo + marca/descripción coherentes con las reglas en retail_import_decision.py)
+python scripts/import_retail_snapshots.py --retailer jumbo --smart-resolve --create-if-novel
 ```
 
-Usa la misma RPC que el modal **Homologar** (`catalog_retail_match_candidates`: nombre + precio + trigram). Solo crea `catalog_retail_links` si el mejor candidato supera el umbral. Si ya hay vínculo para ese `retailer` + `external_ref`, no lo cambia (respetá homologaciones manuales).
+Umbrales ajustables: `--link-min` (default 0.58), `--ambiguous-min` (0.38), `--novel-max` (0.34).
 
-Si el umbral es muy bajo podés unir ítems incorrectos: subí `--auto-match-min-score` (p. ej. `0.72`) o homologá a mano los que queden en **Precios cadenas**.
+- **Vincular**: puntaje alto y marca compatible con el nombre del candidato.  
+- **Ambiguo**: puntaje intermedio, marca que no encaja, o descripción muy parecida al maestro pero puntaje bajo → **no** crea ni enlaza; revisión en UI.  
+- **Maestro nuevo** (`create-if-novel`): solo si el mejor candidato está muy por debajo del umbral de novedad y hay separación respecto al segundo candidato; además hace falta mapear la subcategoría SQLite a una categoría PG (taxonomía sincronizada al inicio del script).
+
+Si ya existe vínculo para (`retailer`, `external_ref`), no se sobrescribe.
 
 ### 5. Recapturas (historial de precios)
 
@@ -62,7 +71,7 @@ Volvé a ejecutar el mismo comando de snapshots cuando quieras actualizar precio
 | Riesgo | Mitigación |
 |--------|------------|
 | Dos maestros para el mismo producto | Unificar en catálogo (editar / alias) y homologar cada cadena al **mismo** `catalog_product_id`. |
-| Import retail crea otro `catalog_products` | **No lo hace**: solo inserta en `catalog_retail_snapshots`. |
+| Import retail crea maestros sin control | Por defecto **no**. Solo con `--create-if-novel` y decisión “producto nuevo”; si no, solo snapshots / vínculos. |
 | Mismo ítem de tienda dos veces | `external_ref` estable (URL o SKU); el vínculo es único por (`retailer`, `external_ref`). |
 
 ## Variables de entorno (import)

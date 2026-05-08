@@ -304,6 +304,7 @@ export interface Database {
           price: number
           category_hint: string | null
           brand_hint: string | null
+          description_hint: string | null
           captured_at: string
           match_method: string | null
         }
@@ -316,6 +317,7 @@ export interface Database {
           price: number
           category_hint?: string | null
           brand_hint?: string | null
+          description_hint?: string | null
           captured_at?: string
           match_method?: string | null
         }
@@ -328,6 +330,7 @@ export interface Database {
           price?: number
           category_hint?: string | null
           brand_hint?: string | null
+          description_hint?: string | null
           captured_at?: string
           match_method?: string | null
         }
