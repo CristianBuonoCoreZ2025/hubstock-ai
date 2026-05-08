@@ -512,6 +512,13 @@ export function CatalogTabs(props: {
   const router = useRouter()
   const searchParams = useSearchParams()
 
+  const sectionsSorted = useMemo(() => {
+    return [...sections].sort((a, b) => {
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order
+      return a.name.localeCompare(b.name, 'es', { sensitivity: 'base' })
+    })
+  }, [sections])
+
   const tab = useMemo(
     () => tabFromUrl(searchParams.get('tab')),
     [searchParams]

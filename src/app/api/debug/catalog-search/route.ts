@@ -82,7 +82,7 @@ export async function GET(request: Request) {
   const rpcT0 = nowMs()
   const rpcFn =
     fn === 'v2' ? 'catalog_products_search_page_v2' : 'catalog_products_search_page'
-  const { data, error } = await admin.rpc(rpcFn, {
+  const { data, error } = await admin.rpc(rpcFn as never, {
     p_terms_strict: strict,
     p_terms_loose: loose,
     p_full_norm: norm,
@@ -92,7 +92,7 @@ export async function GET(request: Request) {
     p_include_inactive: includeInactive,
     p_page: page,
     p_page_size: pageSize,
-  })
+  } as never)
   const rpcMs = Math.max(0, nowMs() - rpcT0)
 
   if (error) {

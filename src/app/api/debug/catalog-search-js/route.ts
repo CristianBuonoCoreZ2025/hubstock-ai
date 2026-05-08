@@ -166,7 +166,10 @@ export async function GET(request: Request) {
   const filtered = candidates.filter((c) => {
     const aliasTexts = aliasMap.get(c.id) ?? []
     const presentation = [c.format, c.unit].filter(Boolean).join(' ')
-    return matchesSearch([c.name, c.brand, presentation || null, ...aliasTexts], search)
+    const haystack = [c.name, c.brand ?? '', presentation, ...aliasTexts].filter(
+      (s): s is string => Boolean(s)
+    )
+    return matchesSearch(haystack, search)
   })
 
   const ranked = filtered

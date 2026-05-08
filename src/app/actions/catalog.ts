@@ -721,6 +721,11 @@ type RawProductRow = {
 }
 
 /** Fila mínima para rankear sin traer `catalog_product_media`. */
+type LeanCatalogProductRow = Pick<
+  RawProductRow,
+  'id' | 'name' | 'brand' | 'brand_id' | 'format' | 'unit' | 'section_id' | 'category_id'
+>
+
 /** Fila devuelta por la RPC `catalog_products_search_page` (PostgREST). */
 type CatalogSearchRpcRow = {
   id: string

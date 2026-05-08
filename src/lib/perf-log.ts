@@ -31,7 +31,7 @@ export function perfLog(event: string, meta: PerfLogMeta = {}) {
 export async function withPerfTiming<T>(
   event: string,
   meta: PerfLogMeta,
-  fn: () => Promise<T>
+  fn: () => PromiseLike<T>
 ): Promise<T> {
   const t0 = nowMs()
   try {
