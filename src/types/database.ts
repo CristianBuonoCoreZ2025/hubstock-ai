@@ -883,6 +883,7 @@ export interface Database {
           price: number
           category_hint: string | null
           brand_hint: string | null
+          description_hint: string | null
           captured_at: string
           catalog_product_id: string | null
           linked_product_name: string | null
