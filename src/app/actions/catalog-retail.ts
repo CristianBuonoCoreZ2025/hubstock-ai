@@ -58,6 +58,20 @@ import {
   retailIaHomologationEnabled,
   retailIaHomologationMaxCallsPerRun,
 } from '@/server/retail-openrouter-match'
+import {
+  buildLiderCapturePlanUrls,
+  captureLiderListingPage,
+} from '@/server/retail/capture/lider-capture'
+import {
+  fetchRetailBatchById,
+  insertRetailCaptureBatch,
+  refreshRetailBatchHomologationStats,
+  updateRetailBatchProgress,
+  type RetailCaptureBatchRow,
+} from '@/server/retail/persistence/retail-batches'
+import { homologateRetailCapturedBatch } from '@/server/retail/homologation/retail-homologation-engine'
+
+export type { RetailCaptureBatchRow } from '@/server/retail/persistence/retail-batches'
 
 export type RetailListingRow = {
   snapshot_id: string
@@ -311,6 +325,23 @@ async function linkRetailListingWithAdmin(
   return { ok: true }
 }
 
+async function syncRetailCapturedProductAfterManualLink(
+  admin: ReturnType<typeof createServiceRoleClient>,
+  input: { retailer: string; external_ref: string; catalog_product_id: string },
+): Promise<void> {
+  await admin
+    .from('retail_captured_products')
+    .update({
+      catalog_product_id: input.catalog_product_id,
+      status: 'linked',
+      decision_source: 'manual_ui',
+      decision_confidence: null,
+      decision_reason: 'Homologación manual desde el catálogo.',
+    } as never)
+    .eq('retailer', input.retailer)
+    .eq('external_ref', input.external_ref)
+}
+
 export async function linkRetailListingAction(input: {
   retailer: string
   external_ref: string
@@ -326,6 +357,12 @@ export async function linkRetailListingAction(input: {
 
   const linkRes = await linkRetailListingWithAdmin(editor.admin, input)
   if (!linkRes.ok) return linkRes
+
+  await syncRetailCapturedProductAfterManualLink(editor.admin, {
+    retailer: input.retailer,
+    external_ref: input.external_ref,
+    catalog_product_id: input.catalog_product_id,
+  })
 
   revalidatePath('/catalog')
   return { ok: true }
@@ -1610,6 +1647,18 @@ export async function unlinkRetailListingAction(input: {
     return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   }
 
+  await editor.admin
+    .from('retail_captured_products')
+    .update({
+      catalog_product_id: null,
+      status: 'pending',
+      decision_source: null,
+      decision_confidence: null,
+      decision_reason: null,
+    } as never)
+    .eq('retailer', input.retailer)
+    .eq('external_ref', input.external_ref)
+
   revalidatePath('/catalog')
   return { ok: true }
 }
@@ -1725,5 +1774,269 @@ export async function autoAssociateUnlinkedRetailAction(input: {
     linkedByAi,
     skippedNotLink,
     failed,
+  }
+}
+
+export type RetailReviewQueueRow = {
+  id: string
+  batch_id: string
+  retailer: string
+  external_ref: string
+  title: string
+  price: number | null
+  status: string
+  decision_reason: string | null
+  created_at: string
+}
+
+/** Inicia un lote de captura retail (solo Lider en esta versión). */
+export async function startRetailCaptureBatchAction(input?: {
+  retailer?: string
+}): Promise<{ ok: true; batchId: string; totalPages: number } | { ok: false; error: string }> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) {
+    return { ok: false, error: editor.error }
+  }
+
+  const retailer = (input?.retailer ?? 'lider').trim().toLowerCase()
+  if (retailer !== 'lider') {
+    return { ok: false, error: 'Por ahora solo está habilitada la cadena Lider.' }
+  }
+
+  const urls = buildLiderCapturePlanUrls()
+  if (urls.length === 0) {
+    return {
+      ok: false,
+      error:
+        'No hay URLs de captura configuradas. Definí RETAIL_LIDER_BROWSE_URLS en el servidor o revisá la configuración por defecto.',
+    }
+  }
+
+  const ins = await insertRetailCaptureBatch(editor.admin, {
+    retailer,
+    total_pages: urls.length,
+  })
+  if ('error' in ins) {
+    return { ok: false, error: 'No se pudo crear el lote. Intenta nuevamente.' }
+  }
+
+  revalidatePath('/catalog')
+  return { ok: true, batchId: ins.id, totalPages: urls.length }
+}
+
+/** Procesa una sola página del lote (una petición HTTP acotada para Vercel). */
+export async function processRetailCaptureBatchPageAction(input: {
+  batchId: string
+}): Promise<
+  | {
+      ok: true
+      done: boolean
+      pageIndex: number
+      productsThisPage: number
+      nextPageIndex: number
+      totalPages: number
+      error?: string
+    }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) {
+    return { ok: false, error: editor.error }
+  }
+
+  const batch = await fetchRetailBatchById(editor.admin, input.batchId)
+  if (!batch) {
+    return { ok: false, error: 'No se encontró el lote de captura.' }
+  }
+  if (batch.retailer !== 'lider') {
+    return { ok: false, error: 'Este lote no corresponde a Lider.' }
+  }
+  if (batch.status === 'completed' || batch.status === 'cancelled') {
+    return {
+      ok: true,
+      done: true,
+      pageIndex: batch.current_page,
+      productsThisPage: 0,
+      nextPageIndex: batch.current_page,
+      totalPages: batch.total_pages ?? 0,
+    }
+  }
+
+  const urls = buildLiderCapturePlanUrls()
+  const totalPages = Math.min(batch.total_pages ?? urls.length, urls.length)
+  const idx = batch.current_page
+
+  if (idx >= totalPages || idx >= urls.length) {
+    await updateRetailBatchProgress(editor.admin, batch.id, {
+      status: 'completed',
+      finished_at: new Date().toISOString(),
+    })
+    revalidatePath('/catalog')
+    return {
+      ok: true,
+      done: true,
+      pageIndex: idx,
+      productsThisPage: 0,
+      nextPageIndex: idx,
+      totalPages,
+    }
+  }
+
+  const pageUrl = urls[idx]!
+  const cap = await captureLiderListingPage(pageUrl)
+  let pageError: string | undefined
+  let n = 0
+
+  if (!cap.ok) {
+    pageError = cap.error
+  } else {
+    const { snapshots, stagingRows } = cap.data
+    n = stagingRows.length
+
+    if (snapshots.length > 0) {
+      const chunk = 400
+      for (let i = 0; i < snapshots.length; i += chunk) {
+        const slice = snapshots.slice(i, i + chunk)
+        const { error: snapErr } = await editor.admin.from('catalog_retail_snapshots').insert(slice as never)
+        if (snapErr) {
+          pageError = getUserFriendlyErrorMessage(snapErr, 'generic')
+          break
+        }
+      }
+    }
+
+    if (!pageError && stagingRows.length > 0) {
+      const dbRows = stagingRows.map((r) => ({
+        batch_id: batch.id,
+        retailer: 'lider',
+        external_ref: r.external_ref,
+        source_url: r.source_url,
+        title: r.title,
+        normalized_title: r.normalized_title,
+        brand: r.brand,
+        normalized_brand: r.normalized_brand,
+        price: r.price,
+        unit_price: r.unit_price,
+        category_hint: r.category_hint,
+        description_hint: r.description_hint,
+        image_url: r.image_url,
+        raw_data: r.raw_data,
+        status: 'pending',
+      }))
+      const { error: upErr } = await editor.admin
+        .from('retail_captured_products')
+        .upsert(dbRows as never, { onConflict: 'batch_id,retailer,external_ref' })
+      if (upErr) {
+        pageError = getUserFriendlyErrorMessage(upErr, 'generic')
+      }
+    }
+  }
+
+  const nextIdx = idx + 1
+  const done = nextIdx >= totalPages
+  await updateRetailBatchProgress(editor.admin, batch.id, {
+    current_page: nextIdx,
+    total_found: batch.total_found + n,
+    total_inserted: batch.total_inserted + n,
+    status: done ? 'completed' : 'running',
+    finished_at: done ? new Date().toISOString() : null,
+    error_message: pageError ?? null,
+  })
+
+  revalidatePath('/catalog')
+  return {
+    ok: true,
+    done,
+    pageIndex: idx,
+    productsThisPage: n,
+    nextPageIndex: nextIdx,
+    totalPages,
+    error: pageError,
+  }
+}
+
+/** Homologa filas pendientes del staging (opcionalmente acotadas a un lote). */
+export async function runRetailHomologationAction(input?: {
+  batchId?: string | null
+  limit?: number
+}): Promise<
+  | { ok: true; processed: number }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) {
+    return { ok: false, error: editor.error }
+  }
+
+  const limit = Math.min(80, Math.max(1, Math.floor(input?.limit ?? 40)))
+  const { processed, batchIds } = await homologateRetailCapturedBatch(editor.admin, {
+    batchId: input?.batchId ?? null,
+    limit,
+  })
+
+  for (const bid of batchIds) {
+    await refreshRetailBatchHomologationStats(editor.admin, bid)
+  }
+
+  revalidatePath('/catalog')
+  return { ok: true, processed }
+}
+
+export async function fetchRetailBatchSummaryAction(input?: {
+  batchId?: string | null
+}): Promise<{ ok: true; batch: RetailCaptureBatchRow | null } | { ok: false; error: string }> {
+  const gate = await requireProfileViewer()
+  if (!gate.ok) {
+    return { ok: false, error: gate.error }
+  }
+
+  const supabase = await createClient()
+  if (input?.batchId) {
+    const { data, error } = await supabase.from('retail_capture_batches').select('*').eq('id', input.batchId).maybeSingle()
+    if (error) {
+      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    }
+    return { ok: true, batch: data as RetailCaptureBatchRow | null }
+  }
+
+  const { data, error } = await supabase
+    .from('retail_capture_batches')
+    .select('*')
+    .eq('retailer', 'lider')
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  }
+  return { ok: true, batch: data as RetailCaptureBatchRow | null }
+}
+
+export async function fetchRetailReviewQueueAction(input?: {
+  limit?: number
+}): Promise<{ ok: true; rows: RetailReviewQueueRow[] } | { ok: false; error: string }> {
+  const gate = await requireProfileViewer()
+  if (!gate.ok) {
+    return { ok: false, error: gate.error }
+  }
+
+  const lim = Math.min(100, Math.max(1, Math.floor(input?.limit ?? 50)))
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from('retail_captured_products')
+    .select('id,batch_id,retailer,external_ref,title,price,status,decision_reason,created_at')
+    .in('status', ['review', 'duplicate_risk'])
+    .eq('retailer', 'lider')
+    .order('created_at', { ascending: false })
+    .limit(lim)
+
+  if (error) {
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  }
+
+  return {
+    ok: true,
+    rows: (data ?? []) as RetailReviewQueueRow[],
   }
 }
