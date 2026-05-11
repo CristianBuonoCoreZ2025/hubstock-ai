@@ -1,14 +1,17 @@
 /**
  * OpenRouter solo para casos ambiguos de homologación retail (top candidatos ya calculados).
+ * Automático: solo modelos gratuitos de `OPENROUTER_RETAIL_MODEL_FREE` (fallback `openrouter/free`);
+ * modelos pagos solo si `RETAIL_AI_ALLOW_PAID_FALLBACK=1`.
  */
 
 import { parseModelJsonLoose } from '@/server/parse-model-json'
 import { openRouterChatText } from '@/server/openrouter-vision'
 import { shouldRetryVisionError } from '@/server/vision-retry'
+import { getOpenRouterPaidDocumentModels } from '@/server/vision-config'
 import {
-  getOpenRouterFreeDocumentModels,
-  getOpenRouterPaidDocumentModels,
-} from '@/server/vision-config'
+  getOpenRouterFreeRetailModels,
+  retailAiAllowPaidFallback,
+} from '@/server/retail/homologation/retail-ai-config'
 import type { RetailAiDecision } from '@/server/retail/capture/retail-types'
 
 type CandidateBrief = {
@@ -67,8 +70,12 @@ function buildUserPayload(captured: {
   )
 }
 
-async function tryModels(prompt: string): Promise<string> {
-  const free = getOpenRouterFreeDocumentModels()
+/**
+ * Retail automático: solo modelos gratuitos de `OPENROUTER_RETAIL_MODEL_FREE`
+ * (fallback `openrouter/free`). Modelos pagos solo si `RETAIL_AI_ALLOW_PAID_FALLBACK=1`.
+ */
+async function tryRetailHomologationModels(prompt: string): Promise<string> {
+  const free = getOpenRouterFreeRetailModels()
   let last: unknown
   for (const model of free) {
     try {
@@ -78,12 +85,14 @@ async function tryModels(prompt: string): Promise<string> {
       if (!shouldRetryVisionError(e)) throw e
     }
   }
-  for (const model of getOpenRouterPaidDocumentModels()) {
-    try {
-      return await openRouterChatText({ prompt, model })
-    } catch (e) {
-      last = e
-      if (!shouldRetryVisionError(e)) throw e
+  if (retailAiAllowPaidFallback()) {
+    for (const model of getOpenRouterPaidDocumentModels()) {
+      try {
+        return await openRouterChatText({ prompt, model })
+      } catch (e) {
+        last = e
+        if (!shouldRetryVisionError(e)) throw e
+      }
     }
   }
   throw last instanceof Error ? last : new Error('openrouter_failed')
@@ -160,7 +169,7 @@ ${buildUserPayload(input.captured, input.candidates)}`
 
   let text: string
   try {
-    text = await tryModels(prompt)
+    text = await tryRetailHomologationModels(prompt)
   } catch {
     return null
   }

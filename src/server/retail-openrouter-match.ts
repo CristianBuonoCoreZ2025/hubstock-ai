@@ -1,12 +1,17 @@
 /**
- * Homologación retail con OpenRouter (solo texto): mismo stack que boletas/documento.
- * Solo elige entre candidatos ya devueltos por la RPC; nunca inventa UUIDs fuera de la lista.
+ * Homologación retail automática con OpenRouter (solo texto).
+ * Modelos: lista gratuita retail (`OPENROUTER_RETAIL_MODEL_FREE`); pago solo si `RETAIL_AI_ALLOW_PAID_FALLBACK=1`.
+ * No usa las listas de documento/boleta salvo el fallback explícito de pago.
  */
 
 import { parseModelJsonLoose } from '@/server/parse-model-json'
 import { openRouterChatText } from '@/server/openrouter-vision'
 import { shouldRetryVisionError } from '@/server/vision-retry'
-import { getOpenRouterFreeDocumentModels, getOpenRouterPaidDocumentModels } from '@/server/vision-config'
+import { getOpenRouterPaidDocumentModels } from '@/server/vision-config'
+import {
+  getOpenRouterFreeRetailModels,
+  retailAiAllowPaidFallback,
+} from '@/server/retail/homologation/retail-ai-config'
 
 /** Activa la segunda pasada con modelo de lenguaje tras fallar la heurística local. */
 export function retailIaHomologationEnabled(): boolean {
@@ -135,7 +140,7 @@ ${JSON.stringify(input.candidates, null, 0)}`
 }
 
 async function tryOpenRouterDocumentModelsForRetail(prompt: string): Promise<string> {
-  const modelsFree = getOpenRouterFreeDocumentModels()
+  const modelsFree = getOpenRouterFreeRetailModels()
   let lastError: unknown
   for (const model of modelsFree) {
     try {
@@ -145,14 +150,16 @@ async function tryOpenRouterDocumentModelsForRetail(prompt: string): Promise<str
       if (!shouldRetryVisionError(e)) throw e
     }
   }
-  const modelsPaid = getOpenRouterPaidDocumentModels()
-  for (const model of modelsPaid) {
-    try {
-      return await openRouterChatText({ prompt, model })
-    } catch (e) {
-      lastError = e
-      if (!shouldRetryVisionError(e)) throw e
+  if (retailAiAllowPaidFallback()) {
+    const modelsPaid = getOpenRouterPaidDocumentModels()
+    for (const model of modelsPaid) {
+      try {
+        return await openRouterChatText({ prompt, model })
+      } catch (e) {
+        lastError = e
+        if (!shouldRetryVisionError(e)) throw e
+      }
     }
   }
-  throw lastError instanceof Error ? lastError : new Error('OpenRouter document models failed')
+  throw lastError instanceof Error ? lastError : new Error('OpenRouter retail automatic models failed')
 }
