@@ -1,46 +1,45 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle,
-  ChevronRight,
   CloudDownload,
   History,
   Link2,
   Link2Off,
   Loader2,
-  Play,
   RefreshCw,
-  ShieldAlert,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { CatalogTabHeader, CatalogSearchBox, SectionSearchCombo } from '@/app/(app)/catalog/catalog-ui'
+import { CatalogSearchBox, SectionSearchCombo } from '@/app/(app)/catalog/catalog-ui'
 import {
   fetchRetailBatchSummaryAction,
+  fetchRetailLiderReviewGroupsAction,
   fetchRetailListingsPage,
   fetchRetailMatchCandidatesAction,
   fetchRetailPriceHistory,
-  fetchRetailReviewQueueAction,
   importRetailSnapshotsFromJsonAction,
   linkRetailListingAction,
   autoAssociateUnlinkedRetailAction,
   bulkExactTitleRetailLinksAction,
   processRetailCaptureBatchPageAction,
   recaptureHomologatedLinkedAction,
-  runRetailCatalogSweepAction,
   runRetailHomologationAction,
   runRetailWebCaptureAction,
   startRetailCaptureBatchAction,
   unlinkRetailListingAction,
   type CaptureRetailer,
-  type RetailCatalogSweepOkResult,
   type RetailListingRow,
   type RetailMatchCandidate,
   type RetailHistoryRow,
   type RetailReviewQueueRow,
   type RetailCaptureBatchRow,
+  type RetailLiderReviewGroupSummary,
 } from '@/app/actions/catalog-retail'
+import { LiderMassCapturePanel } from '@/app/(app)/catalog/LiderMassCapturePanel'
+import { LiderTaxonomyMatrix } from '@/app/(app)/catalog/LiderTaxonomyMatrix'
 import { searchCatalogProductsForPickerAction } from '@/app/actions/catalog'
+import { fetchLiderRetailTaxonomyBlockingAction } from '@/app/actions/retail-taxonomy'
 import { GridRowIconButton } from '@/components/grid/grid-row-icon-button'
 import { GridPagingRow } from '@/components/grid/grid-paging-row'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
@@ -142,20 +141,14 @@ function formatRetailImportToast(
   return msg
 }
 
-const TOOLBAR_BTN = 'h-9 min-w-[200px] shrink-0'
+const TOOLBAR_BTN = 'h-9 min-w-[280px] shrink-0'
 
-function batchStatusLabel(s: string): string {
-  switch (s) {
-    case 'running':
-      return 'En ejecución'
-    case 'completed':
-      return 'Completado'
-    case 'cancelled':
-      return 'Cancelado'
-    default:
-      return s
-  }
-}
+/** Vista fijada a Lider (dashboard operativo). */
+const RETAILER_LIDER = 'lider' as const satisfies CaptureRetailer
+
+const PIPELINE_MAX_CAPTURE_STEPS = 8000
+const PIPELINE_MAX_HOMOLOG_ROUNDS = 600
+const PIPELINE_MAX_AUTO_ASSOC_ROUNDS = 48
 
 function reviewRowAsListing(r: RetailReviewQueueRow): RetailListingRow {
   return {
@@ -167,7 +160,7 @@ function reviewRowAsListing(r: RetailReviewQueueRow): RetailListingRow {
     price: Number(r.price ?? 0),
     category_hint: null,
     brand_hint: null,
-    description_hint: null,
+    description_hint: r.description_hint ?? null,
     captured_at: r.created_at,
     catalog_product_id: null,
     linked_product_name: null,
@@ -178,7 +171,6 @@ function reviewRowAsListing(r: RetailReviewQueueRow): RetailListingRow {
 export function RetailPricingTab(props: { sections: SectionOpt[]; categories: CategoryOpt[] }) {
   const { sections, categories } = props
 
-  const [retailerFilter, setRetailerFilter] = useState<string>('lider')
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
   const [searchDraft, setSearchDraft] = useState('')
   const [searchCommitted, setSearchCommitted] = useState('')
@@ -192,13 +184,21 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   const [batch, setBatch] = useState<RetailCaptureBatchRow | null>(null)
   const [batchLoading, setBatchLoading] = useState(true)
   const [batchActionBusy, setBatchActionBusy] = useState(false)
-  const [reviewRows, setReviewRows] = useState<RetailReviewQueueRow[]>([])
-  const [reviewLoading, setReviewLoading] = useState(false)
+  const [pipelineRunning, setPipelineRunning] = useState(false)
+  const [pipelineStatusText, setPipelineStatusText] = useState<string | null>(null)
+  const [pipelineDetailText, setPipelineDetailText] = useState<string | null>(null)
+  const [pipelineError, setPipelineError] = useState<string | null>(null)
+  const [liderPanelTick, setLiderPanelTick] = useState(0)
+  const [taxonomyBlocking, setTaxonomyBlocking] = useState(false)
+  const [reviewGroups, setReviewGroups] = useState<RetailLiderReviewGroupSummary[]>([])
+  const [advOpen, setAdvOpen] = useState(false)
+  const advancedDetailsRef = useRef<HTMLDetailsElement>(null)
+  const [productsDetailOpen, setProductsDetailOpen] = useState(false)
 
   const reloadList = useCallback(async () => {
     setLoading(true)
     const res = await fetchRetailListingsPage({
-      retailer: retailerFilter,
+      retailer: RETAILER_LIDER,
       unlinkedOnly,
       search: searchCommitted,
       page,
@@ -215,7 +215,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     setRows(res.rows)
     setTotal(res.total)
     setHasNext(res.hasNextPage)
-  }, [page, retailerFilter, searchCommitted, unlinkedOnly])
+  }, [page, searchCommitted, unlinkedOnly])
 
   const reloadBatch = useCallback(async () => {
     setBatchLoading(true)
@@ -228,17 +228,6 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     setBatch(res.batch)
   }, [])
 
-  const reloadReview = useCallback(async () => {
-    setReviewLoading(true)
-    const res = await fetchRetailReviewQueueAction({ limit: 40 })
-    setReviewLoading(false)
-    if (!res.ok) {
-      setReviewRows([])
-      return
-    }
-    setReviewRows(res.rows)
-  }, [])
-
   useEffect(() => {
     void reloadList()
   }, [reloadList])
@@ -248,8 +237,35 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   }, [reloadBatch])
 
   useEffect(() => {
+    let cancelled = false
+    async function loadGroups() {
+      if (!batch?.id) {
+        setReviewGroups([])
+        return
+      }
+      const res = await fetchRetailLiderReviewGroupsAction({ batchId: batch.id })
+      if (cancelled) return
+      if (!res.ok) {
+        setReviewGroups([])
+        return
+      }
+      setReviewGroups(res.groups)
+    }
+    void loadGroups()
+    return () => {
+      cancelled = true
+    }
+  }, [batch?.id, liderPanelTick])
+
+  useEffect(() => {
+    void fetchLiderRetailTaxonomyBlockingAction().then((r) => {
+      if (r.ok) setTaxonomyBlocking(r.blocking)
+    })
+  }, [liderPanelTick])
+
+  useEffect(() => {
     setPage(0)
-  }, [searchCommitted, retailerFilter, unlinkedOnly])
+  }, [searchCommitted, unlinkedOnly])
 
   const [recaptureBusy, setRecaptureBusy] = useState(false)
   const [autoAssocBusy, setAutoAssocBusy] = useState(false)
@@ -342,7 +358,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     setHomologRow(null)
     void reloadList()
     void reloadBatch()
-    void reloadReview()
+    setLiderPanelTick((x) => x + 1)
   }
 
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -351,20 +367,12 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   const [historyBusy, setHistoryBusy] = useState(false)
 
   const [captureOpen, setCaptureOpen] = useState(false)
-  const [captureRetailer, setCaptureRetailer] = useState<CaptureRetailer>('lider')
   const [captureQuery, setCaptureQuery] = useState('')
   const [captureMax, setCaptureMax] = useState(40)
   const [captureWebBusy, setCaptureWebBusy] = useState(false)
   const [jsonImportText, setJsonImportText] = useState('')
   const [jsonBaseUrl, setJsonBaseUrl] = useState('')
   const [jsonBusy, setJsonBusy] = useState(false)
-  const [sweepBusy, setSweepBusy] = useState(false)
-  const [storeForCapture, setStoreForCapture] = useState<CaptureRetailer>('lider')
-  const [sweepMax, setSweepMax] = useState(600)
-  const [captureEntireCatalog, setCaptureEntireCatalog] = useState(true)
-  const [sweepSearchTerm, setSweepSearchTerm] = useState('')
-  const [sweepSummaryOpen, setSweepSummaryOpen] = useState(false)
-  const [lastSweepSummary, setLastSweepSummary] = useState<RetailCatalogSweepOkResult | null>(null)
 
   async function openHistory(row: RetailListingRow) {
     setHistoryRow(row)
@@ -404,7 +412,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     }
     setCaptureWebBusy(true)
     const res = await runRetailWebCaptureAction({
-      retailer: captureRetailer,
+      retailer: RETAILER_LIDER,
       searchQuery: captureQuery,
       maxItems: captureMax,
     })
@@ -428,7 +436,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   async function submitJsonImport() {
     setJsonBusy(true)
     const res = await importRetailSnapshotsFromJsonAction({
-      retailer: captureRetailer,
+      retailer: RETAILER_LIDER,
       jsonText: jsonImportText,
       vtexBaseUrlOverride: jsonBaseUrl.trim() || null,
     })
@@ -450,13 +458,9 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   }
 
   async function submitRecaptureHomologated() {
-    if (retailerFilter === 'all') {
-      toast.error('Elige una cadena en el filtro (no «Todas») para actualizar precios homologados.')
-      return
-    }
     setRecaptureBusy(true)
     const res = await recaptureHomologatedLinkedAction({
-      retailer: retailerFilter as CaptureRetailer,
+      retailer: RETAILER_LIDER,
       limit: 30,
     })
     setRecaptureBusy(false)
@@ -473,7 +477,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   async function submitAutoAssociate() {
     setAutoAssocBusy(true)
     const res = await autoAssociateUnlinkedRetailAction({
-      retailerFilter: retailerFilter === 'all' ? 'all' : (retailerFilter as CaptureRetailer),
+      retailerFilter: RETAILER_LIDER,
       maxRows: 32,
     })
     setAutoAssocBusy(false)
@@ -489,13 +493,9 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
   }
 
   async function submitBulkExactHomologation() {
-    if (retailerFilter === 'all') {
-      toast.error('Elige una cadena en el filtro (no «Todas») para homologar por nombre exacto.')
-      return
-    }
     setExactBulkBusy(true)
     const res = await bulkExactTitleRetailLinksAction({
-      retailer: retailerFilter as CaptureRetailer,
+      retailer: RETAILER_LIDER,
     })
     setExactBulkBusy(false)
     if (!res.ok) {
@@ -509,51 +509,15 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     void reloadBatch()
   }
 
-  async function submitCatalogSweep() {
-    setSweepBusy(true)
-    const res = await runRetailCatalogSweepAction({
-      retailer: storeForCapture,
-      captureAll: captureEntireCatalog,
-      maxTotalItems: captureEntireCatalog ? undefined : sweepMax,
-      sweepSearchTerm: sweepSearchTerm.trim() || undefined,
-    })
-    setSweepBusy(false)
-    if (!res.ok) {
-      toast.error(res.error, { duration: 8000 })
-      return
-    }
-    setLastSweepSummary(res)
-    setSweepSummaryOpen(true)
-    toast.success(
-      formatRetailImportToast(
-        `Barrido listo: ${res.inserted} ítems nuevos en historial · ${res.pagesFetched} páginas.`,
-        res,
-      ),
-      { duration: 9000 },
-    )
-    void reloadList()
-    void reloadBatch()
-  }
-
-  async function onStartLiderBatch() {
-    setBatchActionBusy(true)
-    const res = await startRetailCaptureBatchAction({ retailer: 'lider' })
-    setBatchActionBusy(false)
-    if (!res.ok) {
-      toast.error(res.error)
-      return
-    }
-    toast.success(`Lote creado (${res.totalPages} páginas planificadas). Usa «Continuar batch» para avanzar.`)
-    await reloadBatch()
-  }
-
   async function onContinueBatch() {
     if (!batch?.id) {
       toast.error('No hay un lote reciente. Iniciá una captura primero.')
       return
     }
     if (batch.status === 'completed') {
-      toast.message('Este lote ya está completado. Podés iniciar uno nuevo.')
+      toast.message(
+        'La captura de páginas ya finalizó. Continuá con homologación desde la acción principal o el panel avanzado.',
+      )
       return
     }
     setBatchActionBusy(true)
@@ -572,6 +536,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     }
     await reloadBatch()
     void reloadList()
+    setLiderPanelTick((x) => x + 1)
   }
 
   async function onHomologatePending() {
@@ -585,21 +550,151 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
     toast.success(`Homologación: ${res.processed} filas procesadas.`)
     await reloadBatch()
     void reloadList()
-    void reloadReview()
+    setLiderPanelTick((x) => x + 1)
+  }
+
+  async function runLiderFullPipeline() {
+    if (pipelineRunning || batchActionBusy) return
+    if (taxonomyBlocking) {
+      toast.error(
+        'Hay categorías Lider pendientes de homologar. Completá el paso de taxonomía antes de crear productos o actualizar precios.',
+      )
+      return
+    }
+    setPipelineRunning(true)
+    setPipelineError(null)
+    setPipelineStatusText('Preparando…')
+    setPipelineDetailText(null)
+    setBatchActionBusy(true)
+    try {
+      setPipelineStatusText('Creando lote y plan de captura…')
+      const start = await startRetailCaptureBatchAction({ retailer: 'lider' })
+      if (!start.ok) {
+        setPipelineError(start.error)
+        toast.error(start.error)
+        return
+      }
+      setPipelineDetailText(
+        'Lectura nueva: se reemplazó el staging y los precios descargados previos de Lider. Los vínculos y el catálogo maestro no cambian.',
+      )
+      const batchId = start.batchId
+
+      setPipelineStatusText('Capturando listados…')
+      for (let i = 0; i < PIPELINE_MAX_CAPTURE_STEPS; i++) {
+        const res = await processRetailCaptureBatchPageAction({ batchId })
+        if (!res.ok) {
+          setPipelineError(res.error)
+          toast.error(res.error)
+          return
+        }
+        if (res.error) {
+          setPipelineError(res.error)
+          toast.error(res.error)
+        }
+        setPipelineDetailText(`Avance: ${res.nextPageIndex} / ${res.totalPages} páginas`)
+        await reloadBatch()
+        if (res.done) break
+      }
+
+      setPipelineStatusText('Homologando (URL, texto, reglas; IA solo en ambiguos)…')
+      setPipelineDetailText(null)
+      for (let j = 0; j < PIPELINE_MAX_HOMOLOG_ROUNDS; j++) {
+        const h = await runRetailHomologationAction({ batchId, limit: 80 })
+        if (!h.ok) {
+          setPipelineError(h.error)
+          toast.error(h.error)
+          return
+        }
+        await reloadBatch()
+        if (h.processed === 0) break
+      }
+
+      setPipelineStatusText('Homologación por nombre exacto…')
+      const exact = await bulkExactTitleRetailLinksAction({ retailer: RETAILER_LIDER })
+      if (!exact.ok) {
+        setPipelineError(exact.error)
+        toast.error(exact.error)
+      }
+
+      setPipelineStatusText('Asociación automática (candidatos seguros)…')
+      for (let k = 0; k < PIPELINE_MAX_AUTO_ASSOC_ROUNDS; k++) {
+        const a = await autoAssociateUnlinkedRetailAction({ retailerFilter: RETAILER_LIDER, maxRows: 40 })
+        if (!a.ok) break
+        await reloadBatch()
+        if (a.linked === 0) break
+      }
+
+      setPipelineStatusText('Completado')
+      setPipelineDetailText(null)
+      toast.success('Captura y análisis finalizados. Revisá solo las decisiones pendientes.')
+      setLiderPanelTick((x) => x + 1)
+      await reloadBatch()
+      void reloadList()
+    } finally {
+      setBatchActionBusy(false)
+      setPipelineRunning(false)
+    }
   }
 
   async function onRefreshView() {
     await reloadBatch()
     void reloadList()
-    void reloadReview()
+    setLiderPanelTick((x) => x + 1)
     toast.success('Vista actualizada.')
   }
 
-  async function onReviewRisks() {
-    await reloadReview()
-    const el = document.getElementById('retail-review-queue')
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
+  const metrics = useMemo(() => {
+    const captured = batch?.total_found ?? 0
+    const clean = batch?.total_inserted ?? 0
+    const discarded = batch?.capture_discarded_total ?? 0
+    const homologados = batch
+      ? batch.url_linked +
+        batch.exact_linked +
+        batch.rule_linked +
+        batch.ai_linked +
+        batch.new_master_created
+      : 0
+    const sinCambio = batch?.snapshot_skipped_same_price_total ?? 0
+    const preciosAct = batch?.snapshot_inserted_total ?? 0
+
+    let nuevosCandidatos = 0
+    let manualHom = 0
+    let descartables = 0
+    for (const g of reviewGroups) {
+      const n = g.product_count
+      const t = g.review_tray
+      if (t === 'new_master_candidate') nuevosCandidatos += n
+      else if (t === 'discarded_candidate') descartables += n
+      else if (
+        t === 'duplicate_risk' ||
+        t === 'format_conflict' ||
+        t === 'category_uncertain' ||
+        t === 'low_confidence'
+      ) {
+        manualHom += n
+      }
+    }
+
+    return [
+      { label: 'Capturados', value: captured },
+      { label: 'Limpios', value: clean },
+      { label: 'Descartados por limpieza', value: discarded },
+      { label: 'Homologados automáticos', value: homologados },
+      { label: 'Sin cambio de precio', value: sinCambio },
+      { label: 'Precios actualizados', value: preciosAct },
+      { label: 'Nuevos candidatos', value: nuevosCandidatos },
+      { label: 'Requieren homologación manual', value: manualHom },
+      { label: 'Descartables sugeridos', value: descartables },
+    ]
+  }, [batch, reviewGroups])
+
+  const pipelineHeadlineStatus = useMemo(() => {
+    if (pipelineError) return 'Con errores'
+    if (pipelineRunning) return 'Procesando'
+    if (pipelineStatusText === 'Completado') return 'Completado'
+    if (batch?.error_message) return 'Con advertencias'
+    return 'Listo'
+  }, [pipelineError, pipelineRunning, pipelineStatusText, batch?.error_message])
 
   const pagingMeta =
     total !== null ? (
@@ -611,9 +706,17 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
 
   return (
     <div className="space-y-4">
-      <CatalogTabHeader
-        title="Capturas retail"
-        description="Flujo principal para Lider: lotes paginados en servidor, staging, homologación y precios en el catálogo maestro."
+      <header className="space-y-1">
+        <p className="max-w-prose text-[13px] leading-snug text-muted-foreground">
+          Primero resolvé la taxonomía Lider contra el catálogo maestro. Después podés ejecutar la captura, la creación de
+          maestros y la actualización de precios en un solo paso.
+        </p>
+      </header>
+
+      <LiderTaxonomyMatrix
+        sections={sections}
+        refreshToken={liderPanelTick}
+        onBlockingChanged={(blocking) => setTaxonomyBlocking(blocking)}
       />
 
       {listLoadError ?
@@ -627,274 +730,215 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
       : null}
 
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[14px] font-semibold text-foreground">Lider — lote de captura</p>
-            <p className="mt-1 max-w-2xl text-[12px] leading-snug text-muted-foreground">
-              Cada paso descarga una sola página pública (acotado para Vercel), guarda staging, inserta historial de
-              precios y luego podés homologar pendientes con reglas e IA solo en casos ambiguos.
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Último batch</p>
-            <p className="mt-0.5 font-mono text-[11px] text-foreground">
-              {batchLoading ? '…' : batch?.id ?? '—'}
-            </p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Estado</p>
-            <p className="mt-0.5 font-medium text-foreground">
-              {batchLoading ? '…' : batch ? batchStatusLabel(batch.status) : 'Sin lotes'}
-            </p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Progreso página</p>
-            <p className="mt-0.5 text-foreground">
-              {batchLoading || !batch ?
-                '—'
-              : `${batch.current_page} / ${batch.total_pages ?? '—'}`}
-            </p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Productos capturados (lote)</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.total_inserted ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Homologados por URL</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.url_linked ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Homologados exactos</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.exact_linked ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Homologados por reglas</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.rule_linked ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Homologados por IA</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.ai_linked ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Nuevos maestros</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.new_master_created ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Pendientes de revisión</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.review_required ?? 0}</p>
-          </div>
-          <div className="rounded-md border border-border bg-muted/25 px-3 py-2 text-[12px]">
-            <p className="text-muted-foreground">Riesgo duplicado</p>
-            <p className="mt-0.5 font-medium tabular-nums">{batch?.duplicate_risk ?? 0}</p>
-          </div>
-        </div>
-
-        {batch?.error_message ?
-          <div
-            role="status"
-            className="mt-3 flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-foreground"
-          >
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
-            <span>{batch.error_message}</span>
-          </div>
-        : null}
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            className={TOOLBAR_BTN}
-            disabled={batchActionBusy}
-            onClick={() => void onStartLiderBatch()}
-          >
-            {batchActionBusy ?
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            : <Play className="h-4 w-4" aria-hidden />}
-            Iniciar captura Lider
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className={TOOLBAR_BTN}
-            disabled={batchActionBusy}
-            onClick={() => void onContinueBatch()}
-          >
-            <ChevronRight className="h-4 w-4" aria-hidden />
-            Continuar batch
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className={TOOLBAR_BTN}
-            disabled={batchActionBusy}
-            onClick={() => void onHomologatePending()}
-          >
-            <Link2 className="h-4 w-4" aria-hidden />
-            Homologar pendientes
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            disabled={batchActionBusy}
-            onClick={() => void onReviewRisks()}
-          >
-            <ShieldAlert className="h-4 w-4" aria-hidden />
-            Revisar riesgos
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            disabled={batchActionBusy}
-            onClick={() => void onRefreshView()}
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden />
-            Actualizar vista
-          </Button>
-        </div>
-      </div>
-
-      <div id="retail-review-queue" className="rounded-lg border border-border bg-muted/15 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[13px] font-medium text-foreground">Cola de revisión (Lider)</p>
-          {reviewLoading ?
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" aria-hidden />
+        <Button
+          type="button"
+          className={TOOLBAR_BTN}
+          disabled={pipelineRunning || batchActionBusy || taxonomyBlocking}
+          onClick={() => void runLiderFullPipeline()}
+        >
+          {pipelineRunning || batchActionBusy ?
+            <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" aria-hidden />
           : null}
-        </div>
-        {reviewRows.length === 0 ?
-          <p className="mt-2 text-[12px] text-muted-foreground">No hay ítems en revisión o riesgo duplicado.</p>
-        : <div className="relative mt-2 overflow-x-auto rounded-md border border-border bg-card">
-            <table className="w-full min-w-[640px] text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/40 text-left">
-                  <th className="p-2 font-medium">Estado</th>
-                  <th className="p-2 font-medium">Ítem</th>
-                  <th className="p-2 font-medium">Precio</th>
-                  <th className="p-2 font-medium text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {reviewRows.map((r) => (
-                  <tr key={r.id} className="border-b border-border last:border-0">
-                    <td className="p-2 text-[12px]">{r.status}</td>
-                    <td className="max-w-[280px] p-2 text-[13px] leading-snug">{r.title}</td>
-                    <td className="p-2 tabular-nums">${Number(r.price ?? 0).toFixed(0)}</td>
-                    <td className="p-2">
-                      <div className="flex justify-end">
-                        <GridRowIconButton
-                          label="Homologar manualmente"
-                          onClick={() => openHomolog(reviewRowAsListing(r))}
-                        >
-                          <Link2 />
-                        </GridRowIconButton>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        }
+          Crear productos y actualizar precios
+        </Button>
+        <p className="mt-3 max-w-prose text-[12px] leading-snug text-muted-foreground">
+          Crea el lote, descarga listados, homologa, enlaza candidatos seguros y actualiza precios cuando cambian. Este
+          botón permanece deshabilitado mientras existan categorías Lider pendientes, sugeridas sin aprobar o faltantes en
+          el bloque de taxonomía.
+        </p>
       </div>
 
-      <div className="rounded-lg border border-border bg-muted/20 p-4">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="min-w-[160px] space-y-1.5">
-            <Label className="text-[12px]">Ver capturas</Label>
-            <Select value={retailerFilter} onValueChange={setRetailerFilter}>
-              <SelectTrigger className="app-input h-9">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todas las cadenas</SelectItem>
-                <SelectItem value="lider">Lider</SelectItem>
-                <SelectItem value="jumbo">Jumbo</SelectItem>
-                <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 pb-2 text-[13px]">
-            <input
-              type="checkbox"
-              className="h-4 w-4 rounded border-input"
-              checked={unlinkedOnly}
-              onChange={(e) => setUnlinkedOnly(e.target.checked)}
-            />
-            Solo sin homologar
-          </label>
-          <div className="flex min-w-[min(100%,360px)] flex-[2] flex-col gap-1.5">
-            <Label className="text-[12px]">Buscar en listado</Label>
-            <CatalogSearchBox
-              value={searchDraft}
-              onChange={setSearchDraft}
-              onSubmit={() => {
-                setSearchCommitted(normalizeSearchText(searchDraft))
-              }}
-              placeholder="Nombre, referencia o rubro…"
-              ariaLabel="Buscar en listado retail"
-            />
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            disabled={recaptureBusy || retailerFilter === 'all'}
-            onClick={() => void submitRecaptureHomologated()}
-          >
-            {recaptureBusy ?
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            : <RefreshCw className="h-4 w-4" aria-hidden />}
-            Actualizar homologados
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            disabled={exactBulkBusy || autoAssocBusy || retailerFilter === 'all'}
-            onClick={() => void submitBulkExactHomologation()}
-          >
-            {exactBulkBusy ?
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            : <Link2 className="h-4 w-4" aria-hidden />}
-            Homologar nombre exacto
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            disabled={autoAssocBusy || exactBulkBusy}
-            onClick={() => void submitAutoAssociate()}
-          >
-            {autoAssocBusy ?
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-            : <Link2 className="h-4 w-4" aria-hidden />}
-            Asociar automático
-          </Button>
-        </div>
+      <div className="rounded-lg border border-border bg-muted/25 px-4 py-3">
+        <p className="text-[12px] font-medium text-muted-foreground">Estado</p>
+        <p className="mt-1 text-[15px] font-semibold text-foreground">{pipelineHeadlineStatus}</p>
+        {pipelineStatusText ?
+          <p className="mt-1 text-[13px] text-muted-foreground">{pipelineStatusText}</p>
+        : null}
+        {pipelineDetailText ?
+          <p className="mt-0.5 text-[12px] font-mono text-muted-foreground">{pipelineDetailText}</p>
+        : null}
+        {pipelineError ?
+          <p className="mt-2 text-[13px] text-destructive">{pipelineError}</p>
+        : null}
+        {!pipelineError && batch?.error_message ?
+          <p className="mt-2 text-[12px] text-amber-800 dark:text-amber-200">{batch.error_message}</p>
+        : null}
       </div>
 
-      <GridPagingRow
-        disablePrev={page <= 0 || loading}
-        disableNext={!hasNext || loading}
-        onPrev={() => setPage((p) => Math.max(0, p - 1))}
-        onNext={() => setPage((p) => p + 1)}
-        pageIndex={page}
-        pageSize={CATALOG_GRID_PAGE_SIZE}
-        metaSuffix={pagingMeta}
+      <div>
+        <p className="mb-2 text-[12px] font-medium text-muted-foreground">Resumen (último lote)</p>
+        <dl className="grid grid-cols-2 gap-3 border border-border bg-card px-3 py-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {metrics.map((m) => (
+            <div key={m.label}>
+              <dt className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{m.label}</dt>
+              <dd className="mt-1 text-lg font-semibold tabular-nums text-foreground">
+                {batchLoading && !batch ? '…' : m.value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+
+      <LiderMassCapturePanel
+        batch={batch}
+        batchActionBusy={batchActionBusy}
+        showDecisionTrays
+        showDebugToolbar={false}
+        refreshToken={liderPanelTick}
+        onContinueBatch={onContinueBatch}
+        onHomologate={onHomologatePending}
+        onRefreshAll={onRefreshView}
+        onBatchChanged={async () => {
+          await reloadBatch()
+          void reloadList()
+          setLiderPanelTick((x) => x + 1)
+        }}
+        onOpenHomolog={(r) => openHomolog(reviewRowAsListing(r))}
       />
 
-      <div className="relative overflow-x-auto rounded-lg border border-border bg-card">
-        {loading ?
-          <p className="border-b border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
-            Cargando…
+      <details
+        ref={advancedDetailsRef}
+        open={advOpen}
+        onToggle={(e) => setAdvOpen(e.currentTarget.open)}
+        className="rounded-lg border border-border bg-card"
+      >
+        <summary className="cursor-pointer px-4 py-3 text-[13px] font-medium text-foreground">
+          Herramientas avanzadas
+        </summary>
+        <div className="space-y-4 border-t border-border px-4 pb-4 pt-4 text-[13px]">
+          <LiderMassCapturePanel
+            batch={batch}
+            batchActionBusy={batchActionBusy}
+            showDecisionTrays={false}
+            showDebugToolbar
+            refreshToken={liderPanelTick}
+            onContinueBatch={onContinueBatch}
+            onHomologate={onHomologatePending}
+            onRefreshAll={onRefreshView}
+            onBatchChanged={async () => {
+              await reloadBatch()
+              void reloadList()
+              setLiderPanelTick((x) => x + 1)
+            }}
+            onOpenHomolog={(r) => openHomolog(reviewRowAsListing(r))}
+          />
+
+          <details className="rounded-md border border-dashed border-border/70 bg-muted/10">
+            <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-muted-foreground">
+              Diagnóstico técnico (semillas opcionales)
+            </summary>
+            <p className="mt-2 px-3 pb-3 text-[12px] leading-snug text-muted-foreground">
+              El plan principal usa sitemap, página de inicio y semillas internas; no requiere configuración. Las
+              variables <span className="font-mono text-[11px]">RETAIL_LIDER_STOREFRONT_BROWSE_URLS</span> o{' '}
+              <span className="font-mono text-[11px]">RETAIL_LIDER_BROWSE_URLS</span> son solo un refuerzo opcional en
+              servidor (rutas separadas por coma).
+            </p>
+          </details>
+
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className={TOOLBAR_BTN}
+                disabled={recaptureBusy}
+                onClick={() => void submitRecaptureHomologated()}
+              >
+                {recaptureBusy ?
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                : <RefreshCw className="h-4 w-4" aria-hidden />}
+                Actualizar homologados
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={TOOLBAR_BTN}
+                disabled={exactBulkBusy || autoAssocBusy}
+                onClick={() => void submitBulkExactHomologation()}
+              >
+                {exactBulkBusy ?
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                : <Link2 className="h-4 w-4" aria-hidden />}
+                Homologar nombre exacto
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className={TOOLBAR_BTN}
+                disabled={autoAssocBusy || exactBulkBusy}
+                onClick={() => void submitAutoAssociate()}
+              >
+                {autoAssocBusy ?
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                : <Link2 className="h-4 w-4" aria-hidden />}
+                Asociar automático
+              </Button>
+            </div>
+          </div>
+
+          <p className="rounded-md border border-border bg-muted/15 px-3 py-2 text-[12px] text-muted-foreground">
+            Otras cadenas (Jumbo, Central Mayorista): sin flujo automático en esta pantalla por ahora.
           </p>
-        : null}
-        <table className="w-full min-w-[920px] text-sm">
+
+          <div className="rounded-md border border-border p-3">
+            <p className="mb-2 text-[12px] font-medium">JSON o búsqueda puntual en tienda</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" className="h-9" onClick={() => setCaptureOpen(true)}>
+                Abrir importación / búsqueda
+              </Button>
+            </div>
+          </div>
+
+      <details
+        open={productsDetailOpen}
+        onToggle={(e) => setProductsDetailOpen(e.currentTarget.open)}
+        className="rounded-lg border border-border bg-card"
+      >
+        <summary className="cursor-pointer px-4 py-3 text-[13px] font-medium text-foreground">
+          Detalle de productos
+        </summary>
+        <div className="space-y-4 border-t border-border px-4 pb-4 pt-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex cursor-pointer items-center gap-2 pb-2 text-[13px]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-input"
+                checked={unlinkedOnly}
+                onChange={(e) => setUnlinkedOnly(e.target.checked)}
+              />
+              Solo sin homologar
+            </label>
+            <div className="flex min-w-[min(100%,360px)] flex-[2] flex-col gap-1.5">
+              <Label className="text-[12px]">Buscar en listado</Label>
+              <CatalogSearchBox
+                value={searchDraft}
+                onChange={setSearchDraft}
+                onSubmit={() => {
+                  setSearchCommitted(normalizeSearchText(searchDraft))
+                }}
+                placeholder="Nombre, referencia o rubro…"
+                ariaLabel="Buscar en listado retail"
+              />
+            </div>
+          </div>
+
+          <GridPagingRow
+            disablePrev={page <= 0 || loading}
+            disableNext={!hasNext || loading}
+            onPrev={() => setPage((p) => Math.max(0, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+            pageIndex={page}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={pagingMeta}
+          />
+
+          <div className="relative overflow-x-auto rounded-lg border border-border bg-card">
+            {loading ?
+              <p className="border-b border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+                Cargando…
+              </p>
+            : null}
+            <table className="w-full min-w-[920px] text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/40 text-left">
               <th className="p-3 font-medium">Cadena</th>
@@ -970,97 +1014,17 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
         </table>
       </div>
 
-      <GridPagingRow
-        disablePrev={page <= 0 || loading}
-        disableNext={!hasNext || loading}
-        onPrev={() => setPage((p) => Math.max(0, p - 1))}
-        onNext={() => setPage((p) => p + 1)}
-        pageIndex={page}
-        pageSize={CATALOG_GRID_PAGE_SIZE}
-        metaSuffix={pagingMeta}
-      />
-
-      <details className="rounded-lg border border-dashed border-border/80 bg-card/60 p-4">
-        <summary className="cursor-pointer text-[13px] font-medium text-foreground">
-          Herramientas avanzadas (JSON, barrido legacy, búsqueda puntual)
-        </summary>
-        <div className="mt-4 space-y-6 text-[13px]">
-          <div className="rounded-md border border-border bg-muted/20 p-3">
-            <p className="mb-2 text-[12px] font-medium">Barrido legacy por tienda (VTEX / HTML masivo)</p>
-            <div className="flex flex-wrap items-end gap-3">
-              <div className="min-w-[180px] space-y-1.5">
-                <Label className="text-[12px]">Tienda</Label>
-                <Select
-                  value={storeForCapture}
-                  onValueChange={(v) => setStoreForCapture(v as CaptureRetailer)}
-                >
-                  <SelectTrigger className="app-input h-9">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="jumbo">Jumbo</SelectItem>
-                    <SelectItem value="lider">Lider</SelectItem>
-                    <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="min-w-[200px] max-w-[280px] flex-1 space-y-1.5">
-                <Label className="text-[12px]">Término de barrido</Label>
-                <Input
-                  className="app-input h-9 font-mono text-[13px]"
-                  placeholder="Vacío = valor por defecto del servidor"
-                  value={sweepSearchTerm}
-                  onChange={(e) => setSweepSearchTerm(e.target.value)}
-                />
-              </div>
-              <label className="flex max-w-[220px] cursor-pointer items-start gap-2 pb-1 text-[13px] leading-snug">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 h-4 w-4 rounded border-input"
-                  checked={captureEntireCatalog}
-                  onChange={(e) => setCaptureEntireCatalog(e.target.checked)}
-                />
-                <span>Barrido completo</span>
-              </label>
-              {!captureEntireCatalog ?
-                <div className="min-w-[120px] space-y-1.5">
-                  <Label className="text-[12px]">Máximo ítems</Label>
-                  <Input
-                    className="app-input h-9"
-                    type="number"
-                    min={50}
-                    max={50000}
-                    step={50}
-                    value={sweepMax}
-                    onChange={(e) =>
-                      setSweepMax(Math.min(50_000, Math.max(50, Number(e.target.value) || 600)))
-                    }
-                  />
-                </div>
-              : null}
-              <Button
-                type="button"
-                variant="outline"
-                className="h-9 gap-2"
-                disabled={sweepBusy}
-                onClick={() => void submitCatalogSweep()}
-              >
-                {sweepBusy ?
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-                : <CloudDownload className="h-4 w-4" aria-hidden />}
-                Ejecutar barrido legacy
-              </Button>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-border p-3">
-            <p className="mb-2 text-[12px] font-medium">JSON o búsqueda puntual en tienda</p>
-            <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="outline" className="h-9" onClick={() => setCaptureOpen(true)}>
-                Abrir importación / búsqueda
-              </Button>
-            </div>
-          </div>
+          <GridPagingRow
+            disablePrev={page <= 0 || loading}
+            disableNext={!hasNext || loading}
+            onPrev={() => setPage((p) => Math.max(0, p - 1))}
+            onNext={() => setPage((p) => p + 1)}
+            pageIndex={page}
+            pageSize={CATALOG_GRID_PAGE_SIZE}
+            metaSuffix={pagingMeta}
+          />
+        </div>
+      </details>
         </div>
       </details>
 
@@ -1261,19 +1225,9 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
           </DialogHeader>
 
           <div className="space-y-4 text-[13px]">
-            <div className="space-y-1.5">
-              <Label className="text-[12px]">Cadena</Label>
-              <Select value={captureRetailer} onValueChange={(v) => setCaptureRetailer(v as CaptureRetailer)}>
-                <SelectTrigger className="app-input h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="jumbo">Jumbo</SelectItem>
-                  <SelectItem value="lider">Lider</SelectItem>
-                  <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <p className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[12px] text-muted-foreground">
+              Cadena fija: <span className="font-medium text-foreground">Lider</span> (super.lider.cl).
+            </p>
 
             <div className="rounded-md border border-border bg-muted/20 p-3">
               <p className="mb-2 text-[12px] font-medium">Búsqueda en la tienda</p>
@@ -1319,7 +1273,7 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
                   <Label className="text-[12px]">URL base del sitio (opcional)</Label>
                   <Input
                     className="app-input h-9 font-mono text-[12px]"
-                    placeholder={captureJsonBasePlaceholder(captureRetailer)}
+                    placeholder={captureJsonBasePlaceholder(RETAILER_LIDER)}
                     value={jsonBaseUrl}
                     onChange={(e) => setJsonBaseUrl(e.target.value)}
                   />
@@ -1352,32 +1306,6 @@ export function RetailPricingTab(props: { sections: SectionOpt[]; categories: Ca
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setCaptureOpen(false)}>
-              Cerrar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={sweepSummaryOpen} onOpenChange={setSweepSummaryOpen}>
-        <DialogContent className="max-h-[min(92vh,680px)] max-w-lg overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Resumen del barrido legacy</DialogTitle>
-            <DialogDescription>Resultado de la última corrida masiva.</DialogDescription>
-          </DialogHeader>
-          {lastSweepSummary ?
-            <div className="space-y-4 text-[13px]">
-              <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 text-[12px]">
-                <dt className="text-muted-foreground">Cadena</dt>
-                <dd className="text-right font-medium">{retailerLabel(lastSweepSummary.retailer)}</dd>
-                <dt className="text-muted-foreground">Páginas descargadas</dt>
-                <dd className="text-right">{lastSweepSummary.pagesFetched}</dd>
-                <dt className="text-muted-foreground">Ítems nuevos guardados</dt>
-                <dd className="text-right font-semibold">{lastSweepSummary.inserted}</dd>
-              </dl>
-            </div>
-          : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSweepSummaryOpen(false)}>
               Cerrar
             </Button>
           </DialogFooter>

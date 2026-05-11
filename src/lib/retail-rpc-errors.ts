@@ -57,3 +57,30 @@ export function messageForRetailSnapshotInsertFailure(err: unknown): string {
 
   return getUserFriendlyErrorMessage(err, 'generic')
 }
+
+/** Crear lote de captura Lider (`retail_capture_batches`). */
+export function messageForRetailCaptureBatchCreateFailure(err: unknown): string {
+  if (isPermissionError(err)) {
+    return 'No se pudo registrar el lote en la base de datos. Revisa que el servidor use SUPABASE_SERVICE_ROLE_KEY y que existan permisos sobre las tablas retail_capture_batches (migración del proyecto).'
+  }
+
+  const any = err as { code?: string; message?: string; details?: string }
+  const msg = `${any?.message ?? ''} ${any?.details ?? ''}`.toLowerCase()
+  const code = String(any?.code ?? '')
+
+  if (
+    code === '42P01' ||
+    code === 'PGRST205' ||
+    msg.includes('does not exist') ||
+    msg.includes('no existe la relación') ||
+    (msg.includes('schema cache') && msg.includes('retail_capture_batches'))
+  ) {
+    return 'Falta crear las tablas de captura por lotes en Supabase. Aplica la migración que define retail_capture_batches (carpeta supabase/migrations) y vuelve a intentar.'
+  }
+
+  if (msg.includes('jwt') || msg.includes('invalid api key')) {
+    return 'La clave del servidor hacia Supabase no es válida. Revisa SUPABASE_SERVICE_ROLE_KEY y NEXT_PUBLIC_SUPABASE_URL.'
+  }
+
+  return getUserFriendlyErrorMessage(err, 'generic')
+}

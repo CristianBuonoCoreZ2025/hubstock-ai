@@ -19,12 +19,20 @@ export type RetailCaptureBatchRow = {
   error_message: string | null
   started_at: string
   finished_at: string | null
+  /** capture | processing | review | closed — flujo UI Lider masivo. */
+  pipeline_phase?: string
+  /** Filas nuevas insertadas en catalog_retail_snapshots en este lote (precio distinto al último). */
+  snapshot_inserted_total?: number
+  /** Omisiones por precio idéntico al último snapshot (no se inserta duplicado). */
+  snapshot_skipped_same_price_total?: number
+  /** Ítems descartados en captura (calidad / basura). */
+  capture_discarded_total?: number
 }
 
 export async function insertRetailCaptureBatch(
   admin: SupabaseClient,
   input: { retailer: string; total_pages: number },
-): Promise<{ id: string } | { error: string }> {
+): Promise<{ id: string } | { error: unknown }> {
   const { data, error } = await admin
     .from('retail_capture_batches')
     .insert({
@@ -32,12 +40,13 @@ export async function insertRetailCaptureBatch(
       status: 'running',
       current_page: 0,
       total_pages: input.total_pages,
+      pipeline_phase: 'capture',
     } as never)
     .select('id')
     .single()
 
   if (error || !data) {
-    return { error: error?.message ?? 'insert_batch_failed' }
+    return { error: error ?? new Error('insert_batch_no_row') }
   }
   return { id: (data as { id: string }).id }
 }
@@ -74,11 +83,16 @@ export async function updateRetailBatchProgress(
     Pick<
       RetailCaptureBatchRow,
       | 'current_page'
+      | 'total_pages'
       | 'total_found'
       | 'total_inserted'
       | 'status'
       | 'error_message'
       | 'finished_at'
+      | 'pipeline_phase'
+      | 'snapshot_inserted_total'
+      | 'snapshot_skipped_same_price_total'
+      | 'capture_discarded_total'
     >
   >,
 ): Promise<void> {

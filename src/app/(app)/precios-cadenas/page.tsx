@@ -35,13 +35,17 @@ export default async function PreciosCadenasPage() {
         </p>
       : null}
 
-      <p className="mb-6 text-[13px] text-muted-foreground">
-        Herramienta de administración para nutrir precios desde tiendas y homologarlos al{' '}
-        <Link href="/catalog" className="text-primary underline underline-offset-2">
-          catálogo maestro
-        </Link>
-        .
-      </p>
+      <header className="app-page-header mb-6">
+        <h1 className="app-page-title">Captura retail Lider</h1>
+        <p className="app-page-lead max-w-prose">
+          Un botón ejecuta captura y análisis. Las decisiones finales quedan agrupadas abajo. El catálogo maestro está
+          en{' '}
+          <Link href="/catalog" className="text-primary underline underline-offset-2">
+            Catálogo
+          </Link>
+          .
+        </p>
+      </header>
 
       <RetailPricingTab
         sections={(sections ?? []) as SectionRow[]}

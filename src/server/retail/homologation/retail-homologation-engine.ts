@@ -6,10 +6,16 @@ import {
 } from '@/lib/retail-association'
 import { getUserFriendlyErrorMessage, isUniqueViolation } from '@/lib/user-friendly-errors'
 import { normalizeSearchText } from '@/lib/search'
+import {
+  buildRetailReviewGroupKey,
+  inferRetailLiderReviewTrayFromReason,
+  type RetailLiderReviewTray,
+} from '@/lib/retail-lider-review-tray'
 import type { RetailAiDecision, RetailHomologationCounters } from '@/server/retail/capture/retail-types'
 import { normalizeRetailCapturedInput } from '@/server/retail/normalize/normalize-retail-product'
 import { resolveRetailHomologationWithOpenRouter } from '@/server/retail/homologation/retail-ai-resolver'
 import { retailFormatsCompatible, scoreRetailCandidates } from '@/server/retail/homologation/retail-score'
+import { resolveLinkedLiderTaxonomyForCapture } from '@/server/retail/taxonomy/lider-taxonomy-service'
 
 const AUTO_LINK_MIN = 0.88
 const NEW_MASTER_MIN = 0.92
@@ -173,23 +179,6 @@ function twoTopAreClose(scored: { match_score: number }[]): boolean {
   return a >= 0.55 && b >= 0.55 && Math.abs(a - b) <= AMBIGUOUS_GAP
 }
 
-async function pickDefaultCategory(admin: SupabaseClient): Promise<{
-  section_id: string
-  category_id: string
-} | null> {
-  const { data } = await admin
-    .from('categories')
-    .select('id, section_id')
-    .order('sort_order', { ascending: true })
-    .limit(1)
-    .maybeSingle()
-  if (!data) return null
-  return {
-    category_id: (data as { id: string }).id,
-    section_id: (data as { section_id: string }).section_id,
-  }
-}
-
 async function hasSimilarActiveMaster(
   admin: SupabaseClient,
   title: string,
@@ -228,7 +217,26 @@ async function createMasterFromCapture(
   confidence: number,
   reason: string,
 ): Promise<{ ok: true; id: string } | { ok: false }> {
-  const cat = await pickDefaultCategory(admin)
+  let cat: { section_id: string; category_id: string } | null = null
+  if (row.retailer === 'lider') {
+    cat = await resolveLinkedLiderTaxonomyForCapture(admin, {
+      source_url: row.source_url,
+      category_hint: row.category_hint,
+    })
+  } else {
+    const { data } = await admin
+      .from('categories')
+      .select('id, section_id')
+      .order('sort_order', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      cat = {
+        category_id: (data as { id: string }).id,
+        section_id: (data as { section_id: string }).section_id,
+      }
+    }
+  }
   if (!cat) return { ok: false }
   const dup = await hasSimilarActiveMaster(admin, row.title, row.brand)
   if (dup) return { ok: false }
@@ -304,8 +312,24 @@ async function applyLink(
       decision_source: source,
       decision_confidence: confidence,
       decision_reason: reason,
+      review_tray: null,
+      group_key: null,
+      suggested_master_id: null,
     } as never)
     .eq('id', row.id)
+}
+
+function suggestedMasterFromReviewExtra(extra?: {
+  suggested?: string | null
+  candidates?: unknown
+}): string | null {
+  if (extra?.suggested) return extra.suggested
+  const c = extra?.candidates
+  if (Array.isArray(c) && c.length > 0) {
+    const first = c[0] as { catalog_product_id?: string }
+    if (first?.catalog_product_id) return String(first.catalog_product_id)
+  }
+  return null
 }
 
 async function applyReview(
@@ -314,6 +338,14 @@ async function applyReview(
   reason: string,
   extra?: { suggested?: string | null; candidates?: unknown; decision?: string; confidence?: number },
 ): Promise<void> {
+  const tray: RetailLiderReviewTray = inferRetailLiderReviewTrayFromReason(reason)
+  const suggested = suggestedMasterFromReviewExtra(extra)
+  const groupKey = buildRetailReviewGroupKey({
+    tray,
+    suggestedMasterId: suggested,
+    reasonSnippet: reason,
+  })
+
   await admin
     .from('retail_captured_products')
     .update({
@@ -321,6 +353,9 @@ async function applyReview(
       decision_source: 'engine',
       decision_confidence: extra?.confidence ?? null,
       decision_reason: reason,
+      review_tray: tray,
+      group_key: groupKey,
+      suggested_master_id: suggested,
     } as never)
     .eq('id', row.id)
 
@@ -346,12 +381,27 @@ async function applyDuplicateRisk(
   reason: string,
   candidates: unknown,
 ): Promise<void> {
+  const suggested =
+    Array.isArray(candidates) && candidates.length > 0 ?
+      String((candidates[0] as { catalog_product_id?: string }).catalog_product_id ?? '')
+    : null
+  const suggestedId = suggested && suggested.length > 0 ? suggested : null
+  const tray: RetailLiderReviewTray = 'duplicate_risk'
+  const groupKey = buildRetailReviewGroupKey({
+    tray,
+    suggestedMasterId: suggestedId,
+    reasonSnippet: reason,
+  })
+
   await admin
     .from('retail_captured_products')
     .update({
       status: 'duplicate_risk',
       decision_source: 'engine',
       decision_reason: reason,
+      review_tray: tray,
+      group_key: groupKey,
+      suggested_master_id: suggestedId,
     } as never)
     .eq('id', row.id)
 
@@ -361,7 +411,7 @@ async function applyDuplicateRisk(
     title: row.title,
     brand: row.brand,
     price: row.price,
-    suggested_catalog_product_id: null,
+    suggested_catalog_product_id: suggestedId,
     decision: 'duplicate_risk',
     confidence: null,
     reason,
@@ -553,6 +603,13 @@ async function applyAiDecision(
   meta: Map<string, CatalogMini>,
 ): Promise<keyof RetailHomologationCounters | 'none'> {
   if (ai.decision === 'duplicate_risk') {
+    const tray: RetailLiderReviewTray = 'duplicate_risk'
+    const suggested = ai.catalog_product_id ? String(ai.catalog_product_id) : null
+    const groupKey = buildRetailReviewGroupKey({
+      tray,
+      suggestedMasterId: suggested,
+      reasonSnippet: ai.reason,
+    })
     await admin
       .from('retail_captured_products')
       .update({
@@ -560,6 +617,9 @@ async function applyAiDecision(
         decision_source: 'ai',
         decision_confidence: ai.confidence,
         decision_reason: ai.reason,
+        review_tray: tray,
+        group_key: groupKey,
+        suggested_master_id: suggested,
       } as never)
       .eq('id', row.id)
     await admin.from('retail_ai_match_reviews').insert({
@@ -578,6 +638,13 @@ async function applyAiDecision(
   }
 
   if (ai.decision === 'review' || ai.confidence < AUTO_LINK_MIN) {
+    const tray = inferRetailLiderReviewTrayFromReason(ai.reason)
+    const suggested = ai.catalog_product_id ? String(ai.catalog_product_id) : null
+    const groupKey = buildRetailReviewGroupKey({
+      tray,
+      suggestedMasterId: suggested,
+      reasonSnippet: ai.reason,
+    })
     await admin
       .from('retail_captured_products')
       .update({
@@ -585,6 +652,9 @@ async function applyAiDecision(
         decision_source: 'ai',
         decision_confidence: ai.confidence,
         decision_reason: ai.reason,
+        review_tray: tray,
+        group_key: groupKey,
+        suggested_master_id: suggested,
       } as never)
       .eq('id', row.id)
     await admin.from('retail_ai_match_reviews').insert({
@@ -656,9 +726,16 @@ async function applyAiDecision(
     }
     const created = await createMasterFromCapture(admin, row, ai.confidence, ai.reason)
     if (!created.ok) {
-      await applyReview(admin, row, 'No se creó maestro: posible duplicado o datos incompletos.', {
-        confidence: ai.confidence,
-      })
+      await applyReview(
+        admin,
+        row,
+        row.retailer === 'lider' ?
+          'Taxonomía Lider no resuelta para esta ruta, o posible duplicado. Vinculá sección/categoría en el paso de taxonomía antes de crear maestros.'
+        : 'No se creó maestro: posible duplicado o datos incompletos.',
+        {
+          confidence: ai.confidence,
+        },
+      )
       return 'review_required'
     }
     await applyLink(admin, row, created.id, 'new_master', ai.confidence, ai.reason)
