@@ -1,7 +1,15 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { CloudDownload, History, Link2, Link2Off, Loader2 } from 'lucide-react'
+import {
+  CloudDownload,
+  History,
+  Link2,
+  Link2Off,
+  Loader2,
+  RefreshCw,
+  TriangleAlert,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import {
   CatalogTabHeader,
@@ -9,18 +17,25 @@ import {
 } from '@/app/(app)/catalog/catalog-ui'
 import {
   fetchRetailListingsPage,
+  bulkExactTitleRetailLinksAction,
   fetchRetailMatchCandidatesAction,
   fetchRetailPriceHistory,
   importRetailSnapshotsFromJsonAction,
   linkRetailListingAction,
+  autoAssociateUnlinkedRetailAction,
+  recaptureHomologatedLinkedAction,
+  runRetailCatalogSweepAction,
   runRetailWebCaptureAction,
   unlinkRetailListingAction,
   type CaptureRetailer,
+  type RetailCatalogSweepOkResult,
   type RetailListingRow,
   type RetailMatchCandidate,
   type RetailHistoryRow,
 } from '@/app/actions/catalog-retail'
+import { retailerDefinition } from '@/server/retail-capture/retailer-registry'
 import { searchCatalogProductsForPickerAction } from '@/app/actions/catalog'
+import { GridRowIconButton } from '@/components/grid/grid-row-icon-button'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
 import { normalizeSearchText } from '@/lib/search'
 import { Button } from '@/components/ui/button'
@@ -59,6 +74,81 @@ function retailerLabel(code: string): string {
   return m[code] ?? code
 }
 
+function captureJsonBasePlaceholder(retailer: CaptureRetailer): string {
+  switch (retailer) {
+    case 'jumbo':
+      return 'https://www.jumbo.cl'
+    case 'lider':
+      return 'https://super.lider.cl (o RETAIL_LIDER_VTEX_BASE_URL)'
+    case 'central_mayorista':
+      return 'URL pública del sitio (o RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL)'
+    default:
+      return 'https://www.jumbo.cl'
+  }
+}
+
+function formatRetailImportToast(
+  base: string,
+  res: {
+    exactTitleLinked?: number
+    exactTitleSkippedAmbiguousCatalog?: number
+    exactTitleSkippedNoCatalogProduct?: number
+    exactTitleSkippedHeuristic?: number
+    autoLinked: number
+    autoLinkedByAi?: number
+    autoAssociateCapped: boolean
+    autoAssociateAttempted?: number
+    autoAssociateFailed?: number
+    autoAssociateSkippedNoMatch?: number
+    autoAssociateDisabled?: boolean
+  },
+): string {
+  let msg = base
+
+  const exL = res.exactTitleLinked ?? 0
+  const exAmb = res.exactTitleSkippedAmbiguousCatalog ?? 0
+  const exNo = res.exactTitleSkippedNoCatalogProduct ?? 0
+  const exHeu = res.exactTitleSkippedHeuristic ?? 0
+
+  if (exL > 0 || exAmb > 0 || exNo > 0 || exHeu > 0) {
+    msg += ` Mismo nombre en catálogo: ${exL} vínculos nuevos.`
+    const detail: string[] = []
+    if (exAmb > 0) detail.push(`${exAmb} nombre repetido en maestros`)
+    if (exHeu > 0) detail.push(`${exHeu} pendientes por marca u otras reglas`)
+    if (exNo > 0) detail.push(`${exNo} sin maestro con ese nombre`)
+    if (detail.length > 0) {
+      msg += ` (${detail.join('; ')}).`
+    }
+  }
+
+  if (res.autoAssociateDisabled) {
+    msg +=
+      ' Paso automático de similitud desactivado en el servidor. Usa «Asociar automático» después si lo habilitas.'
+    return msg
+  }
+
+  const attempted = res.autoAssociateAttempted ?? 0
+  if (attempted === 0) {
+    return msg
+  }
+
+  const aiN = res.autoLinkedByAi ?? 0
+  const heuristicN = Math.max(0, res.autoLinked - aiN)
+  msg += ` Enlaces automáticos: ${res.autoLinked} (${heuristicN} por reglas${aiN > 0 ? `, ${aiN} por IA` : ''}), hasta ${attempted} ítems sin vínculo revisados.`
+  const skipped = res.autoAssociateSkippedNoMatch ?? 0
+  const failed = res.autoAssociateFailed ?? 0
+  if (skipped > 0) {
+    msg += ` ${skipped} sin coincidencia clara.`
+  }
+  if (failed > 0) {
+    msg += ` ${failed} con error.`
+  }
+  if (res.autoAssociateCapped) {
+    msg += ' Se cortó el lote por rendimiento; puedes repetir «Asociar automático».'
+  }
+  return msg
+}
+
 function useDebouncedValue<T>(value: T, delayMs: number): T {
   const [debounced, setDebounced] = useState(value)
   useEffect(() => {
@@ -74,7 +164,16 @@ export function RetailPricingTab(props: {
 }) {
   const { sections, categories } = props
 
-  const [retailerFilter, setRetailerFilter] = useState<string>('all')
+  const [retailerFilter, setRetailerFilter] = useState<string>('jumbo')
+  const [storeForCapture, setStoreForCapture] = useState<CaptureRetailer>('jumbo')
+  const [sweepMax, setSweepMax] = useState(600)
+  /** Por defecto paginar hasta que la API corte (tope interno 1M ítems); si no, máximo manual. */
+  const [captureEntireCatalog, setCaptureEntireCatalog] = useState(true)
+  /** Vacío = servidor usa RETAIL_VTEX_SWEEP_SEARCH_TERM o *. Muchas VTEX no aceptan * y devuelven HTML. */
+  const [sweepSearchTerm, setSweepSearchTerm] = useState('')
+  const [sweepBusy, setSweepBusy] = useState(false)
+  const [sweepSummaryOpen, setSweepSummaryOpen] = useState(false)
+  const [lastSweepSummary, setLastSweepSummary] = useState<RetailCatalogSweepOkResult | null>(null)
   const [unlinkedOnly, setUnlinkedOnly] = useState(false)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebouncedValue(search, 400)
@@ -83,6 +182,7 @@ export function RetailPricingTab(props: {
   const [total, setTotal] = useState<number | null>(null)
   const [hasNext, setHasNext] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [listLoadError, setListLoadError] = useState<string | null>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -94,17 +194,20 @@ export function RetailPricingTab(props: {
     })
     setLoading(false)
     if (!res.ok) {
-      toast.error(res.error)
+      setListLoadError(res.error)
       setRows([])
       setTotal(null)
       setHasNext(false)
       return
     }
+    setListLoadError(null)
     setRows(res.rows)
     setTotal(res.total)
     setHasNext(res.hasNextPage)
   }, [debouncedSearch, page, retailerFilter, unlinkedOnly])
 
+  /* eslint-disable react-hooks/set-state-in-effect --
+     Precios retail: mismo patrón que Catálogo — reset de página al cambiar filtros y recarga del listado. */
   useEffect(() => {
     void reload()
   }, [reload])
@@ -112,6 +215,11 @@ export function RetailPricingTab(props: {
   useEffect(() => {
     setPage(0)
   }, [debouncedSearch, retailerFilter, unlinkedOnly])
+  /* eslint-enable react-hooks/set-state-in-effect */
+
+  const [recaptureBusy, setRecaptureBusy] = useState(false)
+  const [autoAssocBusy, setAutoAssocBusy] = useState(false)
+  const [exactBulkBusy, setExactBulkBusy] = useState(false)
 
   const [homologOpen, setHomologOpen] = useState(false)
   const [homologRow, setHomologRow] = useState<RetailListingRow | null>(null)
@@ -223,6 +331,8 @@ export function RetailPricingTab(props: {
   const [jsonImportText, setJsonImportText] = useState('')
   const [jsonBaseUrl, setJsonBaseUrl] = useState('')
   const [jsonBusy, setJsonBusy] = useState(false)
+  /** Si el barrido cayó por endpoints muertos / red, este texto se muestra en el modal como alerta. */
+  const [captureFallbackReason, setCaptureFallbackReason] = useState<string | null>(null)
 
   async function openHistory(row: RetailListingRow) {
     setHistoryRow(row)
@@ -271,7 +381,12 @@ export function RetailPricingTab(props: {
       toast.error(res.error)
       return
     }
-    toast.success(`Se importaron ${res.inserted} precios al historial.`)
+    toast.success(
+      formatRetailImportToast(
+        `Se guardaron ${res.inserted} productos capturados en el historial de precios.`,
+        res,
+      ),
+    )
     setCaptureOpen(false)
     setCaptureQuery('')
     void reload()
@@ -289,9 +404,108 @@ export function RetailPricingTab(props: {
       toast.error(res.error)
       return
     }
-    toast.success(`Se importaron ${res.inserted} precios al historial.`)
+    toast.success(
+      formatRetailImportToast(
+        `Se guardaron ${res.inserted} productos capturados en el historial de precios.`,
+        res,
+      ),
+    )
     setCaptureOpen(false)
     setJsonImportText('')
+    void reload()
+  }
+
+  async function submitRecaptureHomologated() {
+    if (retailerFilter === 'all') {
+      toast.error('Elige una cadena en el filtro (no «Todas») para actualizar precios homologados.')
+      return
+    }
+    setRecaptureBusy(true)
+    const res = await recaptureHomologatedLinkedAction({
+      retailer: retailerFilter as CaptureRetailer,
+      limit: 30,
+    })
+    setRecaptureBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success(
+      `Recaptura: ${res.inserted} precios nuevos · procesados ${res.processedLinks} vínculos · sin título ${res.skippedNoTitle} · sin coincidencia ${res.skippedNoMatch} · fallo red/API ${res.skippedFetch}`,
+    )
+    void reload()
+  }
+
+  async function submitAutoAssociate() {
+    setAutoAssocBusy(true)
+    const res = await autoAssociateUnlinkedRetailAction({
+      retailerFilter: retailerFilter === 'all' ? 'all' : (retailerFilter as CaptureRetailer),
+      maxRows: 32,
+    })
+    setAutoAssocBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success(
+      `Asociación inteligente: ${res.linked} nuevos vínculos${res.linkedByAi > 0 ? ` (${res.linkedByAi} vía OpenRouter)` : ''} · omitidos ${res.skippedNotLink} · errores ${res.failed} (procesadas ${res.processed} filas).`,
+    )
+    void reload()
+  }
+
+  async function submitBulkExactHomologation() {
+    if (retailerFilter === 'all') {
+      toast.error('Elige una cadena en el filtro (no «Todas») para homologar por nombre exacto.')
+      return
+    }
+    setExactBulkBusy(true)
+    const res = await bulkExactTitleRetailLinksAction({
+      retailer: retailerFilter as CaptureRetailer,
+    })
+    setExactBulkBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    toast.success(
+      `Nombre exacto masivo: ${res.exactTitleLinked} vínculos · catálogo ambiguo ${res.exactTitleSkippedAmbiguousCatalog} · sin maestro ${res.exactTitleSkippedNoCatalogProduct} · reglas marca/texto ${res.exactTitleSkippedHeuristic}.`,
+    )
+    void reload()
+  }
+
+  async function submitCatalogSweep() {
+    setSweepBusy(true)
+    const res = await runRetailCatalogSweepAction({
+      retailer: storeForCapture,
+      captureAll: captureEntireCatalog,
+      maxTotalItems: captureEntireCatalog ? undefined : sweepMax,
+      sweepSearchTerm: sweepSearchTerm.trim() || undefined,
+    })
+    setSweepBusy(false)
+    if (!res.ok) {
+      toast.error(res.error, { duration: 8000 })
+      // Caso "endpoints muertos" o problema irrecuperable: abrir modal de importación JSON
+      // y marcar fallback para que la UI guíe al usuario directo al área de JSON.
+      if ('suggestJsonImport' in res && res.suggestJsonImport) {
+        setCaptureRetailer(storeForCapture)
+        setCaptureFallbackReason(res.error)
+        // Evita URL de otra cadena o sesión anterior; el servidor envía base cuando la conoce.
+        setJsonBaseUrl(res.suggestedJsonBaseUrl ?? '')
+        setCaptureOpen(true)
+      } else {
+        setCaptureFallbackReason(null)
+      }
+      return
+    }
+    setLastSweepSummary(res)
+    setSweepSummaryOpen(true)
+    toast.success(
+      formatRetailImportToast(
+        `Barrido listo: ${res.inserted} ítems nuevos en historial · ${res.pagesFetched} páginas · homologación nombre exacto ${res.exactTitleLinked} · similitud ${res.autoLinked}${(res.autoLinkedByAi ?? 0) > 0 ? ` (${res.autoLinkedByAi} con OpenRouter)` : ''}. Abre el resumen para el detalle.`,
+        res,
+      ),
+      { duration: 9000 },
+    )
     void reload()
   }
 
@@ -299,19 +513,203 @@ export function RetailPricingTab(props: {
     <div className="space-y-4">
       <CatalogTabHeader
         title="Precios por cadena"
-        description="Captura desde la app (VTEX / JSON), anti-duplicados en scripts/RETAIL_CAPTURE.md · Homologación aquí con las mismas sugerencias inteligentes que la base."
+        description="Último precio por ítem de cada cadena. Homologar enlaza la captura al producto maestro."
       />
+
+      {listLoadError ?
+        <div
+          role="alert"
+          className="flex gap-2 rounded-md border border-destructive/35 bg-destructive/10 px-3 py-2.5 text-[13px] text-destructive"
+        >
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+          <span>{listLoadError}</span>
+        </div>
+      : null}
+
+      <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+        <p className="text-[13px] font-medium text-foreground">Nutrir desde una tienda</p>
+        <p className="mt-2 max-w-2xl text-[12px] leading-snug text-muted-foreground">
+          Descarga precios de la tienda y guarda historial. Luego el sistema propone vínculos al catálogo maestro de
+          forma automática; si en el servidor tienes activada la homologación con IA (misma clave OpenRouter que las
+          boletas), ayuda a cerrar ítems que quedaron sin coincidencia clara.
+        </p>
+        {retailerDefinition(storeForCapture)?.code === 'central_mayorista' ?
+          <div
+            role="status"
+            className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[12px] text-foreground"
+          >
+            <TriangleAlert className="mr-2 inline size-4 text-amber-600" aria-hidden />
+            Sin{' '}
+            <code className="rounded bg-muted px-1 font-mono text-[11px]">
+              RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL
+            </code>{' '}
+            en el servidor no corre la captura web de esta cadena.
+          </div>
+        : null}
+        {retailerDefinition(storeForCapture)?.code === 'lider' ?
+          <div
+            role="note"
+            className="mt-3 rounded-md border border-sky-500/35 bg-sky-500/10 px-3 py-2 text-[12px] leading-snug text-foreground"
+          >
+            <strong className="font-medium">Muchos productos:</strong> usa la importación masiva desde la carpeta{' '}
+            <span className="font-mono text-[11px]">lider/</span> (ver documentación del repo). Lo de abajo es solo una
+            muestra en vivo por la web.
+          </div>
+        : null}
+        <div className="mt-4 flex flex-wrap items-end gap-3">
+          <div className="min-w-[180px] space-y-1.5">
+            <Label className="text-[12px]">Tienda</Label>
+            <Select
+              value={storeForCapture}
+              onValueChange={(v) => {
+                const code = v as CaptureRetailer
+                setStoreForCapture(code)
+                setRetailerFilter(code)
+                setPage(0)
+              }}
+            >
+              <SelectTrigger className="app-input h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="jumbo">Jumbo</SelectItem>
+                <SelectItem value="lider">Lider</SelectItem>
+                <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="min-w-[200px] max-w-[280px] flex-1 space-y-1.5">
+            <Label className="text-[12px]">
+              {storeForCapture === 'lider' ? 'Término de barrido (web en vivo)' : 'Término de barrido (tienda)'}
+            </Label>
+            <Input
+              className="app-input h-9 font-mono text-[13px]"
+              placeholder="Vacío = «a» · ej.: a, de, la"
+              value={sweepSearchTerm}
+              onChange={(e) => setSweepSearchTerm(e.target.value)}
+              title="Palabra que usa el buscador de la tienda en esta corrida. Si está vacío, el sistema usa «a»."
+              aria-label={
+                storeForCapture === 'lider'
+                  ? 'Palabra para el barrido web en vivo'
+                  : 'Palabra para el barrido en la tienda seleccionada'
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Palabra del buscador; vacío = «a». Si no hay resultados, prueba los botones de abajo.
+            </p>
+            <div className="flex flex-wrap gap-1.5 pt-0.5">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setSweepSearchTerm('a')}
+                title="Recomendado por defecto en servidor"
+              >
+                a
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => setSweepSearchTerm('de')}
+              >
+                de
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                title="Sílaba común para ampliar resultados"
+                onClick={() => setSweepSearchTerm('la')}
+              >
+                la
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px] text-muted-foreground"
+                onClick={() => setSweepSearchTerm('')}
+              >
+                Limpiar
+              </Button>
+            </div>
+          </div>
+          <label className="flex max-w-[220px] cursor-pointer items-start gap-2 pb-1 text-[13px] leading-snug">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-input"
+              checked={captureEntireCatalog}
+              onChange={(e) => setCaptureEntireCatalog(e.target.checked)}
+            />
+            <span>
+              Barrido completo
+              <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                Desmarcado: puedes poner un máximo de ítems.
+              </span>
+            </span>
+          </label>
+          {!captureEntireCatalog ?
+            <div className="min-w-[120px] space-y-1.5">
+              <Label className="text-[12px]">Máximo de ítems</Label>
+              <Input
+                className="app-input h-9"
+                type="number"
+                min={50}
+                max={50000}
+                step={50}
+                value={sweepMax}
+                onChange={(e) =>
+                  setSweepMax(Math.min(50_000, Math.max(50, Number(e.target.value) || 600)))
+                }
+              />
+            </div>
+          : null}
+          <Button
+            type="button"
+            className="h-9 gap-2"
+            disabled={sweepBusy}
+            title="Descarga paginada desde la tienda elegida (si el sitio lo permite)."
+            onClick={() => void submitCatalogSweep()}
+          >
+            {sweepBusy ?
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Capturando…
+              </>
+            : <>
+                <CloudDownload className="h-4 w-4" aria-hidden />
+                Capturar catálogo de esta tienda
+              </>
+            }
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-9"
+            onClick={() => {
+              setCaptureRetailer(storeForCapture)
+              setCaptureFallbackReason(null)
+              setCaptureOpen(true)
+            }}
+          >
+            JSON o búsqueda puntual
+          </Button>
+        </div>
+      </div>
 
       <div className="rounded-lg border border-border bg-muted/20 p-4">
         <div className="flex flex-wrap items-end gap-3">
           <div className="min-w-[160px] space-y-1.5">
-            <Label className="text-[12px]">Cadena</Label>
+            <Label className="text-[12px]">Ver capturas</Label>
             <Select value={retailerFilter} onValueChange={setRetailerFilter}>
               <SelectTrigger className="app-input h-9">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Todas</SelectItem>
+                <SelectItem value="all">Todas las cadenas</SelectItem>
                 <SelectItem value="lider">Lider</SelectItem>
                 <SelectItem value="jumbo">Jumbo</SelectItem>
                 <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
@@ -339,18 +737,55 @@ export function RetailPricingTab(props: {
             </div>
             <Button
               type="button"
-              variant="secondary"
+              variant="outline"
               className="h-9 shrink-0 gap-1.5"
-              onClick={() => setCaptureOpen(true)}
+              disabled={recaptureBusy || retailerFilter === 'all'}
+              title={
+                retailerFilter === 'all'
+                  ? 'Elige una cadena arriba para recapturar solo esa tienda.'
+                  : 'Vuelve a consultar la tienda por cada ítem ya homologado (misma referencia) y guarda precios nuevos en el historial.'
+              }
+              onClick={() => void submitRecaptureHomologated()}
             >
-              <CloudDownload className="h-4 w-4" aria-hidden />
-              Capturar precios
+              {recaptureBusy ?
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              : <RefreshCw className="h-4 w-4" aria-hidden />}
+              Actualizar homologados
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 min-w-[200px] shrink-0 gap-1.5"
+              disabled={exactBulkBusy || autoAssocBusy || retailerFilter === 'all'}
+              title={
+                retailerFilter === 'all'
+                  ? 'Elige una cadena para homologar por nombre exacto.'
+                  : 'Recorre todas las capturas sin vínculo de esta cadena y enlaza cuando el título coincide con un único maestro (normalización igual que el catálogo).'
+              }
+              onClick={() => void submitBulkExactHomologation()}
+            >
+              {exactBulkBusy ?
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              : <Link2 className="h-4 w-4" aria-hidden />}
+              Homologar nombre exacto
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 min-w-[200px] shrink-0 gap-1.5"
+              disabled={autoAssocBusy || exactBulkBusy}
+              title="Propone vínculos al catálogo maestro para las filas sin homologar de esta lista."
+              onClick={() => void submitAutoAssociate()}
+            >
+              {autoAssocBusy ?
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              : <Link2 className="h-4 w-4" aria-hidden />}
+              Asociar automático
             </Button>
           </div>
         </div>
         <p className="mt-3 text-[12px] text-muted-foreground">
-          Cada importación agrega una captura nueva con fecha: sirve como historial de precios por ítem
-          (retailer + referencia externa).
+          Cada corrida suma filas al historial de precios de ese ítem en la cadena.
         </p>
       </div>
 
@@ -401,7 +836,7 @@ export function RetailPricingTab(props: {
             {!loading && rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="p-8 text-center text-muted-foreground">
-                  No hay capturas retail. Usá «Capturar precios» arriba o revisá permisos y configuración del servidor.
+                  No hay capturas retail. Usa «Capturar catálogo de esta tienda» arriba o revisa permisos y configuración del servidor.
                 </td>
               </tr>
             ) : (
@@ -433,36 +868,26 @@ export function RetailPricingTab(props: {
                   </td>
                   <td className="p-2">
                     <div className="flex flex-wrap justify-end gap-1.5">
-                      <Button
-                        type="button"
+                      <GridRowIconButton
+                        label="Historial de precios"
                         variant="outline"
-                        size="sm"
-                        className="h-8 gap-1"
                         onClick={() => void openHistory(row)}
                       >
-                        <History className="h-3.5 w-3.5" />
-                        Historial
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        className="h-8 gap-1"
-                        onClick={() => openHomolog(row)}
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                        Homologar
-                      </Button>
-                      {row.catalog_product_id ? (
-                        <Button
-                          type="button"
+                        <History />
+                      </GridRowIconButton>
+                      <GridRowIconButton label="Homologar a maestro" onClick={() => openHomolog(row)}>
+                        <Link2 />
+                      </GridRowIconButton>
+                      {row.catalog_product_id ?
+                        <GridRowIconButton
+                          label="Quitar vínculo con maestro"
                           variant="ghost"
-                          size="sm"
-                          className="h-8 text-muted-foreground"
+                          className="text-muted-foreground"
                           onClick={() => void confirmUnlink(row)}
                         >
-                          <Link2Off className="h-3.5 w-3.5" />
-                        </Button>
-                      ) : null}
+                          <Link2Off />
+                        </GridRowIconButton>
+                      : null}
                     </div>
                   </td>
                 </tr>
@@ -477,7 +902,7 @@ export function RetailPricingTab(props: {
           <DialogHeader>
             <DialogTitle>Homologar a catálogo maestro</DialogTitle>
             <DialogDescription>
-              Elegí el producto canónico que corresponde a este ítem de tienda. Podés afinar sugerencias con
+              Elige el producto canónico que corresponde a este ítem de tienda. Puedes afinar sugerencias con
               sección/categoría del catálogo (nombre similar + rubro + precio de referencia).
             </DialogDescription>
           </DialogHeader>
@@ -668,16 +1093,36 @@ export function RetailPricingTab(props: {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={captureOpen} onOpenChange={setCaptureOpen}>
+      <Dialog
+        open={captureOpen}
+        onOpenChange={(next) => {
+          setCaptureOpen(next)
+          if (!next) setCaptureFallbackReason(null)
+        }}
+      >
         <DialogContent className="max-h-[min(92vh,760px)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>Capturar precios al historial</DialogTitle>
+            <DialogTitle>
+              {captureFallbackReason ?
+                'Importación manual recomendada'
+              : 'Otras formas de importar'}
+            </DialogTitle>
             <DialogDescription>
-              La búsqueda web usa la API pública estilo VTEX (Jumbo con URL por defecto). Si el sitio no responde
-              desde el servidor, pega el JSON de la misma API desde tu navegador. Requiere rol editor y la clave
-              de servicio en el servidor.
+              {captureFallbackReason ?
+                'La captura automática no pudo continuar. Pega en «Importar desde JSON» la respuesta de red que copiaste desde las herramientas de desarrollo del navegador (Network), si la tienda la expone (está arriba en este cuadro).'
+              : 'Búsqueda por término (una página) o pegado de JSON copiado desde el navegador. Para muchos productos conviene «Capturar catálogo de esta tienda» fuera de este cuadro. Requiere rol editor y clave de servicio en el servidor.'}
             </DialogDescription>
           </DialogHeader>
+
+          {captureFallbackReason ?
+            <div
+              role="alert"
+              className="flex gap-2 rounded-md border border-destructive/35 bg-destructive/10 px-3 py-2.5 text-[12px] text-destructive"
+            >
+              <TriangleAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
+              <span>{captureFallbackReason}</span>
+            </div>
+          : null}
 
           <div className="space-y-4 text-[13px]">
             <div className="space-y-1.5">
@@ -695,98 +1140,303 @@ export function RetailPricingTab(props: {
                   <SelectItem value="central_mayorista">Central Mayorista</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-[11px] text-muted-foreground">
-                Lider y Central Mayorista requieren variable de entorno con la URL base del catálogo (formato
-                VTEX) o importación por JSON.
-              </p>
+              {captureRetailer === 'lider' ?
+                <p className="text-[11px] text-muted-foreground">
+                  Lider en la app lee la página (mismo enfoque que el proyecto en{' '}
+                  <span className="font-mono text-[10px]">lider/</span>
+                  ), no el mismo conector que otras cadenas del listado. Por defecto{' '}
+                  <span className="font-mono text-[10px]">https://super.lider.cl</span>. Volumen masivo: scraper →
+                  archivo local → <span className="font-mono text-[10px]">import_retail_snapshots.py</span> (ver{' '}
+                  <span className="font-mono text-[10px]">scripts/RETAIL_CAPTURE.md</span>).
+                </p>
+              : captureRetailer === 'central_mayorista' ?
+                <p className="text-[11px] text-muted-foreground">
+                  Barrido por API del sitio: configura{' '}
+                  <span className="font-mono text-[10px]">RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL</span> en el servidor
+                  o usa importación JSON.
+                </p>
+              : null}
             </div>
 
-            <div className="rounded-md border border-border bg-muted/20 p-3">
-              <p className="mb-2 text-[12px] font-medium text-foreground">Búsqueda en la tienda</p>
-              <div className="space-y-2">
-                <div className="space-y-1.5">
-                  <Label className="text-[12px]">Término (≥2 caracteres)</Label>
-                  <Input
-                    className="app-input h-9"
-                    placeholder="Ej. aceite maravilla"
-                    value={captureQuery}
-                    onChange={(e) => setCaptureQuery(e.target.value)}
-                  />
+            {captureFallbackReason ?
+              <>
+                <div className="rounded-md border border-border p-3">
+                  <p className="mb-2 text-[12px] font-medium text-foreground">Importar desde JSON</p>
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    Pega JSON desde DevTools → Network, o un fragmento HTML del listado si la tienda solo publica datos
+                    en la página (schema.org / JSON-LD). La URL base ayuda a enlaces canónicos.
+                  </p>
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">URL base del sitio (opcional)</Label>
+                      <Input
+                        className="app-input h-9 font-mono text-[12px]"
+                        placeholder={captureJsonBasePlaceholder(captureRetailer)}
+                        value={jsonBaseUrl}
+                        onChange={(e) => setJsonBaseUrl(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">JSON</Label>
+                      <textarea
+                        className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[160px] w-full rounded-md border px-3 py-2 text-[13px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        spellCheck={false}
+                        placeholder='[{"productId":"…","productName":"…",…}]'
+                        value={jsonImportText}
+                        onChange={(e) => setJsonImportText(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-2 sm:w-auto"
+                      disabled={jsonBusy}
+                      onClick={() => void submitJsonImport()}
+                    >
+                      {jsonBusy ?
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                        </>
+                      : 'Importar JSON'}
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-[12px]">Máximo de resultados</Label>
-                  <Input
-                    className="app-input h-9"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={captureMax}
-                    onChange={(e) => setCaptureMax(Number(e.target.value) || 40)}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  className="w-full gap-2 sm:w-auto"
-                  disabled={captureWebBusy}
-                  onClick={() => void submitWebCapture()}
-                >
-                  {captureWebBusy ?
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Importando…
-                    </>
-                  : <>
-                      <CloudDownload className="h-4 w-4" aria-hidden /> Buscar e importar
-                    </>
-                  }
-                </Button>
-              </div>
-            </div>
 
-            <div className="rounded-md border border-border p-3">
-              <p className="mb-2 text-[12px] font-medium text-foreground">Importar desde JSON</p>
-              <p className="mb-2 text-[11px] text-muted-foreground">
-                Pega la respuesta del endpoint de búsqueda (array de productos o objeto con lista). Opcional:
-                URL base para armar enlaces canónicos.
-              </p>
-              <div className="space-y-2">
-                <div className="space-y-1.5">
-                  <Label className="text-[12px]">URL base VTEX (opcional)</Label>
-                  <Input
-                    className="app-input h-9 font-mono text-[12px]"
-                    placeholder="https://www.jumbo.cl"
-                    value={jsonBaseUrl}
-                    onChange={(e) => setJsonBaseUrl(e.target.value)}
-                  />
+                <div className="rounded-md border border-dashed border-border/70 bg-muted/10 p-3">
+                  <p className="mb-1 text-[12px] font-medium text-muted-foreground">
+                    Búsqueda en la tienda (opcional)
+                  </p>
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    Desde el servidor suele fallar igual que el barrido; úsala solo si quieres probar un término
+                    puntual.
+                  </p>
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">Término (≥2 caracteres)</Label>
+                      <Input
+                        className="app-input h-9"
+                        placeholder="Ej. aceite maravilla"
+                        value={captureQuery}
+                        onChange={(e) => setCaptureQuery(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">Máximo de resultados</Label>
+                      <Input
+                        className="app-input h-9"
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={captureMax}
+                        onChange={(e) => setCaptureMax(Number(e.target.value) || 40)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full gap-2 sm:w-auto"
+                      disabled={captureWebBusy}
+                      onClick={() => void submitWebCapture()}
+                    >
+                      {captureWebBusy ?
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                        </>
+                      : <>
+                          <CloudDownload className="h-4 w-4" aria-hidden /> Buscar e importar
+                        </>
+                      }
+                    </Button>
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label className="text-[12px]">JSON</Label>
-                  <textarea
-                    className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[140px] w-full rounded-md border px-3 py-2 text-[13px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                    spellCheck={false}
-                    placeholder='[{"productId":"…","productName":"…",…}]'
-                    value={jsonImportText}
-                    onChange={(e) => setJsonImportText(e.target.value)}
-                  />
+              </>
+            : <>
+                <div className="rounded-md border border-border bg-muted/20 p-3">
+                  <p className="mb-2 text-[12px] font-medium text-foreground">Búsqueda en la tienda</p>
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">Término (≥2 caracteres)</Label>
+                      <Input
+                        className="app-input h-9"
+                        placeholder="Ej. aceite maravilla"
+                        value={captureQuery}
+                        onChange={(e) => setCaptureQuery(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">Máximo de resultados</Label>
+                      <Input
+                        className="app-input h-9"
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={captureMax}
+                        onChange={(e) => setCaptureMax(Number(e.target.value) || 40)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="w-full gap-2 sm:w-auto"
+                      disabled={captureWebBusy}
+                      onClick={() => void submitWebCapture()}
+                    >
+                      {captureWebBusy ?
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                        </>
+                      : <>
+                          <CloudDownload className="h-4 w-4" aria-hidden /> Buscar e importar
+                        </>
+                      }
+                    </Button>
+                  </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full gap-2 sm:w-auto"
-                  disabled={jsonBusy}
-                  onClick={() => void submitJsonImport()}
-                >
-                  {jsonBusy ?
-                    <>
-                      <Loader2 className="h-4 w-4 animate-spin" /> Importando…
-                    </>
-                  : 'Importar JSON'}
-                </Button>
-              </div>
-            </div>
+
+                <div className="rounded-md border border-border p-3">
+                  <p className="mb-2 text-[12px] font-medium text-foreground">Importar desde JSON</p>
+                  <p className="mb-2 text-[11px] text-muted-foreground">
+                    Pega JSON desde Network o HTML del listado con JSON-LD. Opcional: URL base para enlaces
+                    canónicos.
+                  </p>
+                  <div className="space-y-2">
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">URL base del sitio (opcional)</Label>
+                      <Input
+                        className="app-input h-9 font-mono text-[12px]"
+                        placeholder={captureJsonBasePlaceholder(captureRetailer)}
+                        value={jsonBaseUrl}
+                        onChange={(e) => setJsonBaseUrl(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label className="text-[12px]">JSON</Label>
+                      <textarea
+                        className="border-input bg-background ring-offset-background placeholder:text-muted-foreground focus-visible:ring-ring flex min-h-[140px] w-full rounded-md border px-3 py-2 text-[13px] focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                        spellCheck={false}
+                        placeholder='[{"productId":"…","productName":"…",…}]'
+                        value={jsonImportText}
+                        onChange={(e) => setJsonImportText(e.target.value)}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-2 sm:w-auto"
+                      disabled={jsonBusy}
+                      onClick={() => void submitJsonImport()}
+                    >
+                      {jsonBusy ?
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" /> Importando…
+                        </>
+                      : 'Importar JSON'}
+                    </Button>
+                  </div>
+                </div>
+              </>
+            }
           </div>
 
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCaptureOpen(false)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setCaptureOpen(false)
+                setCaptureFallbackReason(null)
+              }}
+            >
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {sweepBusy ?
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 px-4"
+          role="progressbar"
+          aria-busy="true"
+          aria-label="Capturando catálogo de la tienda"
+        >
+          <div className="max-w-md rounded-lg border border-border bg-card p-6 shadow-lg">
+            <div className="flex items-start gap-3">
+              <Loader2 className="mt-0.5 h-8 w-8 shrink-0 animate-spin text-primary" aria-hidden />
+              <div>
+                <p className="text-[14px] font-semibold text-foreground">Capturando catálogo…</p>
+                <p className="mt-1 text-[12px] text-muted-foreground">
+                  {retailerLabel(storeForCapture)} · «{sweepSearchTerm.trim() || 'a'}» ·{' '}
+                  {captureEntireCatalog ? 'hasta acabar el listado' : `máx. ${sweepMax} ítems`}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-muted">
+              <div className="h-full w-[35%] max-w-full animate-pulse rounded-full bg-primary" />
+            </div>
+            <p className="mt-4 text-[12px] text-muted-foreground">
+              Puede tardar; al final verás un resumen.
+            </p>
+          </div>
+        </div>
+      : null}
+
+      <Dialog open={sweepSummaryOpen} onOpenChange={setSweepSummaryOpen}>
+        <DialogContent className="max-h-[min(92vh,680px)] max-w-lg overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Resumen del barrido</DialogTitle>
+            <DialogDescription>Resultado de la última captura.</DialogDescription>
+          </DialogHeader>
+          {lastSweepSummary ?
+            <div className="space-y-4 text-[13px]">
+              <dl className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 text-[12px]">
+                <dt className="text-muted-foreground">Cadena</dt>
+                <dd className="text-right font-medium">
+                  {retailerLabel(lastSweepSummary.retailer)}
+                </dd>
+                <dt className="text-muted-foreground">URL base usada</dt>
+                <dd className="break-all text-right font-mono text-[11px]">
+                  {lastSweepSummary.vtexBaseUrlUsed}
+                </dd>
+                <dt className="text-muted-foreground">Término de barrido efectivo</dt>
+                <dd className="text-right font-mono text-[11px]">
+                  {lastSweepSummary.effectiveSweepTerm}
+                </dd>
+                <dt className="text-muted-foreground">Tope de esta corrida</dt>
+                <dd className="text-right">
+                  {lastSweepSummary.captureAll ?
+                    <span>
+                      Hasta fin de catálogo{' '}
+                      <span className="text-muted-foreground">(tope seguridad 1.000.000)</span>
+                    </span>
+                  : <span>Máximo {lastSweepSummary.maxTotalLimit} ítems</span>}
+                </dd>
+                <dt className="text-muted-foreground">Páginas descargadas</dt>
+                <dd className="text-right">{lastSweepSummary.pagesFetched}</dd>
+                <dt className="text-muted-foreground">Ítems nuevos guardados</dt>
+                <dd className="text-right font-semibold">{lastSweepSummary.inserted}</dd>
+                <dt className="text-muted-foreground">Nombre exacto</dt>
+                <dd className="text-right">{lastSweepSummary.exactTitleLinked}</dd>
+                <dt className="text-muted-foreground">Enlaces automáticos (reglas)</dt>
+                <dd className="text-right">
+                  {Math.max(0, lastSweepSummary.autoLinked - (lastSweepSummary.autoLinkedByAi ?? 0))}
+                </dd>
+                <dt className="text-muted-foreground">Enlaces con IA</dt>
+                <dd className="text-right">{lastSweepSummary.autoLinkedByAi ?? 0}</dd>
+                <dt className="text-muted-foreground">Total enlaces automáticos</dt>
+                <dd className="text-right">{lastSweepSummary.autoLinked}</dd>
+                <dt className="text-muted-foreground">Sin vínculo tras esta pasada</dt>
+                <dd className="text-right">{lastSweepSummary.autoAssociateSkippedNoMatch}</dd>
+              </dl>
+              {(lastSweepSummary.stoppedEarly || lastSweepSummary.hitSafetyItemCap) ?
+                <p className="rounded-md bg-muted/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+                  {lastSweepSummary.hitSafetyItemCap ?
+                    'Se alcanzó el tope de seguridad de ítems por ejecución.'
+                  : 'La descarga terminó antes de tiempo (red o tienda sin más páginas).'}
+                </p>
+              : null}
+            </div>
+          : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setSweepSummaryOpen(false)}>
               Cerrar
             </Button>
           </DialogFooter>

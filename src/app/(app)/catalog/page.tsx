@@ -1,22 +1,24 @@
+import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
-
 import { getProfileContext } from '@/lib/profile/context'
 
 import {
-
   CatalogTabs,
-
   type CategoryRow,
-
   type SectionRow,
-
 } from './CatalogTabs'
 
+type PageProps = {
+  searchParams?: Promise<{ tab?: string }>
+}
 
-
-export default async function CatalogPage() {
-
+export default async function CatalogPage({ searchParams }: PageProps) {
   const { activeProfileId, profiles } = await getProfileContext()
+  const sp = (await searchParams) ?? {}
+
+  if (sp.tab === 'cadenas') {
+    redirect('/precios-cadenas')
+  }
 
 
 
@@ -47,8 +49,6 @@ export default async function CatalogPage() {
 
 
   const supabase = await createClient()
-
-
 
   const [{ data: sections, error: sectionsError }, { data: categories }, { count: linkedCount, error: countError }] =
 
@@ -87,17 +87,11 @@ export default async function CatalogPage() {
       ) : null}
 
       <CatalogTabs
-
         profileId={activeProfileId}
-
         sections={(sections ?? []) as SectionRow[]}
-
         categories={(categories ?? []) as CategoryRow[]}
-
         linkedCatalogCount={linkedCount ?? 0}
-
         countError={countError != null}
-
       />
 
     </div>

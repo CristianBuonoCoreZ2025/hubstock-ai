@@ -680,6 +680,8 @@ export type CatalogProductGridRow = {
   section_id: string
   category_id: string
   thumb_url: string | null
+  /** Cantidad de vínculos retail (filas en catalog_retail_links) hacia este maestro. */
+  retail_links_count: number
 }
 
 export type FetchCatalogProductsPageParams = {
@@ -975,6 +977,28 @@ async function fetchRetailPricesForProductIds(
   return out
 }
 
+async function fetchRetailLinkCountsForProductIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ids: string[]
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>()
+  if (ids.length === 0) return out
+  const chunkSize = 400
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const slice = ids.slice(i, i + chunkSize)
+    const { data, error } = await supabase
+      .from('catalog_retail_links')
+      .select('catalog_product_id')
+      .in('catalog_product_id', slice)
+    if (error) throw error
+    for (const r of data ?? []) {
+      const id = (r as { catalog_product_id: string }).catalog_product_id
+      out.set(id, (out.get(id) ?? 0) + 1)
+    }
+  }
+  return out
+}
+
 /** Solo enriquece marca canónica y miniatura; los alias ya se usan en la ruta de búsqueda antes de paginar. */
 async function hydrateCatalogProductRows(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -1002,6 +1026,16 @@ async function hydrateCatalogProductRows(
     /* RPC ausente hasta aplicar migración: la grilla sigue funcionando sin columnas retail. */
   }
 
+  let linkCounts = new Map<string, number>()
+  try {
+    linkCounts = await fetchRetailLinkCountsForProductIds(
+      supabase,
+      rawRows.map((r) => r.id)
+    )
+  } catch {
+    /* Tabla o permisos: la grilla sigue sin contador. */
+  }
+
   return rawRows.map((row) => {
     const thumb =
       row.catalog_product_media?.find((m) => m.kind === 'thumbnail')?.public_url ?? null
@@ -1025,6 +1059,7 @@ async function hydrateCatalogProductRows(
       section_id: row.section_id,
       category_id: row.category_id,
       thumb_url: thumb,
+      retail_links_count: linkCounts.get(row.id) ?? 0,
     }
   })
 }
@@ -1204,6 +1239,7 @@ export async function fetchCatalogProductsPage(
     retail_price_jumbo: null,
     retail_price_central_mayorista: null,
     source_system: typeof r.source_system === 'string' ? r.source_system : null,
+    retail_links_count: 0,
   }))
 
   try {
@@ -1220,6 +1256,18 @@ export async function fetchCatalogProductsPage(
     }
   } catch {
     /* RPC ausente hasta aplicar migración: la grilla sigue funcionando sin columnas retail. */
+  }
+
+  try {
+    const linkCounts = await fetchRetailLinkCountsForProductIds(
+      supabase,
+      items.map((i) => i.id)
+    )
+    for (const it of items) {
+      it.retail_links_count = linkCounts.get(it.id) ?? 0
+    }
+  } catch {
+    /* Sin contador de vínculos. */
   }
 
   const hasNextPage = (pageIdx + 1) * PAGE < total

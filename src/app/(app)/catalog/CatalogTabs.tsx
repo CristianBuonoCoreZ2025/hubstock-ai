@@ -13,7 +13,6 @@ import {
   GridLoadingMask,
   SectionSearchCombo,
 } from '@/app/(app)/catalog/catalog-ui'
-import { RetailPricingTab } from '@/app/(app)/catalog/RetailPricingTab'
 import { CopyCatalogButton } from '@/components/catalog/CopyCatalogButton'
 import {
   createCatalogAliasAction,
@@ -75,7 +74,7 @@ export type CategoryRow = {
   sort_order: number
 }
 
-type TabKey = 'products' | 'brands' | 'categories' | 'retail'
+type TabKey = 'products' | 'brands' | 'categories'
 function CatalogProductQuickActions({
   row,
   onEdit,
@@ -123,14 +122,12 @@ const TAB_QUERY: Record<TabKey, string> = {
   products: 'productos',
   brands: 'marcas',
   categories: 'categorias',
-  retail: 'cadenas',
 }
 
 const QUERY_TO_TAB = new Map<string, TabKey>([
   ['productos', 'products'],
   ['marcas', 'brands'],
   ['categorias', 'categories'],
-  ['cadenas', 'retail'],
 ])
 
 function tabFromUrl(tabParam: string | null): TabKey {
@@ -1137,7 +1134,6 @@ export function CatalogTabs(props: {
     { id: 'products', label: 'Productos' },
     { id: 'brands', label: 'Marcas' },
     { id: 'categories', label: 'Categorías' },
-    { id: 'retail', label: 'Precios cadenas' },
   ]
 
   const productCountHint =
@@ -1194,7 +1190,16 @@ export function CatalogTabs(props: {
         <div className="space-y-4">
           <CatalogTabHeader
             title="Productos del catálogo"
-            description="Consulta y administra productos maestros; no modifica stock del hogar. Lider, Jumbo y Central Mayorista: última captura importada por cadena cuando el ítem está homologado; columna Lider puede usar precio ref. del import masivo Lider si aún no hay captura vinculada."
+            description={
+              <>
+                Un maestro por producto real: precios Lider, Jumbo y Central cuando hay homologación; columna
+                Cadenas indica vínculos con tiendas.                 La captura y homologación por cadena se gestiona en{' '}
+                <Link href="/precios-cadenas" className="text-primary underline underline-offset-2">
+                  Precios por cadena
+                </Link>{' '}
+                (Administración).
+              </>
+            }
           />
 
           <div className="flex flex-wrap items-end gap-3 rounded-lg border border-border bg-muted/20 p-4">
@@ -1308,7 +1313,7 @@ export function CatalogTabs(props: {
                 Cargando productos…
               </p>
             ) : null}
-            <table className="w-full min-w-[1280px] text-sm">
+            <table className="w-full min-w-[1340px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left">
                   <th className="w-[52px] p-3 font-medium">Imagen</th>
@@ -1321,16 +1326,19 @@ export function CatalogTabs(props: {
                   <th className="p-3 font-medium">Lider</th>
                   <th className="p-3 font-medium">Jumbo</th>
                   <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
+                  <th className="p-3 w-[88px] text-center font-medium" title="Vínculos homologados con tiendas (cadenas)">
+                    Cadenas
+                  </th>
                   <th className="p-3 font-medium">Estado</th>
                   <th className="p-3 font-medium text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {productsLoading ? (
-                  <CatalogProductsTableSkeleton colCount={12} rows={10} />
+                  <CatalogProductsTableSkeleton colCount={13} rows={10} />
                 ) : productRows.length === 0 ? (
                   <tr>
-                    <td colSpan={12} className="p-8 text-center text-muted-foreground">
+                    <td colSpan={13} className="p-8 text-center text-muted-foreground">
                       No encontramos productos con esos filtros. Ajusta la búsqueda o limpia los filtros.
                     </td>
                   </tr>
@@ -1379,6 +1387,9 @@ export function CatalogTabs(props: {
                       </td>
                       <td className="p-3 tabular-nums text-[13px] text-muted-foreground">
                         {formatRetailCentralMayoristaCell(row)}
+                      </td>
+                      <td className="p-3 text-center tabular-nums text-[13px] text-muted-foreground">
+                        {row.retail_links_count ?? 0}
                       </td>
                       <td className="p-3">
                         {row.active ? (
@@ -1619,6 +1630,7 @@ export function CatalogTabs(props: {
                           <th className="p-3 font-medium">Lider</th>
                           <th className="p-3 font-medium">Jumbo</th>
                           <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
+                          <th className="p-3 w-[88px] text-center font-medium">Cadenas</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1626,7 +1638,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!brandProductsBusy && brandProductsRows.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={10} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta marca y filtros.
                             </td>
                           </tr>
@@ -1653,6 +1665,9 @@ export function CatalogTabs(props: {
                               </td>
                               <td className="p-3 tabular-nums text-muted-foreground">
                                 {formatRetailCentralMayoristaCell(p)}
+                              </td>
+                              <td className="p-3 text-center tabular-nums text-muted-foreground">
+                                {p.retail_links_count ?? 0}
                               </td>
                               <td className="p-3">
                                 {p.active ?
@@ -1687,10 +1702,6 @@ export function CatalogTabs(props: {
             ) : null}
           </div>
         </div>
-      ) : null}
-
-      {tab === 'retail' ? (
-        <RetailPricingTab sections={sectionsSorted} categories={categories} />
       ) : null}
 
       {tab === 'categories' ? (
@@ -1906,6 +1917,7 @@ export function CatalogTabs(props: {
                           <th className="p-3 font-medium">Lider</th>
                           <th className="p-3 font-medium">Jumbo</th>
                           <th className="p-3 font-medium whitespace-nowrap">Central Mayorista</th>
+                          <th className="p-3 w-[88px] text-center font-medium">Cadenas</th>
                           <th className="p-3 font-medium">Estado</th>
                           <th className="p-3 font-medium text-right">Acciones</th>
                         </tr>
@@ -1913,7 +1925,7 @@ export function CatalogTabs(props: {
                       <tbody>
                         {!catProdBusy && catProdRows.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="p-6 text-center text-muted-foreground">
+                            <td colSpan={10} className="p-6 text-center text-muted-foreground">
                               Sin productos en esta página para esta categoría y filtros.
                             </td>
                           </tr>
@@ -1940,6 +1952,9 @@ export function CatalogTabs(props: {
                               </td>
                               <td className="p-3 tabular-nums text-muted-foreground">
                                 {formatRetailCentralMayoristaCell(p)}
+                              </td>
+                              <td className="p-3 text-center tabular-nums text-muted-foreground">
+                                {p.retail_links_count ?? 0}
                               </td>
                               <td className="p-3">
                                 {p.active ?

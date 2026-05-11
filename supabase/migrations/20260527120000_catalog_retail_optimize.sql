@@ -1,6 +1,11 @@
 -- Optimización del modelo retail: índices consultivos, RPC de precios en una pasada,
 -- listados con description_hint y candidatos de homologación con prefiltro + respaldo.
 
+-- Si ya existían versiones con otra firma de salida, CREATE OR REPLACE no alcanza (42P13).
+drop function if exists public.catalog_retail_prices_for_products(uuid[]);
+drop function if exists public.catalog_retail_listings_page(text, boolean, text, integer, integer);
+drop function if exists public.catalog_retail_match_candidates(text, numeric, uuid, integer);
+
 comment on column public.catalog_retail_snapshots.retailer is
   'Identificador de cadena: lider, jumbo, central_mayorista, etc.';
 

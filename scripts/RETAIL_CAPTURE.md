@@ -1,5 +1,20 @@
 # Captura de precios por cadena (sin duplicar maestros)
 
+## Lider en volumen (~miles de ítems en minutos)
+
+**No uses la captura web de Next.js como sustituto del scraper de la carpeta `lider/`.**
+
+El flujo probado para **decenas de miles de productos Lider** es:
+
+1. Generar / actualizar `lider/productos_lider.db` (tu scraper local).
+2. Importar snapshots con  
+   `python scripts/import_retail_snapshots.py --retailer lider --sqlite lider/productos_lider.db`  
+   (y opciones `--smart-resolve`, etc. según necesites).
+
+La pantalla **Catálogo → Precios por cadena → Capturar** usa **peticiones HTTP** al sitio en vivo (`super.lider.cl` por defecto): sirve para **muestras, pruebas o actualizaciones chicas**, no compite en velocidad ni volumen con tu SQLite. Eso no es “preferir VTEX”: es solo **otro canal** hacia la misma tabla `catalog_retail_snapshots`.
+
+---
+
 ## Idea central
 
 - **`catalog_products`**: un solo registro por producto “canónico” (nombre de referencia global).
@@ -8,12 +23,14 @@
 
 La **comparativa inteligente** usa la RPC `catalog_retail_match_candidates` en Postgres (similitud de nombre con `pg_trgm`, cercanía de precio, categoría opcional). La app la usa en **Catálogo → Precios cadenas → Homologar**. El script puede usar la misma RPC más reglas en Python (`retail_import_decision.py`: marca, descripción, umbrales) con `--smart-resolve` y, opcionalmente, alta de maestro con `--create-if-novel`.
 
-## Captura dentro de la aplicación
+## Captura dentro de la aplicación (Next.js, tiempo real)
 
-En **Catálogo → Precios cadenas** el botón **Capturar precios** abre un modal para:
+En **Catálogo → Precios cadenas** podés **barrido web** o **JSON pegado**. Eso llama al **sitio público** de cada cadena (muchas tiendas Cencosud usan stack VTEX detrás; es detalle de implementación, no “la fuente” de tu scraper Lider).
 
-1. **Búsqueda web** — Llama desde el servidor a la API pública estilo VTEX (`/api/catalog_system/pub/products/search/{término}`). **Jumbo** usa por defecto `https://www.jumbo.cl`. Opcional: variable `RETAIL_JUMBO_VTEX_BASE_URL` para otro host.
-2. **Lider / Central Mayorista** — Si la captura automática no está disponible, definí en el servidor `RETAIL_LIDER_VTEX_BASE_URL` o `RETAIL_CENTRAL_MAYORISTA_VTEX_BASE_URL` con la URL base del catálogo en formato VTEX, o usá **Importar desde JSON** pegando la respuesta JSON del mismo endpoint (por ejemplo copiada desde las herramientas de desarrollo del navegador).
+1. **Barrido** — El servidor pide páginas de búsqueda al host configurado (p. ej. Jumbo `jumbo.cl`; Lider suele ser `super.lider.cl`). No es el import masivo desde SQLite.
+2. **JSON** — Pegás la respuesta de Network (o HTML con datos parseables) si el barrido falla.
+
+Para **Lider masivo**, seguí usando **`lider/` + `import_retail_snapshots.py`** arriba.
 
 Requiere `SUPABASE_SERVICE_ROLE_KEY` en el servidor y rol **editor** (o superior) en el perfil activo. Los registros se insertan en `catalog_retail_snapshots` con `match_method` `app_vtex_search` o `app_json_import`.
 

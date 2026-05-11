@@ -190,11 +190,14 @@ export function SectionSearchCombo(props: {
 }
 
 /** Encabezado estándar de pestaña tipo ERP. */
-export function CatalogTabHeader(props: { title: string; description: string }) {
+export function CatalogTabHeader(props: {
+  title: string
+  description: ReactNode
+}) {
   return (
     <div className="space-y-1">
       <h2 className="text-lg font-semibold tracking-tight text-foreground">{props.title}</h2>
-      <p className="max-w-3xl text-[13px] text-muted-foreground">{props.description}</p>
+      <div className="max-w-3xl text-[13px] text-muted-foreground">{props.description}</div>
     </div>
   )
 }

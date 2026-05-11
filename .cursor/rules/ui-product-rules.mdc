@@ -84,6 +84,7 @@ src/lib/search.ts
 
 - Búsqueda con Enter + lupa **integrada dentro del campo** (ícono de búsqueda dentro del input, no botón suelto al costado): `AppSearchBox` (`src/components/search/app-search-box.tsx`).
 - Paginación repetida arriba y abajo de la tabla: `GridPagingRow` (`src/components/grid/grid-paging-row.tsx`).
+- **Acciones por fila en grilla (solo ícono, tamaño uniforme):** `GridRowIconButton` (`src/components/grid/grid-row-icon-button.tsx`). Pasar `label` (tooltip + `aria-label`) y un único ícono hijo. No usar `Button` suelto en celdas de tabla para evitar repetir la regla y medidas distintas.
 
 ## Combobox y filtros inteligentes
 
