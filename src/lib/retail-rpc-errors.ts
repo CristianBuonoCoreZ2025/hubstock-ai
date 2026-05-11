@@ -57,3 +57,28 @@ export function messageForRetailSnapshotInsertFailure(err: unknown): string {
 
   return getUserFriendlyErrorMessage(err, 'generic')
 }
+
+/** Error al crear lote retail (tablas retail_capture_batches / migración pendiente). */
+export function messageForRetailBatchInsertFailure(err: unknown): string {
+  if (isPermissionError(err)) {
+    return 'No tienes permisos para realizar esta acción. Si eres administrador, revisa que SUPABASE_SERVICE_ROLE_KEY en el servidor sea la clave service_role del mismo proyecto.'
+  }
+
+  const any = err as { code?: string; message?: string; details?: string }
+  const msg = `${any?.message ?? ''} ${any?.details ?? ''}`.toLowerCase()
+  const code = String(any?.code ?? '')
+
+  if (
+    code === 'PGRST205' ||
+    code === '42P01' ||
+    code === 'PGRST202' ||
+    msg.includes('could not find') ||
+    msg.includes('schema cache') ||
+    msg.includes('does not exist') ||
+    msg.includes('no existe la relación')
+  ) {
+    return 'Las tablas de captura retail aún no están en tu proyecto Supabase. Ejecuta la migración 20260531120000_retail_capture_batches.sql (tablas retail_capture_batches, retail_captured_products, retail_ai_match_reviews) y vuelve a intentar.'
+  }
+
+  return getUserFriendlyErrorMessage(err, 'generic')
+}

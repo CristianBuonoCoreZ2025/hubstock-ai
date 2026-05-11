@@ -45,6 +45,7 @@ import {
 import {
   messageForRetailListingRpcFailure,
   messageForRetailSnapshotInsertFailure,
+  messageForRetailBatchInsertFailure,
 } from '@/lib/retail-rpc-errors'
 import {
   retailSweepLogError,
@@ -1817,7 +1818,10 @@ export async function startRetailCaptureBatchAction(input?: {
     total_pages: urls.length,
   })
   if ('error' in ins) {
-    return { ok: false, error: 'No se pudo crear el lote. Intenta nuevamente.' }
+    if (process.env.NODE_ENV === 'development') {
+      console.error('[startRetailCaptureBatchAction]', ins.error)
+    }
+    return { ok: false, error: messageForRetailBatchInsertFailure(ins.error) }
   }
 
   revalidatePath('/catalog')

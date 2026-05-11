@@ -24,7 +24,7 @@ export type RetailCaptureBatchRow = {
 export async function insertRetailCaptureBatch(
   admin: SupabaseClient,
   input: { retailer: string; total_pages: number },
-): Promise<{ id: string } | { error: string }> {
+): Promise<{ id: string } | { error: unknown }> {
   const { data, error } = await admin
     .from('retail_capture_batches')
     .insert({
@@ -37,7 +37,7 @@ export async function insertRetailCaptureBatch(
     .single()
 
   if (error || !data) {
-    return { error: error?.message ?? 'insert_batch_failed' }
+    return { error: error ?? new Error('insert_batch_failed') }
   }
   return { id: (data as { id: string }).id }
 }
