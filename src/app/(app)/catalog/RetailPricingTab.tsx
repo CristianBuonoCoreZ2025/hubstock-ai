@@ -47,6 +47,8 @@ import {
   processRetailCaptureBatchPageAction,
   runRetailHomologationAction,
   startRetailCaptureBatchAction,
+  type RetailCaptureBatchRow,
+  type RetailLiderReviewGroupSummary,
 } from '@/app/actions/catalog-retail'
 import { fetchLiderRetailTaxonomyBlockingAction } from '@/app/actions/retail-taxonomy'
 import { normalizeSearchText } from '@/lib/search'
@@ -196,7 +198,7 @@ export function RetailPricingTab(props: {
   const [loading, setLoading] = useState(true)
   const [listLoadError, setListLoadError] = useState<string | null>(null)
 
-  const [batch, setBatch] = useState<any>(null)
+  const [batch, setBatch] = useState<RetailCaptureBatchRow | null>(null)
   const [batchLoading, setBatchLoading] = useState(true)
   const [batchActionBusy, setBatchActionBusy] = useState(false)
   const [pipelineRunning, setPipelineRunning] = useState(false)
@@ -205,7 +207,7 @@ export function RetailPricingTab(props: {
   const [pipelineError, setPipelineError] = useState<string | null>(null)
   const [liderPanelTick, setLiderPanelTick] = useState(0)
   const [taxonomyBlocking, setTaxonomyBlocking] = useState(false)
-  const [reviewGroups, setReviewGroups] = useState<any[]>([])
+  const [reviewGroups, setReviewGroups] = useState<RetailLiderReviewGroupSummary[]>([])
   const [advOpen, setAdvOpen] = useState(false)
   const advancedDetailsRef = useRef<HTMLDetailsElement>(null)
   const [productsDetailOpen, setProductsDetailOpen] = useState(false)
@@ -252,11 +254,17 @@ export function RetailPricingTab(props: {
   }, [])
 
   useEffect(() => {
-    void reloadList()
+    const id = window.setTimeout(() => {
+      void reloadList()
+    }, 0)
+    return () => window.clearTimeout(id)
   }, [reloadList])
 
   useEffect(() => {
-    void reloadBatch()
+    const id = window.setTimeout(() => {
+      void reloadBatch()
+    }, 0)
+    return () => window.clearTimeout(id)
   }, [reloadBatch])
 
   useEffect(() => {
@@ -296,7 +304,10 @@ export function RetailPricingTab(props: {
   }, [liderPanelTick])
 
   useEffect(() => {
-    setPage(0)
+    const id = window.setTimeout(() => {
+      setPage(0)
+    }, 0)
+    return () => window.clearTimeout(id)
   }, [searchCommitted, unlinkedOnly])
 
   const [recaptureBusy, setRecaptureBusy] = useState(false)
