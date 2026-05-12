@@ -1,3 +1,8 @@
+/*
+ * Ruta: /app/(app)/precios-cadenas
+ * Nombre de la página: PreciosCadenasPage
+ */
+
 import { redirect } from 'next/navigation'
 import { RetailPricingTab } from '@/app/(app)/catalog/RetailPricingTab'
 import { createClient } from '@/lib/supabase/server'

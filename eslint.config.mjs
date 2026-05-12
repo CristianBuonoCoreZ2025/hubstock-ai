@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Herramientas / copias locales fuera del árbol de la app Next
+    "Roo-Code/**",
+    ".agents/**",
   ]),
 ]);
 

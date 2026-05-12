@@ -52,14 +52,6 @@ export function resolveLiderStoreBaseUrl(): string {
   return DEFAULT_STORE
 }
 
-function storeOriginUrl(): URL {
-  try {
-    return new URL(resolveLiderStoreBaseUrl())
-  } catch {
-    return new URL(DEFAULT_STORE)
-  }
-}
-
 function defaultHeaders(): Record<string, string> {
   return {
     Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',

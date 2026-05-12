@@ -2,27 +2,47 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { toast } from 'sonner'
 import {
+  AlertTriangle,
+  Ban,
+  Check,
+  ChevronDown,
+  CirclePlus,
   Folder,
   FolderOpen,
-  Link,
-  Check,
-  X,
-  Trash2,
-  Plus,
-  RefreshCw,
-  Search,
-  ChevronDown,
-  ChevronRight,
+  FolderPlus,
+  Link2,
   Loader2,
-  AlertTriangle,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
+import { toast } from 'sonner'
+import {
+  approveLiderRetailTaxonomyLiderSectionAction,
+  approveLiderRetailTaxonomyMappingAction,
+  createCategoryAndLinkLiderTaxonomyAction,
+  createMasterSectionFromLiderTaxonomySectionAction,
+  detectLiderRetailTaxonomyAction,
+  discardLiderRetailTaxonomyLiderSectionAction,
+  discardLiderRetailTaxonomyMappingAction,
+  fetchLiderRetailTaxonomyBlockingAction,
+  fetchLiderRetailTaxonomyBlockingSectionsAction,
+  fetchLiderRetailTaxonomyCategoriesByLinkedSectionsAction,
+  fetchLiderRetailTaxonomySectionsAction,
+  fetchMasterCategoriesForLinkedLiderSectionAction,
+  ignoreLiderRetailTaxonomyLiderSectionAction,
+  ignoreLiderRetailTaxonomyMappingAction,
+  linkLiderRetailTaxonomyLiderSectionAction,
+  linkLiderRetailTaxonomyMappingToMasterCategoryAction,
+  type RetailTaxonomyMappingUiRow,
+} from '@/app/actions/retail-taxonomy'
+import type { RetailTaxonomyLiderSectionRow } from '@/server/retail/taxonomy/lider-taxonomy-service'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
@@ -35,67 +55,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  detectLiderRetailTaxonomyAction,
-  fetchLiderRetailTaxonomyBlockingAction,
-  fetchLiderRetailTaxonomySectionsAction,
-  fetchLiderRetailTaxonomyBlockingSectionsAction,
-  fetchLiderRetailTaxonomyCategoriesByLinkedSectionsAction,
-  approveLiderRetailTaxonomyLiderSectionAction,
-  linkLiderRetailTaxonomyLiderSectionAction,
-  ignoreLiderRetailTaxonomyLiderSectionAction,
-  discardLiderRetailTaxonomyLiderSectionAction,
-  createMasterSectionFromLiderTaxonomySectionAction,
-  approveLiderRetailTaxonomyMappingAction,
-  ignoreLiderRetailTaxonomyMappingAction,
-  discardLiderRetailTaxonomyMappingAction,
-  createCategoryAndLinkLiderTaxonomyAction,
-  fetchMasterCategoriesForLinkedLiderSectionAction,
-  linkLiderRetailTaxonomyMappingToMasterCategoryAction,
-} from '@/app/actions/retail-taxonomy'
 
-/* ─────────────── tipos ─────────────── */
-
-type SectionOpt = { id: string; name: string }
-
-type LiderSecRow = {
+type SectionOpt = {
   id: string
-  retailer: string
-  external_section: string
-  normalized_external_section: string
-  source: string | null
-  source_url: string | null
-  products_count: number
-  status: string
-  section_id: string | null
-  confidence: number | null
-  reason: string | null
-  master_section_name?: string | null
+  name: string
+  sort_order: number
 }
 
-type LiderCatRow = {
-  id: string
-  retailer: string
-  lider_section_id: string | null
-  external_section: string
-  external_category: string
-  normalized_external_category: string
-  status: string
-  section_id: string | null
-  category_id: string | null
-  confidence: number | null
-  reason: string | null
-  products_count: number
-  master_category_name?: string | null
-  master_section_name?: string | null
+type Props = {
+  sections: SectionOpt[]
+  refreshToken?: number
+  onBlockingChanged?: (blocking: boolean, count: number) => void
 }
-
-/* ─────────────── helpers ─────────────── */
 
 const ACTIONABLE_STATUSES = new Set(['pending', 'missing', 'suggested', 'error'])
+const CLOSED_STATUSES = new Set(['linked', 'ignored', 'discarded'])
+const TOOLBAR_BTN = 'h-9 min-w-[190px] shrink-0'
 
-function statusLabel(s: string): string {
-  const map: Record<string, string> = {
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
     pending: 'Pendiente',
     missing: 'Faltante',
     suggested: 'Sugerido',
@@ -104,45 +82,52 @@ function statusLabel(s: string): string {
     discarded: 'Descartado',
     error: 'Error',
   }
-  return map[s] ?? s
+
+  return labels[status] ?? status
 }
 
-function statusBadgeClass(s: string): string {
-  switch (s) {
+function statusBadgeClass(status: string): string {
+  switch (status) {
     case 'pending':
-      return 'bg-yellow-100 text-yellow-800 border-yellow-200'
+      return 'border-amber-200 bg-amber-50 text-amber-800'
     case 'missing':
-      return 'bg-red-100 text-red-800 border-red-200'
+      return 'border-red-200 bg-red-50 text-red-800'
     case 'suggested':
-      return 'bg-blue-100 text-blue-800 border-blue-200'
+      return 'border-blue-200 bg-blue-50 text-blue-800'
     case 'linked':
-      return 'bg-green-100 text-green-800 border-green-200'
+      return 'border-emerald-200 bg-emerald-50 text-emerald-800'
     case 'ignored':
-      return 'bg-gray-100 text-gray-600 border-gray-200'
+      return 'border-slate-200 bg-slate-50 text-slate-600'
     case 'discarded':
-      return 'bg-gray-100 text-gray-400 border-gray-200 line-through'
+      return 'border-slate-200 bg-slate-50 text-slate-400'
     case 'error':
-      return 'bg-rose-100 text-rose-800 border-rose-200'
+      return 'border-rose-200 bg-rose-50 text-rose-800'
     default:
-      return 'bg-gray-100 text-gray-800 border-gray-200'
+      return 'border-border bg-muted text-muted-foreground'
   }
 }
 
-/* ─────────────── componente ─────────────── */
+function isActionable(status: string): boolean {
+  return ACTIONABLE_STATUSES.has(status)
+}
 
-export function LiderTaxonomyMatrix(props: {
-  sections: SectionOpt[]
-  refreshToken?: number
-  onBlockingChanged?: (blocking: boolean, count: number) => void
-}) {
-  const { sections, refreshToken = 0, onBlockingChanged } = props
+function isClosed(status: string): boolean {
+  return CLOSED_STATUSES.has(status)
+}
+
+export function LiderTaxonomyMatrix({
+  sections,
+  refreshToken = 0,
+  onBlockingChanged,
+}: Props) {
   const router = useRouter()
 
-  const [sectionRows, setSectionRows] = useState<LiderSecRow[]>([])
-  const [blockingSections, setBlockingSections] = useState<LiderSecRow[]>([])
+  const [sectionRows, setSectionRows] = useState<RetailTaxonomyLiderSectionRow[]>([])
+  const [blockingSections, setBlockingSections] = useState<RetailTaxonomyLiderSectionRow[]>([])
   const [categoriesBySectionId, setCategoriesBySectionId] = useState<
-    Record<string, LiderCatRow[]>
+    Record<string, RetailTaxonomyMappingUiRow[]>
   >({})
+
   const [loading, setLoading] = useState(false)
   const [detectBusy, setDetectBusy] = useState(false)
   const [categoriesDeferred, setCategoriesDeferred] = useState(false)
@@ -151,7 +136,6 @@ export function LiderTaxonomyMatrix(props: {
   const [rowBusy, setRowBusy] = useState<string | null>(null)
   const [secBusy, setSecBusy] = useState<string | null>(null)
 
-  /* dialogs */
   const [linkOpen, setLinkOpen] = useState(false)
   const [linkLiderSectionId, setLinkLiderSectionId] = useState<string | null>(null)
   const [linkMasterId, setLinkMasterId] = useState('')
@@ -163,7 +147,8 @@ export function LiderTaxonomyMatrix(props: {
   const [createBusy, setCreateBusy] = useState(false)
 
   const [hubSectionOpen, setHubSectionOpen] = useState(false)
-  const [hubSectionRow, setHubSectionRow] = useState<LiderSecRow | null>(null)
+  const [hubSectionRow, setHubSectionRow] =
+    useState<RetailTaxonomyLiderSectionRow | null>(null)
   const [hubSectionName, setHubSectionName] = useState('')
   const [hubSectionBusy, setHubSectionBusy] = useState(false)
 
@@ -176,45 +161,75 @@ export function LiderTaxonomyMatrix(props: {
   const [linkCatBusy, setLinkCatBusy] = useState(false)
   const [linkCatLoading, setLinkCatLoading] = useState(false)
 
-  /* ── visibilidad: solo pendientes ── */
+  const sortedMasterSections = useMemo(() => {
+    return [...sections].sort((a, b) => a.name.localeCompare(b.name, 'es'))
+  }, [sections])
+
   const visibleSectionRows = useMemo(() => {
     return sectionRows.filter((row) => {
-      if (ACTIONABLE_STATUSES.has(row.status)) return true
+      if (isActionable(row.status)) return true
+
       if (row.status === 'linked') {
-        const cats = categoriesBySectionId[row.id] ?? []
-        return cats.some((c) => ACTIONABLE_STATUSES.has(c.status))
+        const categories = categoriesBySectionId[row.id] ?? []
+        return categories.some((category) => isActionable(category.status))
       }
+
       return false
     })
   }, [sectionRows, categoriesBySectionId])
 
+  const pendingCategoriesCount = useMemo(() => {
+    return Object.values(categoriesBySectionId)
+      .flat()
+      .filter((row) => isActionable(row.status)).length
+  }, [categoriesBySectionId])
+
+  const linkedCategoriesCount = useMemo(() => {
+    return Object.values(categoriesBySectionId)
+      .flat()
+      .filter((row) => row.status === 'linked').length
+  }, [categoriesBySectionId])
+
+  const pendingSectionsCount = useMemo(() => {
+    return sectionRows.filter((row) => isActionable(row.status)).length
+  }, [sectionRows])
+
   const refreshBlocking = useCallback(async () => {
-    const r = await fetchLiderRetailTaxonomyBlockingAction()
-    if (r.ok) {
-      setCategoriesDeferred(r.blocking)
-      onBlockingChanged?.(r.blocking, r.blockingCount)
+    const res = await fetchLiderRetailTaxonomyBlockingAction()
+
+    if (res.ok) {
+      onBlockingChanged?.(res.blocking, res.blockingCount)
     }
   }, [onBlockingChanged])
 
   const loadAll = useCallback(async () => {
     setLoading(true)
-    const [sRes, bRes, catRes] = await Promise.all([
+
+    const [sectionsRes, blockingRes, categoriesRes] = await Promise.all([
       fetchLiderRetailTaxonomySectionsAction(),
       fetchLiderRetailTaxonomyBlockingSectionsAction(),
       fetchLiderRetailTaxonomyCategoriesByLinkedSectionsAction(),
     ])
+
     setLoading(false)
 
-    if (sRes.ok) setSectionRows(sRes.sections)
-    else toast.error(sRes.error)
+    if (sectionsRes.ok) {
+      setSectionRows(sectionsRes.sections)
+    } else {
+      toast.error(sectionsRes.error)
+    }
 
-    if (bRes.ok) setBlockingSections(bRes.rows)
-    else toast.error(bRes.error)
+    if (blockingRes.ok) {
+      setBlockingSections(blockingRes.rows)
+    } else {
+      toast.error(blockingRes.error)
+    }
 
-    if (catRes.ok) setCategoriesBySectionId(catRes.bySectionId)
-    else {
+    if (categoriesRes.ok) {
+      setCategoriesBySectionId(categoriesRes.bySectionId)
+    } else {
       setCategoriesBySectionId({})
-      toast.error(catRes.error)
+      toast.error(categoriesRes.error)
     }
 
     await refreshBlocking()
@@ -224,11 +239,12 @@ export function LiderTaxonomyMatrix(props: {
     void loadAll()
   }, [loadAll, refreshToken])
 
-  /* ── detectar taxonomía ── */
   async function runDetect() {
     setDetectBusy(true)
     setLastDetectSummary(null)
+
     const res = await detectLiderRetailTaxonomyAction()
+
     setDetectBusy(false)
 
     if (!res.ok) {
@@ -239,29 +255,31 @@ export function LiderTaxonomyMatrix(props: {
     if (res.categoriesDeferred) {
       setCategoriesDeferred(true)
       setLastDetectSummary(
-        `Secciones detectadas: ${res.sections}. Las categorías quedaron diferidas porque hay secciones pendientes de resolver.`
+        `Secciones detectadas: ${res.sections}. Las categorías quedaron diferidas porque hay secciones pendientes de resolver.`,
       )
+
       toast.success(
         `Secciones: ${res.sections}. Categorías diferidas: aún hay secciones pendientes, faltantes o sugeridas.`,
       )
     } else {
       setCategoriesDeferred(false)
+
       const seedPart =
         res.masterCatalogMappingsSeeded > 0
-          ? ` · Auto-vinculadas: ${res.masterCatalogMappingsSeeded}`
+          ? ` · Auto vinculadas: ${res.masterCatalogMappingsSeeded}`
           : ''
+
       setLastDetectSummary(
-        `Secciones: ${res.sections} · Categorías: ${res.categories}${seedPart}`
-      )
-      toast.success(
         `Secciones: ${res.sections} · Categorías: ${res.categories}${seedPart}`,
       )
+
+      toast.success(`Secciones: ${res.sections} · Categorías: ${res.categories}${seedPart}`)
     }
+
     await loadAll()
   }
 
-  /* ── sección: crear maestra ── */
-  function openHubCreateMaster(row: LiderSecRow) {
+  function openHubCreateMaster(row: RetailTaxonomyLiderSectionRow) {
     setHubSectionRow(row)
     setHubSectionName(row.external_section)
     setHubSectionOpen(true)
@@ -269,121 +287,165 @@ export function LiderTaxonomyMatrix(props: {
 
   async function runCreateHubMasterSection() {
     if (!hubSectionRow) return
+
     setHubSectionBusy(true)
+
     const res = await createMasterSectionFromLiderTaxonomySectionAction({
       liderSectionId: hubSectionRow.id,
       name: hubSectionName,
     })
+
     setHubSectionBusy(false)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Sección maestra creada y vinculada.')
     setHubSectionOpen(false)
+
     router.refresh()
     await loadAll()
   }
 
-  /* ── sección: sugerir maestra ── */
   function openLinkMaster(liderSectionId: string) {
     setLinkLiderSectionId(liderSectionId)
-    setLinkMasterId(sections[0]?.id ?? '')
+    setLinkMasterId(sortedMasterSections[0]?.id ?? '')
     setLinkOpen(true)
   }
 
   async function runLinkMaster() {
     if (!linkLiderSectionId || !linkMasterId) return
+
     setLinkBusy(true)
+
     const res = await linkLiderRetailTaxonomyLiderSectionAction({
       liderSectionId: linkLiderSectionId,
       masterSectionId: linkMasterId,
     })
+
     setLinkBusy(false)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
-    toast.success('Sugerencia registrada. Aprobá el vínculo con el ícono de confirmación.')
+
+    toast.success('Sugerencia registrada. Aprueba el vínculo para cerrar la sección.')
     setLinkOpen(false)
+
     await loadAll()
   }
 
-  /* ── sección: aprobar / ignorar / descartar ── */
   async function runApproveSection(id: string) {
     setSecBusy(id)
-    const res = await approveLiderRetailTaxonomyLiderSectionAction({ liderSectionId: id })
+
+    const res = await approveLiderRetailTaxonomyLiderSectionAction({
+      liderSectionId: id,
+    })
+
     setSecBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Sección aprobada.')
     await loadAll()
   }
 
   async function runIgnoreSection(id: string) {
     setSecBusy(id)
-    const res = await ignoreLiderRetailTaxonomyLiderSectionAction({ liderSectionId: id })
+
+    const res = await ignoreLiderRetailTaxonomyLiderSectionAction({
+      liderSectionId: id,
+    })
+
     setSecBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Sección ignorada.')
     await loadAll()
   }
 
   async function runDiscardSection(id: string) {
     setSecBusy(id)
-    const res = await discardLiderRetailTaxonomyLiderSectionAction({ liderSectionId: id })
+
+    const res = await discardLiderRetailTaxonomyLiderSectionAction({
+      liderSectionId: id,
+    })
+
     setSecBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Sección descartada.')
     await loadAll()
   }
 
-  /* ── categoría: aprobar / ignorar / descartar ── */
   async function runApproveMapping(id: string) {
     setRowBusy(id)
-    const res = await approveLiderRetailTaxonomyMappingAction({ mappingId: id })
+
+    const res = await approveLiderRetailTaxonomyMappingAction({
+      mappingId: id,
+    })
+
     setRowBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Categoría aprobada.')
     await loadAll()
   }
 
   async function runIgnoreMapping(id: string) {
     setRowBusy(id)
-    const res = await ignoreLiderRetailTaxonomyMappingAction({ mappingId: id })
+
+    const res = await ignoreLiderRetailTaxonomyMappingAction({
+      mappingId: id,
+    })
+
     setRowBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Categoría ignorada.')
     await loadAll()
   }
 
   async function runDiscardMapping(id: string) {
     setRowBusy(id)
-    const res = await discardLiderRetailTaxonomyMappingAction({ mappingId: id })
+
+    const res = await discardLiderRetailTaxonomyMappingAction({
+      mappingId: id,
+    })
+
     setRowBusy(null)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Categoría descartada.')
     await loadAll()
   }
 
-  /* ── categoría: crear maestra ── */
   function openCreateCategory(mappingId: string, defaultName: string) {
     setCreateMappingId(mappingId)
     setCreateName(defaultName)
@@ -392,36 +454,48 @@ export function LiderTaxonomyMatrix(props: {
 
   async function runCreateCategory() {
     if (!createMappingId) return
+
     setCreateBusy(true)
+
     const res = await createCategoryAndLinkLiderTaxonomyAction({
       mappingId: createMappingId,
       categoryName: createName,
     })
+
     setCreateBusy(false)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
+
     toast.success('Categoría creada y vinculada.')
     setCreateOpen(false)
+
     await loadAll()
   }
 
-  /* ── categoría: relacionar con maestra ── */
   async function openLinkCategoryToMaster(mappingId: string, liderSectionId: string) {
     setLinkCatMappingId(mappingId)
     setLinkCatCategoryId('')
     setLinkCatOptions([])
     setLinkCatOpen(true)
     setLinkCatLoading(true)
-    const res = await fetchMasterCategoriesForLinkedLiderSectionAction({ liderSectionId })
+
+    const res = await fetchMasterCategoriesForLinkedLiderSectionAction({
+      liderSectionId,
+    })
+
     setLinkCatLoading(false)
+
     if (!res.ok) {
       toast.error(res.error)
       setLinkCatOpen(false)
       return
     }
+
     setLinkCatOptions(res.categories)
+
     if (res.categories.length > 0) {
       setLinkCatCategoryId(res.categories[0]!.id)
     }
@@ -429,22 +503,27 @@ export function LiderTaxonomyMatrix(props: {
 
   async function runLinkCategoryToMaster() {
     if (!linkCatMappingId || !linkCatCategoryId) return
+
     setLinkCatBusy(true)
+
     const res = await linkLiderRetailTaxonomyMappingToMasterCategoryAction({
       mappingId: linkCatMappingId,
       categoryId: linkCatCategoryId,
     })
+
     setLinkCatBusy(false)
+
     if (!res.ok) {
       toast.error(res.error)
       return
     }
-    toast.success('Categoría maestra asignada. Revisá y aprobá si quedó como sugerida.')
+
+    toast.success('Categoría maestra asignada. Revisa y aprueba si quedó como sugerida.')
     setLinkCatOpen(false)
+
     await loadAll()
   }
 
-  /* ── tree toggle ── */
   function toggleTreeSection(sectionId: string, defaultExpandedWhenUnset: boolean) {
     setTreeExpanded((prev) => {
       const isOpen = prev[sectionId] ?? defaultExpandedWhenUnset
@@ -452,203 +531,269 @@ export function LiderTaxonomyMatrix(props: {
     })
   }
 
-  function isSectionTreeExpanded(sectionId: string, defaultExpandedWhenUnset: boolean): boolean {
+  function isSectionTreeExpanded(
+    sectionId: string,
+    defaultExpandedWhenUnset: boolean,
+  ): boolean {
     return treeExpanded[sectionId] ?? defaultExpandedWhenUnset
   }
 
-  const sortedMasterSections = [...sections].sort((a, b) =>
-    a.name.localeCompare(b.name, 'es'),
-  )
-
   return (
-    <div className="space-y-4">
-      {/* header */}
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 rounded-lg border border-border bg-card p-4 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h3 className="text-lg font-semibold">Taxonomía Lider</h3>
-          <p className="text-sm text-muted-foreground">
-            Detectá secciones y categorías reales desde super.lider.cl. Compará contra el catálogo
-            maestro y resolvé solo las diferencias.
+          <h3 className="text-[15px] font-semibold text-foreground">
+            Taxonomía Lider
+          </h3>
+
+          <p className="mt-1 max-w-prose text-[13px] leading-snug text-muted-foreground">
+            Detecta secciones y categorías reales desde Lider. Compara contra el catálogo
+            maestro y muestra solo diferencias pendientes.
           </p>
         </div>
+
         <Button
-          onClick={runDetect}
+          type="button"
+          onClick={() => void runDetect()}
           disabled={detectBusy}
-          className="h-9 gap-2"
+          className={TOOLBAR_BTN}
         >
-          {detectBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+          {detectBusy ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Sparkles className="mr-2 h-4 w-4" aria-hidden />
+          )}
           {detectBusy ? 'Detectando…' : 'Detectar taxonomía'}
         </Button>
       </div>
 
-      {/* resumen última detección */}
-      {lastDetectSummary && (
-        <div className="rounded-lg border border-border bg-card p-3 text-sm shadow-sm">
-          <span className="font-medium">Última detección:</span>{' '}
+      {lastDetectSummary ? (
+        <div className="rounded-lg border border-border bg-background px-4 py-3 text-[13px] shadow-sm">
+          <span className="font-medium text-foreground">Última detección:</span>{' '}
           <span className="text-muted-foreground">{lastDetectSummary}</span>
         </div>
-      )}
+      ) : null}
 
-      {/* banner categoriesDeferred */}
-      {categoriesDeferred && (
+      {categoriesDeferred ? (
         <div className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" aria-hidden />
           <div>
             <p className="font-semibold">Categorías diferidas: Sí</p>
             <p className="text-amber-800">
               Hay secciones Lider pendientes de resolver. Las categorías no se actualizaron.
-              Resolvé las secciones de abajo y volvé a detectar.
+              Resuelve las secciones de abajo y vuelve a detectar.
             </p>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* secciones bloqueantes resumen */}
-      {blockingSections.length > 0 && (
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Secciones detectadas
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">
+            {sectionRows.length}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Secciones pendientes
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">
+            {pendingSectionsCount}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Categorías pendientes
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">
+            {pendingCategoriesCount}
+          </p>
+        </div>
+
+        <div className="rounded-lg border border-border bg-background px-4 py-3">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+            Categorías resueltas
+          </p>
+          <p className="mt-1 text-2xl font-semibold tabular-nums">
+            {linkedCategoriesCount}
+          </p>
+        </div>
+      </div>
+
+      {blockingSections.length > 0 ? (
         <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm">
           <p className="font-semibold text-red-900">
             Secciones bloqueantes ({blockingSections.length})
           </p>
+
           <ul className="mt-2 space-y-1">
-            {blockingSections.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 text-red-800">
+            {blockingSections.map((row) => (
+              <li key={row.id} className="flex items-center gap-2 text-red-800">
                 <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
-                {r.external_section} · {statusLabel(r.status)}
+                {row.external_section} · {statusLabel(row.status)}
               </li>
             ))}
           </ul>
         </div>
-      )}
+      ) : null}
 
-      {/* árbol */}
-      <div className="rounded-lg border border-border bg-card shadow-sm">
-        {loading && sectionRows.length === 0 && (
+      <div className="rounded-lg border border-border bg-background shadow-sm">
+        {loading && sectionRows.length === 0 ? (
           <div className="flex items-center justify-center gap-2 p-8 text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             Cargando taxonomía…
           </div>
-        )}
+        ) : null}
 
-        {!loading && visibleSectionRows.length === 0 && (
+        {!loading && visibleSectionRows.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             {sectionRows.length === 0
-              ? 'Aún no hay datos. Ejecutá la detección para leer la taxonomía real de Lider.'
+              ? 'Aún no hay datos. Ejecuta la detección para leer la taxonomía real de Lider.'
               : 'No hay secciones ni categorías pendientes. Todo está resuelto, ignorado o descartado.'}
           </div>
-        )}
+        ) : null}
 
         <div className="divide-y divide-border">
           {visibleSectionRows.map((row) => {
             const catRows = categoriesBySectionId[row.id] ?? []
-            const visibleCats = catRows.filter((c) => ACTIONABLE_STATUSES.has(c.status))
+            const visibleCats = catRows.filter((category) =>
+              isActionable(category.status),
+            )
             const defaultExpanded = row.status === 'linked' && visibleCats.length > 0
             const expanded = isSectionTreeExpanded(row.id, defaultExpanded)
             const SectionIcon = expanded ? FolderOpen : Folder
 
             return (
               <div key={row.id} className="p-4">
-                {/* fila sección */}
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
                   <button
+                    type="button"
                     onClick={() => toggleTreeSection(row.id, defaultExpanded)}
-                    className="flex items-center gap-2 text-left"
+                    className="flex min-w-0 items-center gap-2 text-left"
                   >
-                    <SectionIcon className="h-4 w-4 shrink-0 text-muted-foreground" />
-                    <span className="font-medium">{row.external_section}</span>
-                    {visibleCats.length > 0 && (
+                    <SectionIcon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+
+                    <span className="truncate font-medium text-foreground">
+                      {row.external_section}
+                    </span>
+
+                    {visibleCats.length > 0 ? (
                       <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                         {visibleCats.length}
                       </span>
-                    )}
+                    ) : null}
+
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                        expanded ? 'rotate-180' : ''
+                      }`}
+                      aria-hidden
+                    />
                   </button>
 
                   <div className="flex flex-wrap items-center gap-2">
                     <span
-                      className={`rounded-md border px-2 py-0.5 text-xs ${statusBadgeClass(row.status)}`}
+                      className={`rounded-md border px-2 py-0.5 text-xs ${statusBadgeClass(
+                        row.status,
+                      )}`}
                     >
                       {statusLabel(row.status)}
                     </span>
-                    {row.master_section_name && (
+
+                    {row.master_section_name ? (
                       <span className="text-xs text-muted-foreground">
                         → {row.master_section_name}
                       </span>
-                    )}
-                    {row.confidence != null && (
+                    ) : null}
+
+                    {row.confidence != null ? (
                       <span className="text-xs text-muted-foreground">
                         conf. {Number(row.confidence).toFixed(2)}
                       </span>
-                    )}
+                    ) : null}
 
-                    {/* acciones */}
-                    {row.status !== 'linked' &&
-                      row.status !== 'ignored' &&
-                      row.status !== 'discarded' && (
-                        <>
+                    {!isClosed(row.status) ? (
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={secBusy === row.id}
+                          onClick={() => openHubCreateMaster(row)}
+                        >
+                          <CirclePlus className="h-3.5 w-3.5" aria-hidden />
+                          Crear
+                        </Button>
+
+                        {row.status === 'suggested' && row.section_id ? (
                           <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Crear sección maestra"
-                            onClick={() => openHubCreateMaster(row)}
-                          >
-                            <Plus className="h-3.5 w-3.5" />
-                          </Button>
-                          {row.status === 'suggested' && row.section_id && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Aprobar"
-                              onClick={() => runApproveSection(row.id)}
-                              disabled={secBusy === row.id}
-                            >
-                              {secBusy === row.id ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              ) : (
-                                <Check className="h-3.5 w-3.5 text-green-600" />
-                              )}
-                            </Button>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Sugerir sección maestra"
-                            onClick={() => openLinkMaster(row.id)}
-                          >
-                            <Link className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Ignorar"
-                            onClick={() => runIgnoreSection(row.id)}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
                             disabled={secBusy === row.id}
+                            onClick={() => void runApproveSection(row.id)}
                           >
-                            <X className="h-3.5 w-3.5 text-gray-500" />
+                            {secBusy === row.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                            ) : (
+                              <Check className="h-3.5 w-3.5" aria-hidden />
+                            )}
+                            Aprobar
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-7 w-7"
-                            title="Descartar"
-                            onClick={() => runDiscardSection(row.id)}
-                            disabled={secBusy === row.id}
-                          >
-                            <Trash2 className="h-3.5 w-3.5 text-red-400" />
-                          </Button>
-                        </>
-                      )}
+                        ) : null}
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={secBusy === row.id}
+                          onClick={() => openLinkMaster(row.id)}
+                        >
+                          <Link2 className="h-3.5 w-3.5" aria-hidden />
+                          Relacionar
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={secBusy === row.id}
+                          onClick={() => void runIgnoreSection(row.id)}
+                        >
+                          <Ban className="h-3.5 w-3.5" aria-hidden />
+                          Ignorar
+                        </Button>
+
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={secBusy === row.id}
+                          onClick={() => void runDiscardSection(row.id)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                          Descartar
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
 
-                {/* categorías */}
-                {expanded && (
-                  <div className="mt-3 space-y-2 pl-6">
+                {expanded ? (
+                  <div className="mt-3 space-y-2 border-l border-dashed border-border pl-5">
                     {row.status !== 'linked' ? (
                       <p className="text-xs text-muted-foreground">
-                        Vinculá la sección con el catálogo maestro para ver y resolver las
+                        Vincula la sección con el catálogo maestro para ver y resolver las
                         categorías Lider de esta rama.
                       </p>
                     ) : visibleCats.length === 0 ? (
@@ -656,256 +801,317 @@ export function LiderTaxonomyMatrix(props: {
                         No hay categorías pendientes en esta sección.
                       </p>
                     ) : (
-                      visibleCats.map((r) => (
+                      visibleCats.map((category) => (
                         <div
-                          key={r.id}
-                          className="flex items-start justify-between gap-3 rounded-md border border-border bg-background/50 p-3"
+                          key={category.id}
+                          className="flex flex-col gap-3 rounded-md border border-border bg-card p-3 lg:flex-row lg:items-start lg:justify-between"
                         >
                           <div className="min-w-0">
-                            <p className="text-sm font-medium">{r.external_category}</p>
+                            <p className="text-sm font-medium text-foreground">
+                              {category.external_category}
+                            </p>
+
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
                               <span
-                                className={`rounded border px-1.5 py-0.5 ${statusBadgeClass(r.status)}`}
+                                className={`rounded border px-1.5 py-0.5 ${statusBadgeClass(
+                                  category.status,
+                                )}`}
                               >
-                                {statusLabel(r.status)}
+                                {statusLabel(category.status)}
                               </span>
-                              {r.master_category_name && (
+
+                              {category.master_category_name ? (
                                 <span className="text-muted-foreground">
-                                  → {r.master_category_name}
+                                  → {category.master_category_name}
                                 </span>
-                              )}
-                              {r.confidence != null && (
+                              ) : null}
+
+                              {category.confidence != null ? (
                                 <span className="text-muted-foreground">
-                                  conf. {Number(r.confidence).toFixed(2)}
+                                  conf. {Number(category.confidence).toFixed(2)}
                                 </span>
-                              )}
-                              {r.products_count > 0 && (
+                              ) : null}
+
+                              {category.products_count > 0 ? (
                                 <span className="text-muted-foreground">
-                                  ~{r.products_count} productos capturados
+                                  ~{category.products_count} productos capturados
                                 </span>
-                              )}
+                              ) : null}
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-1">
-                            {r.status === 'suggested' && r.category_id && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {category.status === 'suggested' && category.category_id ? (
                               <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-7 w-7"
-                                title="Aprobar"
-                                onClick={() => runApproveMapping(r.id)}
-                                disabled={rowBusy === r.id}
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-1"
+                                disabled={rowBusy === category.id}
+                                onClick={() => void runApproveMapping(category.id)}
                               >
-                                {rowBusy === r.id ? (
-                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                {rowBusy === category.id ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
                                 ) : (
-                                  <Check className="h-3.5 w-3.5 text-green-600" />
+                                  <Check className="h-3.5 w-3.5" aria-hidden />
                                 )}
+                                Aprobar
                               </Button>
-                            )}
-                            {!r.category_id && (
+                            ) : null}
+
+                            {!category.category_id ? (
                               <>
                                 <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  title="Crear categoría maestra"
-                                  onClick={() => openCreateCategory(r.id, r.external_category)}
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  title="Relacionar con categoría maestra"
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1"
+                                  disabled={rowBusy === category.id}
                                   onClick={() =>
-                                    openLinkCategoryToMaster(r.id, row.id)
+                                    openCreateCategory(
+                                      category.id,
+                                      category.external_category,
+                                    )
                                   }
                                 >
-                                  <Link className="h-3.5 w-3.5" />
+                                  <FolderPlus className="h-3.5 w-3.5" aria-hidden />
+                                  Crear
+                                </Button>
+
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 gap-1"
+                                  disabled={rowBusy === category.id}
+                                  onClick={() =>
+                                    void openLinkCategoryToMaster(category.id, row.id)
+                                  }
+                                >
+                                  <Link2 className="h-3.5 w-3.5" aria-hidden />
+                                  Relacionar
                                 </Button>
                               </>
-                            )}
+                            ) : null}
+
                             <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Ignorar"
-                              onClick={() => runIgnoreMapping(r.id)}
-                              disabled={rowBusy === r.id}
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="h-8 gap-1"
+                              disabled={rowBusy === category.id}
+                              onClick={() => void runIgnoreMapping(category.id)}
                             >
-                              <X className="h-3.5 w-3.5 text-gray-500" />
+                              <Ban className="h-3.5 w-3.5" aria-hidden />
+                              Ignorar
                             </Button>
+
                             <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7"
-                              title="Descartar"
-                              onClick={() => runDiscardMapping(r.id)}
-                              disabled={rowBusy === r.id}
+                              type="button"
+                              variant="destructive"
+                              size="sm"
+                              className="h-8 gap-1"
+                              disabled={rowBusy === category.id}
+                              onClick={() => void runDiscardMapping(category.id)}
                             >
-                              <Trash2 className="h-3.5 w-3.5 text-red-400" />
+                              <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                              Descartar
                             </Button>
                           </div>
                         </div>
                       ))
                     )}
                   </div>
-                )}
+                ) : null}
               </div>
             )
           })}
         </div>
       </div>
 
-      {/* ── dialogs ── */}
-
-      {/* Crear sección maestra */}
       <Dialog open={hubSectionOpen} onOpenChange={setHubSectionOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nueva sección maestra desde Lider</DialogTitle>
+            <DialogDescription>
+              El catálogo maestro es compartido. Al confirmar, se agrega la sección en el
+              catálogo y queda vinculada a esta fila Lider.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            El catálogo maestro es compartido: no creamos secciones en automático. Al confirmar,
-            se agrega la sección en el catálogo y queda vinculada a esta fila Lider.
-          </p>
-          <div className="space-y-2">
-            <Label>Nombre de la sección maestra</Label>
+
+          <div className="space-y-2 py-2">
+            <Label htmlFor="lider-hub-sec-name">Nombre de la sección maestra</Label>
             <Input
+              id="lider-hub-sec-name"
               value={hubSectionName}
-              onChange={(e) => setHubSectionName(e.target.value)}
+              onChange={(event) => setHubSectionName(event.target.value)}
               autoComplete="off"
             />
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setHubSectionOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setHubSectionOpen(false)}
+            >
               Cancelar
             </Button>
-            <Button onClick={runCreateHubMasterSection} disabled={hubSectionBusy}>
-              {hubSectionBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+
+            <Button
+              type="button"
+              disabled={hubSectionBusy || !hubSectionName.trim()}
+              onClick={() => void runCreateHubMasterSection()}
+            >
+              {hubSectionBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
               Crear y vincular
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Sugerir sección maestra */}
       <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Sugerir sección maestra</DialogTitle>
+            <DialogTitle>Relacionar sección Lider</DialogTitle>
+            <DialogDescription>
+              Elige la sección maestra equivalente. La fila quedará sugerida hasta que la
+              apruebes.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Elegí la sección de Supabase equivalente. La fila quedará como sugerida hasta que la
-            apruebes.
-          </p>
-          <div className="space-y-2">
+
+          <div className="space-y-2 py-2">
             <Label>Sección maestra</Label>
+
             <Select value={linkMasterId} onValueChange={setLinkMasterId}>
               <SelectTrigger>
-                <SelectValue placeholder="Elegir sección…" />
+                <SelectValue placeholder="Elegir sección" />
               </SelectTrigger>
+
               <SelectContent>
-                {sortedMasterSections.map((s) => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name}
+                {sortedMasterSections.map((section) => (
+                  <SelectItem key={section.id} value={section.id}>
+                    {section.name}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setLinkOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => setLinkOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={runLinkMaster} disabled={linkBusy || !linkMasterId}>
-              {linkBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Guardar sugerencia
+
+            <Button
+              type="button"
+              disabled={linkBusy || !linkMasterId}
+              onClick={() => void runLinkMaster()}
+            >
+              {linkBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
+              Guardar relación
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Crear categoría maestra */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nueva categoría maestra</DialogTitle>
+            <DialogDescription>
+              Se crea en la sección maestra ya vinculada a la sección Lider padre.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Se crea en la sección maestra ya vinculada a la sección Lider padre.
-          </p>
-          <div className="space-y-2">
-            <Label>Nombre categoría</Label>
+
+          <div className="space-y-2 py-2">
+            <Label htmlFor="lider-tax-cat-name">Nombre categoría</Label>
             <Input
+              id="lider-tax-cat-name"
               value={createName}
-              onChange={(e) => setCreateName(e.target.value)}
+              onChange={(event) => setCreateName(event.target.value)}
               autoComplete="off"
             />
           </div>
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => setCreateOpen(false)}>
               Cancelar
             </Button>
-            <Button onClick={runCreateCategory} disabled={createBusy || !createName.trim()}>
-              {createBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+
+            <Button
+              type="button"
+              disabled={createBusy || !createName.trim()}
+              onClick={() => void runCreateCategory()}
+            >
+              {createBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
               Crear y vincular
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Relacionar categoría con maestra */}
       <Dialog open={linkCatOpen} onOpenChange={setLinkCatOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Relacionar con categoría maestra</DialogTitle>
+            <DialogDescription>
+              Elige una categoría existente en la sección maestra vinculada. El mapeo queda
+              sugerido hasta que lo apruebes.
+            </DialogDescription>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            Elegí una categoría que ya exista en la sección maestra vinculada. El mapeo quedará
-            como sugerido hasta que lo apruebes.
-          </p>
+
           {linkCatLoading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
+            <p className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
               Cargando categorías…
-            </div>
+            </p>
           ) : linkCatOptions.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="py-4 text-sm text-muted-foreground">
               No hay categorías maestras en la sección vinculada.
             </p>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-2 py-2">
               <Label>Categoría maestra</Label>
+
               <Select value={linkCatCategoryId} onValueChange={setLinkCatCategoryId}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Elegir categoría…" />
+                  <SelectValue placeholder="Elegir categoría" />
                 </SelectTrigger>
+
                 <SelectContent>
-                  {linkCatOptions.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
+                  {linkCatOptions.map((category) => (
+                    <SelectItem key={category.id} value={category.id}>
+                      {category.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
           )}
-          <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setLinkCatOpen(false)}>
+
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => setLinkCatOpen(false)}>
               Cancelar
             </Button>
+
             <Button
-              onClick={runLinkCategoryToMaster}
-              disabled={linkCatBusy || !linkCatCategoryId || linkCatOptions.length === 0}
+              type="button"
+              disabled={linkCatBusy || linkCatLoading || !linkCatCategoryId}
+              onClick={() => void runLinkCategoryToMaster()}
             >
-              {linkCatBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {linkCatBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : null}
               Guardar relación
             </Button>
-          </div>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
