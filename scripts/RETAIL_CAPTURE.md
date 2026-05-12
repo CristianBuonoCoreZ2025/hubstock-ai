@@ -15,6 +15,16 @@ La pantalla **Catálogo → Precios por cadena → Capturar** usa **peticiones H
 
 ---
 
+## Partir de cero (solo capturas, no el maestro)
+
+Para vaciar **únicamente** datos de tienda (snapshots + vínculos retail→maestro) y dejar el catálogo maestro intacto, ejecuta en el SQL Editor de Supabase el script:
+
+[`scripts/sql/reset-retail-captures-only.sql`](./sql/reset-retail-captures-only.sql)
+
+Borra `catalog_retail_snapshots`, `catalog_retail_links` y, si existen, las tablas `retail_capture_batches` / `retail_captured_products` / `retail_ai_match_reviews`. No borra `catalog_products`.
+
+---
+
 ## Idea central
 
 - **`catalog_products`**: un solo registro por producto “canónico” (nombre de referencia global).

@@ -1,5 +1,5 @@
 /**
- * Catálogo de cadenas retail soportadas por captura VTEX / JSON en la app.
+ * Catálogo de cadenas retail soportadas por captura web / JSON en la app.
  * Los scrapers locales (p. ej. SQLite Lider) siguen en scripts/; esta lista es la fuente de verdad para UI y validación.
  */
 
@@ -29,7 +29,7 @@ export const RETAILER_REGISTRY: RetailerDefinition[] = [
     vtexBaseUrlEnvVar: 'RETAIL_LIDER_VTEX_BASE_URL',
     defaultVtexBaseUrl: null,
     help:
-      'Volumen masivo: carpeta lider/ + import_retail_snapshots.py (SQLite). Captura web en la app = muestra en vivo (super.lider.cl por defecto), no reemplaza el scraper.',
+      'Captura en vivo desde el sitio (HTML). Opcional: RETAIL_LIDER_STORE_ORIGIN o RETAIL_LIDER_VTEX_BASE_URL. Catálogo masivo: cola de listados; RETAIL_LIDER_STOREFRONT_BROWSE_URLS agrega rutas /browse/. Volumen offline: carpeta lider/ + scripts.',
   },
   {
     code: 'central_mayorista',

@@ -1,51 +1,85 @@
-import Link from 'next/link'
-import { createClient } from '@/lib/supabase/server'
-import { getProfileContext } from '@/lib/profile/context'
+import { redirect } from 'next/navigation'
 import { RetailPricingTab } from '@/app/(app)/catalog/RetailPricingTab'
-import type { CategoryRow, SectionRow } from '@/app/(app)/catalog/CatalogTabs'
+import { createClient } from '@/lib/supabase/server'
 
-/** Barridos largos: máximo tiempo de función serverless (ajustar según plan del hosting). */
-export const maxDuration = 300
+export const metadata = {
+  title: 'Precios Cadenas | HubStock AI',
+}
+
+type SectionRow = {
+  id: string
+  name: string
+  sort_order: number
+}
+
+type CategoryRow = {
+  id: string
+  name: string
+  section_id: string
+}
 
 export default async function PreciosCadenasPage() {
-  const { activeProfileId, profiles } = await getProfileContext()
+  const supabase = await createClient()
 
-  if (!activeProfileId || profiles.length === 0) {
-    return (
-      <div className="app-page">
-        <header className="app-page-header">
-          <h1 className="app-page-title">Precios por cadena</h1>
-          <p className="app-page-lead">Necesitas un perfil activo para usar esta herramienta.</p>
-        </header>
-      </div>
-    )
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    redirect('/login')
   }
 
-  const supabase = await createClient()
-  const [{ data: sections, error: sectionsError }, { data: categories }] = await Promise.all([
-    supabase.from('sections').select('id, name, sort_order').order('sort_order'),
-    supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
-  ])
+  const [{ data: sections, error: sectionsError }, { data: categories, error: categoriesError }] =
+    await Promise.all([
+      supabase
+        .from('sections')
+        .select('id, name, sort_order')
+        .order('sort_order', { ascending: true }),
+
+      supabase
+        .from('categories')
+        .select('id, name, section_id')
+        .order('name', { ascending: true }),
+    ])
+
+  const safeSections: SectionRow[] = (sections ?? []).map((section) => ({
+    id: String(section.id),
+    name: String(section.name),
+    sort_order: Number(section.sort_order ?? 0),
+  }))
+
+  const safeCategories: CategoryRow[] = (categories ?? []).map((category) => ({
+    id: String(category.id),
+    name: String(category.name),
+    section_id: String(category.section_id),
+  }))
 
   return (
     <div className="app-page">
-      {sectionsError ?
-        <p className="mb-4 text-sm text-destructive">
-          No se pudo cargar la taxonomía del catálogo. Intenta nuevamente más tarde.
-        </p>
-      : null}
+      <header className="app-page-header">
+        <h1 className="app-page-title">Precios cadenas</h1>
 
-      <p className="mb-6 text-[13px] text-muted-foreground">
-        Herramienta de administración para nutrir precios desde tiendas y homologarlos al{' '}
-        <Link href="/catalog" className="text-primary underline underline-offset-2">
-          catálogo maestro
-        </Link>
-        .
-      </p>
+        <p className="app-page-lead max-w-prose">
+          Captura y homologa precios de retail contra el catálogo maestro.
+          Primero resuelve la taxonomía, después captura productos.
+        </p>
+      </header>
+
+      {sectionsError ? (
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          No se pudieron cargar las secciones del catálogo maestro.
+        </div>
+      ) : null}
+
+      {categoriesError ? (
+        <div className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          No se pudieron cargar las categorías del catálogo maestro.
+        </div>
+      ) : null}
 
       <RetailPricingTab
-        sections={(sections ?? []) as SectionRow[]}
-        categories={(categories ?? []) as CategoryRow[]}
+        sections={safeSections}
+        categories={safeCategories}
       />
     </div>
   )
