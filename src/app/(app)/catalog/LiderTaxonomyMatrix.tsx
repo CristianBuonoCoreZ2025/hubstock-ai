@@ -204,35 +204,36 @@ export function LiderTaxonomyMatrix({
 
   const loadAll = useCallback(async () => {
     setLoading(true)
+    try {
+      const [sectionsRes, blockingRes, categoriesRes] = await Promise.all([
+        fetchLiderRetailTaxonomySectionsAction(),
+        fetchLiderRetailTaxonomyBlockingSectionsAction(),
+        fetchLiderRetailTaxonomyCategoriesByLinkedSectionsAction(),
+      ])
 
-    const [sectionsRes, blockingRes, categoriesRes] = await Promise.all([
-      fetchLiderRetailTaxonomySectionsAction(),
-      fetchLiderRetailTaxonomyBlockingSectionsAction(),
-      fetchLiderRetailTaxonomyCategoriesByLinkedSectionsAction(),
-    ])
+      if (sectionsRes.ok) {
+        setSectionRows(sectionsRes.sections)
+      } else {
+        toast.error(sectionsRes.error)
+      }
 
-    setLoading(false)
+      if (blockingRes.ok) {
+        setBlockingSections(blockingRes.rows)
+      } else {
+        toast.error(blockingRes.error)
+      }
 
-    if (sectionsRes.ok) {
-      setSectionRows(sectionsRes.sections)
-    } else {
-      toast.error(sectionsRes.error)
+      if (categoriesRes.ok) {
+        setCategoriesBySectionId(categoriesRes.bySectionId)
+      } else {
+        setCategoriesBySectionId({})
+        toast.error(categoriesRes.error)
+      }
+
+      await refreshBlocking()
+    } finally {
+      setLoading(false)
     }
-
-    if (blockingRes.ok) {
-      setBlockingSections(blockingRes.rows)
-    } else {
-      toast.error(blockingRes.error)
-    }
-
-    if (categoriesRes.ok) {
-      setCategoriesBySectionId(categoriesRes.bySectionId)
-    } else {
-      setCategoriesBySectionId({})
-      toast.error(categoriesRes.error)
-    }
-
-    await refreshBlocking()
   }, [refreshBlocking])
 
   useEffect(() => {
@@ -548,7 +549,9 @@ export function LiderTaxonomyMatrix({
 
           <p className="mt-1 max-w-prose text-[13px] leading-snug text-muted-foreground">
             Detecta secciones y categorías reales desde Lider. Compara contra el catálogo
-            maestro y muestra solo diferencias pendientes.
+            maestro y muestra solo diferencias pendientes. Si solo necesitas revisar rutas en
+            un archivo de texto (sin productos ni guardar en base), usa «Exportar diagnóstico
+            .txt» en el bloque de captura que está debajo de esta tarjeta.
           </p>
         </div>
 

@@ -7,10 +7,13 @@ import { createClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/server/supabase-admin'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import { normalizeLiderSectionKeyStrong } from '@/lib/lider-taxonomy-section-heuristics'
+import { mkdir, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 import {
   mergeLiderDiscoveredCategoryLists,
   runLiderTaxonomyTwoPhaseDiscovery,
 } from '@/server/retail/capture/lider-taxonomy-two-phase-discovery'
+import { buildLiderTaxonomyDiscoveryReportText } from '@/server/retail/capture/lider-discovery-report-text'
 import {
   applyFuzzyCategorySuggestionsForLider,
   applyFuzzyMasterSectionMatchForLider,
@@ -66,6 +69,37 @@ async function requireCatalogEditorRetail(): Promise<
 export type RetailTaxonomyMappingUiRow = RetailTaxonomyMappingRow & {
   master_category_name?: string | null
   master_section_name?: string | null
+}
+
+/**
+ * Ejecuta el mismo descubrimiento que la taxonomía Lider y devuelve texto plano
+ * (secciones + categorías inferidas desde URLs, sin productos).
+ * En desarrollo también escribe `logs/lider-discovery-latest.txt`.
+ */
+export async function generateLiderDiscoveryPreviewLogAction(): Promise<
+  | { ok: true; text: string; savedRelativePath: string | null }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+
+  try {
+    const discovery = await runLiderTaxonomyTwoPhaseDiscovery()
+    const text = buildLiderTaxonomyDiscoveryReportText(discovery)
+
+    let savedRelativePath: string | null = null
+    if (process.env.NODE_ENV === 'development') {
+      const dir = path.join(process.cwd(), 'logs')
+      await mkdir(dir, { recursive: true })
+      const rel = path.join('logs', 'lider-discovery-latest.txt')
+      await writeFile(path.join(process.cwd(), rel), text, 'utf8')
+      savedRelativePath = rel.split(path.sep).join('/')
+    }
+
+    return { ok: true, text, savedRelativePath }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
 }
 
 /**

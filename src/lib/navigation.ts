@@ -23,6 +23,7 @@ import {
   Users,
   Layers,
   List,
+  Table2,
 } from 'lucide-react'
 
 /** Enlace hoja (sidebar o subítem). */
@@ -118,6 +119,11 @@ export const navigationTree: NavNode[] = [
         name: 'Precios por cadena',
         href: '/precios-cadenas',
         icon: CircleDollarSign,
+      },
+      {
+        name: 'Captura de cadenas 2',
+        href: '/captura-cadenas-2',
+        icon: Table2,
       },
     ],
   },

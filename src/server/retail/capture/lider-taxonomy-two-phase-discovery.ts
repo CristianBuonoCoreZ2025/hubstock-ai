@@ -506,21 +506,33 @@ export async function runLiderTaxonomyTwoPhaseDiscovery(): Promise<LiderTaxonomy
   sections.sort((a, b) => b.products_count - a.products_count)
 
   const sectionNorms = new Set(sections.map((s) => s.normalized_external_section))
-  const urlsForCategories = dedupeUrlStrings([...urls, ...sections.flatMap((s) => s.sample_urls)])
+  const urlsBeforeEnrichment = dedupeUrlStrings([...urls, ...sections.flatMap((s) => s.sample_urls)])
+  // Misma ampliación que en syncLiderRetailCategoryMappingsFromPlanUrls: leer índices /browse/{slug}/
+  // y landings /content/… para enlaces a listados con ruta sección/categoría (no solo URLs del plan).
+  const urlsForCategories = await enrichLiderPlanUrlsForCategoryDiscovery(urls, sections)
+
   const categories = discoverCategoriesFromUrlsForSections(urlsForCategories, sectionNorms)
+
+  const metaOut: Record<string, unknown> = {
+    ...(meta as Record<string, unknown>),
+    categoryDiscoveryPlanUrlCount: urls.length,
+    categoryDiscoveryUrlsBeforeBrowseScrape: urlsBeforeEnrichment.length,
+    categoryDiscoveryUrlsAfterBrowseScrape: urlsForCategories.length,
+  }
 
   retailSweepLogInfo('taxonomía Lider dos fases', {
     sections: sections.length,
     categories: categories.length,
     urls: urls.length,
     urlsForCategories: urlsForCategories.length,
-    meta: meta as unknown as Record<string, unknown>,
+    urlsCategoryEnrichmentDelta: urlsForCategories.length - urlsBeforeEnrichment.length,
+    meta: metaOut,
   })
 
   return {
     sections,
     categories,
     urls,
-    meta: meta as unknown as Record<string, unknown>,
+    meta: metaOut,
   }
 }

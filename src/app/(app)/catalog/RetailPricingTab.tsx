@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   Ban,
   Search,
+  FileText,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -50,7 +51,7 @@ import {
   type RetailCaptureBatchRow,
   type RetailLiderReviewGroupSummary,
 } from '@/app/actions/catalog-retail'
-import { fetchLiderRetailTaxonomyBlockingAction } from '@/app/actions/retail-taxonomy'
+import { fetchLiderRetailTaxonomyBlockingAction, generateLiderDiscoveryPreviewLogAction } from '@/app/actions/retail-taxonomy'
 import { normalizeSearchText } from '@/lib/search'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
 import { GridPagingRow } from '@/components/grid/grid-paging-row'
@@ -212,6 +213,22 @@ export function RetailPricingTab(props: {
   const advancedDetailsRef = useRef<HTMLDetailsElement>(null)
   const [productsDetailOpen, setProductsDetailOpen] = useState(false)
 
+  const [recaptureBusy, setRecaptureBusy] = useState(false)
+  const [discoveryLogBusy, setDiscoveryLogBusy] = useState(false)
+  const [autoAssocBusy, setAutoAssocBusy] = useState(false)
+  const [exactBulkBusy, setExactBulkBusy] = useState(false)
+
+  const [homologOpen, setHomologOpen] = useState(false)
+  const [homologRow, setHomologRow] = useState<RetailListingRow | null>(null)
+  const [sectionForMatch, setSectionForMatch] = useState('all')
+  const [categoryForMatchId, setCategoryForMatchId] = useState('all')
+  const [candidates, setCandidates] = useState<RetailMatchCandidateLike[]>([])
+  const [candidatesBusy, setCandidatesBusy] = useState(false)
+  const [addAlias, setAddAlias] = useState(true)
+  const [pickerQ, setPickerQ] = useState('')
+  const [pickerOptions, setPickerOptions] = useState<{ id: string; name: string }[]>([])
+  const [pickerBusy, setPickerBusy] = useState(false)
+
   const reloadList = useCallback(async () => {
     setLoading(true)
 
@@ -309,21 +326,6 @@ export function RetailPricingTab(props: {
     }, 0)
     return () => window.clearTimeout(id)
   }, [searchCommitted, unlinkedOnly])
-
-  const [recaptureBusy, setRecaptureBusy] = useState(false)
-  const [autoAssocBusy, setAutoAssocBusy] = useState(false)
-  const [exactBulkBusy, setExactBulkBusy] = useState(false)
-
-  const [homologOpen, setHomologOpen] = useState(false)
-  const [homologRow, setHomologRow] = useState<RetailListingRow | null>(null)
-  const [sectionForMatch, setSectionForMatch] = useState('all')
-  const [categoryForMatchId, setCategoryForMatchId] = useState('all')
-  const [candidates, setCandidates] = useState<RetailMatchCandidateLike[]>([])
-  const [candidatesBusy, setCandidatesBusy] = useState(false)
-  const [addAlias, setAddAlias] = useState(true)
-  const [pickerQ, setPickerQ] = useState('')
-  const [pickerOptions, setPickerOptions] = useState<{ id: string; name: string }[]>([])
-  const [pickerBusy, setPickerBusy] = useState(false)
 
   const categoriesInSection = useMemo(() => {
     const sec = sectionForMatch === 'all' ? null : sectionForMatch
@@ -701,6 +703,36 @@ export function RetailPricingTab(props: {
     setLiderPanelTick((x) => x + 1)
   }
 
+  function downloadTextAsFile(text: string, filename: string) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  async function onDownloadDiscoveryLog() {
+    if (discoveryLogBusy || pipelineRunning) return
+    setDiscoveryLogBusy(true)
+    const res = await generateLiderDiscoveryPreviewLogAction()
+    setDiscoveryLogBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    const fname = `lider-discovery-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`
+    downloadTextAsFile(res.text, fname)
+    toast.success('Se descargó el log de secciones y categorías (sin productos).')
+    if (res.savedRelativePath) {
+      toast.message(`En desarrollo también se guardó: ${res.savedRelativePath}`)
+    }
+  }
+
   async function runLiderFullPipeline() {
     if (pipelineRunning || batchActionBusy) return
 
@@ -902,6 +934,25 @@ export function RetailPricingTab(props: {
       <div className="border-t border-border" />
 
       <div className="flex flex-col gap-4">
+        <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm text-muted-foreground">
+          <p className="font-medium text-foreground">Qué botón usar</p>
+          <ul className="mt-2 list-inside list-disc space-y-1">
+            <li>
+              <span className="text-foreground">Detectar taxonomía</span> (bloque de arriba): lee Lider y
+              llena la grilla para homologar secciones y categorías. Es el primer paso operativo.
+            </li>
+            <li>
+              <span className="text-foreground">Exportar diagnóstico .txt</span>: solo descarga un archivo de
+              texto con secciones, categorías y una muestra de URLs del plan. No guarda en base ni captura
+              productos. Úsalo para revisar rutas sin tocar datos.
+            </li>
+            <li>
+              <span className="text-foreground">Ejecutar pipeline completo</span>: crea el lote y ejecuta
+              captura y homologación. Requiere que la taxonomía no esté bloqueando.
+            </li>
+          </ul>
+        </div>
+
         {taxonomyBlocking ? (
           <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <Ban className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
@@ -927,6 +978,23 @@ export function RetailPricingTab(props: {
               <Play className="mr-2 h-4 w-4" aria-hidden />
             )}
             {pipelineRunning ? 'Procesando…' : 'Ejecutar pipeline completo'}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void onDownloadDiscoveryLog()}
+            disabled={pipelineRunning || discoveryLogBusy}
+            className="h-9 gap-2"
+            title="Descarga secciones, categorías y muestra de URLs del descubrimiento. No sustituye Detectar taxonomía ni ejecuta captura."
+            aria-label="Exportar diagnóstico de rutas Lider en archivo de texto"
+          >
+            {discoveryLogBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : (
+              <FileText className="h-4 w-4" aria-hidden />
+            )}
+            Exportar diagnóstico .txt
           </Button>
 
           <Button
@@ -1074,7 +1142,10 @@ export function RetailPricingTab(props: {
           </div>
 
           <p className="text-xs text-muted-foreground">
-            Diagnóstico técnico. El plan principal usa sitemap, página de inicio y semillas internas.
+            El plan de captura usa sitemap, página de inicio y semillas internas. El archivo de diagnóstico
+            (botón «Exportar diagnóstico .txt» arriba) lista lo que ve el descubrimiento de rutas, sin productos;
+            en desarrollo también puede guardarse en{' '}
+            <code className="rounded bg-muted px-1">logs/lider-discovery-latest.txt</code>.
           </p>
         </div>
       </details>
