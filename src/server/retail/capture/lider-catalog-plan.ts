@@ -9,6 +9,25 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { retailSweepLogInfo } from '@/lib/retail-sweep-log'
 
+/**
+ * Límites del plan de URLs (rendimiento: colas enormes degradan descubrimiento y scrapping).
+ * Configurables en `.env.local` (servidor / build):
+ *
+ * - `RETAIL_LIDER_MAX_SEED_URLS` — tope de semillas finales (default 6000, rango 100–80000).
+ * - `RETAIL_LIDER_MAX_CONTENT_STICKY_SEEDS` — landings `/content/…` preservadas al tope (default 900).
+ * - `RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS` — visitas BFS content→browse (default 320).
+ * - `RETAIL_LIDER_MAX_HREFS_FROM_HOME` — enlaces máx. en la home (default 8000).
+ * - `RETAIL_LIDER_MAX_SITEMAP_CHILDREN` — sitemaps hijos a seguir desde el índice (default 48).
+ * - `RETAIL_LIDER_MAX_LOCS_PER_SITEMAP` — `<loc>` máx. por sitemap hijo (default 2500).
+ * - `RETAIL_LIDER_DISCOVERY_TIMEOUT_MS` — presupuesto global de descubrimiento en ms (default 60000; máx. 3600000 = 1 h).
+ *   Incluye sitemap, home y expansión `/content`→`/browse`. Si es bajo, el plan queda corto antes de terminar de leer el sitio.
+ * - `RETAIL_LIDER_MAX_BROWSE_LINKS_PER_HTML` — enlaces `/browse/` máx. extraídos por HTML (default 5000).
+ * - `RETAIL_LIDER_MAX_LINKED_CONTENT_URLS_PER_HTML` — enlaces `/content/` máx. por HTML al expandir (default 800).
+ *
+ * Semillas extra: `RETAIL_LIDER_STOREFRONT_BROWSE_URLS` o `RETAIL_LIDER_BROWSE_URLS` (coma).
+ * Las rutas `/ip/…` (Lider) se priorizan como listado en el plan de semillas para no quedar siempre fuera del tope frente a `/browse/`.
+ */
+
 const DEFAULT_STORE = 'https://super.lider.cl'
 const HTML_LIST_PAGE_SIZE_HINT = 40
 
@@ -31,17 +50,72 @@ function mergeLiderContentHubSeedUrls(origin: string, urls: string[]): string[] 
   return dedupeByPath([...seeded, ...urls])
 }
 
-const FETCH_TIMEOUT_MS = 26_000
-const MAX_SITEMAP_INDEX_ENTRIES = 24
-const MAX_LOCS_PER_SITEMAP = 900
-const MAX_HREFS_FROM_HOME = 4000
-const MAX_FINAL_SEEDS = 1500
+const CONTENT_SURFACE_FETCH_MS = 14_000
+const CONTENT_EXPAND_PARALLEL = 4
+
+/** Por petición: tope por HTML + cancelación si vence el presupuesto global de descubrimiento. */
+function surfaceFetchSignal(globalSignal: AbortSignal): AbortSignal {
+  const perRequest = AbortSignal.timeout(CONTENT_SURFACE_FETCH_MS)
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([globalSignal, perRequest])
+  }
+  return perRequest
+}
 
 /** Semillas internas amplias (solo si el descubrimiento no devolvió suficiente). No requieren configuración del usuario. */
 const INTERNAL_FALLBACK_PATHS = ['/', '/browse', '/search']
 
 function trimBase(url: string): string {
   return url.replace(/\/+$/, '')
+}
+
+function readPositiveIntFromEnv(
+  envName: string,
+  fallback: number,
+  bounds: { min: number; max: number },
+): number {
+  const raw = process.env[envName]?.trim()
+  if (!raw) return fallback
+  const n = Number.parseInt(raw, 10)
+  if (!Number.isFinite(n)) return fallback
+  return Math.min(bounds.max, Math.max(bounds.min, n))
+}
+
+function maxFinalSeeds(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_SEED_URLS', 6000, { min: 100, max: 80_000 })
+}
+
+function maxContentSurfacesSticky(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_CONTENT_STICKY_SEEDS', 900, { min: 0, max: 10_000 })
+}
+
+function maxContentSurfaceVisits(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS', 320, { min: 0, max: 2000 })
+}
+
+function maxHrefsFromHome(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_HREFS_FROM_HOME', 8000, { min: 100, max: 30_000 })
+}
+
+function maxSitemapIndexChildren(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_SITEMAP_CHILDREN', 48, { min: 4, max: 200 })
+}
+
+function maxLocsPerSitemap(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_LOCS_PER_SITEMAP', 2500, { min: 50, max: 50_000 })
+}
+
+/** Tiempo máx. de todo el descubrimiento (sitemap + home + expansión content→browse). */
+function discoveryAbortTimeoutMs(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_DISCOVERY_TIMEOUT_MS', 60_000, { min: 15_000, max: 3_600_000 })
+}
+
+function maxBrowseLinksPerHtml(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_BROWSE_LINKS_PER_HTML', 5000, { min: 200, max: 50_000 })
+}
+
+function maxLinkedContentUrlsPerHtml(): number {
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_LINKED_CONTENT_URLS_PER_HTML', 800, { min: 50, max: 5000 })
 }
 
 export function resolveLiderStoreBaseUrl(): string {
@@ -119,8 +193,8 @@ function isJunkPathname(pathname: string): boolean {
 function isLikelyProductPath(pathname: string): boolean {
   const p = pathname.toLowerCase()
   if (isJunkPathname(p)) return false
+  // `/ip/` (Lider) no va aquí: se prioriza como semilla tipo listado en `isLikelyListingPath` para no quedar siempre al final del tope.
   return (
-    /\/ip\//.test(p) ||
     /\/p\//.test(p) ||
     /\/product\//.test(p) ||
     (p.endsWith('.html') && p.split('/').filter(Boolean).length >= 3)
@@ -130,6 +204,8 @@ function isLikelyProductPath(pathname: string): boolean {
 function isLikelyListingPath(pathname: string): boolean {
   const p = pathname.toLowerCase()
   if (isJunkPathname(p)) return false
+  // Lider: fichas y rutas de catálogo bajo `/ip/categoría/id` deben competir con `/browse/` en el plan de semillas.
+  if (p.includes('/ip/')) return true
   if (isLikelyProductPath(p)) return false
   return (
     p.includes('/browse') ||
@@ -142,8 +218,29 @@ function isLikelyListingPath(pathname: string): boolean {
     p.includes('department') ||
     p.includes('/shop') ||
     p.includes('/all-') ||
-    p.includes('/departments')
+    p.includes('/departments') ||
+    isLiderContentCommercialSurfacePath(p)
   )
+}
+
+/**
+ * Landings comerciales `/content/{slug}/{id}` o sub-rutas con el mismo prefijo (id numérico en 3.er segmento).
+ * No son PLP de productos: sirven para descubrir enlaces a `/browse/…`.
+ */
+function isLiderContentCommercialSurfacePath(pathname: string): boolean {
+  const parts = pathname.split('/').filter(Boolean)
+  if (parts.length < 3) return false
+  if (parts[0]!.toLowerCase() !== 'content') return false
+  // IDs VTEX / tienda suelen ser 5–8 dígitos; algunos hubs usan 4.
+  return /^\d{4,14}$/.test(parts[2] ?? '')
+}
+
+function isLiderContentCommercialSurfaceUrl(href: string): boolean {
+  try {
+    return isLiderContentCommercialSurfacePath(new URL(href).pathname)
+  } catch {
+    return false
+  }
 }
 
 function urlPriorityScore(pathname: string): number {
@@ -264,18 +361,18 @@ async function collectUrlsFromSitemaps(origin: string, signal: AbortSignal): Pro
 
     let childCount = 0
     for (const sm of childSitemaps) {
-      if (childCount++ >= MAX_SITEMAP_INDEX_ENTRIES) break
+      if (childCount++ >= maxSitemapIndexChildren()) break
       const inner = await fetchText(sm, signal)
       if (!inner) continue
       let nLoc = 0
       for (const u of extractLocTags(inner)) {
-        if (nLoc++ >= MAX_LOCS_PER_SITEMAP) break
+        if (nLoc++ >= maxLocsPerSitemap()) break
         const n = normalizeLiderStorefrontUrl(origin, u)
         if (n) collected.add(n)
       }
     }
 
-    if (collected.size > 0) break
+    // Antes: `if (collected.size > 0) break` hacía que, si sitemap.xml devolvía algo, nunca se leía sitemap_index.xml (muchas URLs quedaban fuera).
   }
 
   return [...collected]
@@ -332,7 +429,7 @@ async function collectUrlsFromHomepage(origin: string, signal: AbortSignal): Pro
 
   let n = 0
   for (const href of extractHrefsFromHtml(html)) {
-    if (n++ > MAX_HREFS_FROM_HOME) break
+    if (n++ > maxHrefsFromHome()) break
     const nurl = normalizeLiderStorefrontUrl(origin, href)
     if (nurl) collected.add(nurl)
   }
@@ -374,29 +471,153 @@ function sortSeedsByPriority(urls: string[]): string[] {
   })
 }
 
+/**
+ * Listados `/browse/sección/…/cola` enlazados desde HTML (landings content, home, etc.).
+ * Exige al menos sección + categoría o colección tras `browse` para evitar solo el índice `/browse/{slug}`.
+ */
+function extractLiderBrowseListingUrlsFromHtml(html: string, pageUrl: string, originBase: string): string[] {
+  const found = new Set<string>()
+  const re = /href\s*=\s*["']([^"'#]*\/browse\/[^"'#?]+)["']/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    const raw = m[1]?.trim()
+    if (!raw) continue
+    try {
+      const abs = raw.startsWith('http') ? raw : new URL(raw, pageUrl).href
+      const n = normalizeLiderStorefrontUrl(originBase, abs)
+      if (!n) continue
+      const u = new URL(n)
+      const parts = u.pathname.split('/').filter(Boolean)
+      const bi = parts.findIndex((p) => p.toLowerCase() === 'browse')
+      if (bi < 0 || parts.length < bi + 3) continue
+      found.add(n)
+      if (found.size >= maxBrowseLinksPerHtml()) break
+    } catch {
+      /* skip */
+    }
+  }
+  return [...found]
+}
+
+/** Otras landings `/content/{slug}/{id}/…` enlazadas desde una superficie content. */
+function extractLiderLinkedContentSurfaceUrlsFromHtml(
+  html: string,
+  pageUrl: string,
+  originBase: string,
+): string[] {
+  const found = new Set<string>()
+  const re = /href\s*=\s*["']([^"'#]+)["']/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html)) !== null) {
+    const raw = m[1]?.trim()
+    if (!raw || !raw.toLowerCase().includes('/content/')) continue
+    try {
+      const abs = raw.startsWith('http') ? raw : new URL(raw, pageUrl).href
+      const n = normalizeLiderStorefrontUrl(originBase, abs)
+      if (!n || !isLiderContentCommercialSurfaceUrl(n)) continue
+      found.add(n)
+      if (found.size >= maxLinkedContentUrlsPerHtml()) break
+    } catch {
+      /* skip */
+    }
+  }
+  return [...found]
+}
+
+/**
+ * Recorre superficies `/content/…` (semillas + enlaces internos) y acumula URLs de listado `/browse/…`.
+ * Cada HTML se descarga acotado en tiempo; no usa el mismo presupuesto global que sitemap/home.
+ */
+async function expandLiderContentSurfacesToBrowseListings(
+  originBase: string,
+  seedSurfaces: readonly string[],
+  globalSignal: AbortSignal,
+): Promise<string[]> {
+  const browseFound = new Set<string>()
+  const visitedPathKeys = new Set<string>()
+  const queuedPathKeys = new Set<string>()
+  const pending: string[] = []
+
+  for (const u of dedupeByPath([...seedSurfaces])) {
+    if (!isLiderContentCommercialSurfaceUrl(u)) continue
+    const k = urlPathKey(u)
+    if (!k || queuedPathKeys.has(k)) continue
+    queuedPathKeys.add(k)
+    pending.push(u)
+  }
+
+  while (
+    pending.length > 0 &&
+    visitedPathKeys.size < maxContentSurfaceVisits() &&
+    !globalSignal.aborted
+  ) {
+    const batch: string[] = []
+    while (batch.length < CONTENT_EXPAND_PARALLEL && pending.length > 0) {
+      const next = pending.shift()!
+      const k = urlPathKey(next)
+      if (!k || visitedPathKeys.has(k)) continue
+      visitedPathKeys.add(k)
+      batch.push(next)
+    }
+    if (batch.length === 0) break
+
+    const pages = await Promise.all(
+      batch.map(async (url) => {
+        try {
+          const html = await fetchText(url, surfaceFetchSignal(globalSignal))
+          return { url, html }
+        } catch {
+          return { url, html: null as string | null }
+        }
+      }),
+    )
+
+    for (const { url, html } of pages) {
+      if (!html) continue
+      for (const b of extractLiderBrowseListingUrlsFromHtml(html, url, originBase)) {
+        browseFound.add(b)
+        if (browseFound.size > 50_000) return [...browseFound]
+      }
+      for (const c of extractLiderLinkedContentSurfaceUrlsFromHtml(html, url, originBase)) {
+        const ck = urlPathKey(c)
+        if (!ck || visitedPathKeys.has(ck) || queuedPathKeys.has(ck)) continue
+        queuedPathKeys.add(ck)
+        pending.push(c)
+      }
+    }
+  }
+
+  return [...browseFound]
+}
+
 export type LiderCapturePlanDiscoveryMeta = {
   fromSitemap: number
   fromHomepage: number
   fromEnv: number
   fromFallback: number
+  /** URLs `/browse/…` extraídas al leer HTML de landings `/content/{slug}/{id}`. */
+  fromContentHubBrowse: number
   finalCount: number
 }
 
 /**
  * Descubre URLs de captura por capas (sin exigir `/browse` ni configuración del usuario).
+ * @param storeOriginOverride Origen del storefront (p. ej. fila `retail.base_url`). Si falta, usa env o Lider por defecto.
  */
-export async function discoverLiderCapturePlanUrls(): Promise<{
+export async function discoverLiderCapturePlanUrls(storeOriginOverride?: string | null): Promise<{
   urls: string[]
   meta: LiderCapturePlanDiscoveryMeta
 }> {
-  const origin = resolveLiderStoreBaseUrl()
+  const originRaw = (storeOriginOverride?.trim() || resolveLiderStoreBaseUrl()).trim()
+  const origin = trimBase(originRaw)
   const ctl = new AbortController()
-  const tm = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS)
+  const tm = setTimeout(() => ctl.abort(), discoveryAbortTimeoutMs())
   const meta: LiderCapturePlanDiscoveryMeta = {
     fromSitemap: 0,
     fromHomepage: 0,
     fromEnv: 0,
     fromFallback: 0,
+    fromContentHubBrowse: 0,
     finalCount: 0,
   }
 
@@ -417,13 +638,58 @@ export async function discoverLiderCapturePlanUrls(): Promise<{
     merged = applyInternalFallbackSeeds(origin, merged)
     if (merged.length > beforeFallback) meta.fromFallback = merged.length - beforeFallback
 
+    const surfacesForExpand = dedupeByPath(merged).filter(isLiderContentCommercialSurfaceUrl)
+    const fromContentBrowse =
+      surfacesForExpand.length > 0 && !ctl.signal.aborted ?
+        await expandLiderContentSurfacesToBrowseListings(trimBase(origin), surfacesForExpand, ctl.signal)
+      : []
+    meta.fromContentHubBrowse = fromContentBrowse.length
+    merged = dedupeByPath([...merged, ...fromContentBrowse])
+
     merged = sortSeedsByPriority(merged)
-    const sticky = dedupeByPath([...liderContentHubSeedUrls(origin), ...fromEnv])
-    merged = applyMaxFinalSeedsKeepingSticky(merged, sticky, MAX_FINAL_SEEDS)
+    // Sin esto, casi solo quedan `/browse/…` al aplicar el tope: muchos `/content/…` del sitemap caen fuera del plan.
+    const contentSurfacesSticky = dedupeByPath(merged.filter(isLiderContentCommercialSurfaceUrl)).slice(
+      0,
+      maxContentSurfacesSticky(),
+    )
+    const sticky = dedupeByPath([
+      ...liderContentHubSeedUrls(origin),
+      ...fromEnv,
+      ...contentSurfacesSticky,
+    ])
+    const mergedCountBeforeSeedCap = merged.length
+    merged = applyMaxFinalSeedsKeepingSticky(merged, sticky, maxFinalSeeds())
 
     meta.finalCount = merged.length
 
-    retailSweepLogInfo('plan captura Lider: descubrimiento', meta as unknown as Record<string, unknown>)
+    retailSweepLogInfo('plan captura Lider: descubrimiento', {
+      ...(meta as unknown as Record<string, unknown>),
+      limitsEffective: {
+        maxSeedUrls: maxFinalSeeds(),
+        maxContentSticky: maxContentSurfacesSticky(),
+        maxContentSurfaceVisits: maxContentSurfaceVisits(),
+        maxHrefsFromHome: maxHrefsFromHome(),
+        maxSitemapChildren: maxSitemapIndexChildren(),
+        maxLocsPerSitemap: maxLocsPerSitemap(),
+        discoveryTimeoutMs: discoveryAbortTimeoutMs(),
+        maxBrowseLinksPerHtml: maxBrowseLinksPerHtml(),
+        maxLinkedContentUrlsPerHtml: maxLinkedContentUrlsPerHtml(),
+      },
+      envRaw: {
+        RETAIL_LIDER_MAX_SEED_URLS: process.env.RETAIL_LIDER_MAX_SEED_URLS ?? null,
+        RETAIL_LIDER_MAX_CONTENT_STICKY_SEEDS: process.env.RETAIL_LIDER_MAX_CONTENT_STICKY_SEEDS ?? null,
+        RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS: process.env.RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS ?? null,
+        RETAIL_LIDER_MAX_HREFS_FROM_HOME: process.env.RETAIL_LIDER_MAX_HREFS_FROM_HOME ?? null,
+        RETAIL_LIDER_MAX_SITEMAP_CHILDREN: process.env.RETAIL_LIDER_MAX_SITEMAP_CHILDREN ?? null,
+        RETAIL_LIDER_MAX_LOCS_PER_SITEMAP: process.env.RETAIL_LIDER_MAX_LOCS_PER_SITEMAP ?? null,
+        RETAIL_LIDER_DISCOVERY_TIMEOUT_MS: process.env.RETAIL_LIDER_DISCOVERY_TIMEOUT_MS ?? null,
+        RETAIL_LIDER_MAX_BROWSE_LINKS_PER_HTML: process.env.RETAIL_LIDER_MAX_BROWSE_LINKS_PER_HTML ?? null,
+        RETAIL_LIDER_MAX_LINKED_CONTENT_URLS_PER_HTML: process.env.RETAIL_LIDER_MAX_LINKED_CONTENT_URLS_PER_HTML ?? null,
+      },
+      mergedCountBeforeSeedCap,
+      mergedCountAfterSeedCap: merged.length,
+      seedCapDidTrim: mergedCountBeforeSeedCap > merged.length,
+    } as Record<string, unknown>)
 
     return { urls: merged, meta }
   } catch {
@@ -438,7 +704,7 @@ export async function discoverLiderCapturePlanUrls(): Promise<{
 
 /** @deprecated Usar `discoverLiderCapturePlanUrls`; se mantiene por compatibilidad de importaciones. */
 export async function discoverLiderBrowseListingUrls(): Promise<string[]> {
-  const { urls } = await discoverLiderCapturePlanUrls()
+  const { urls } = await discoverLiderCapturePlanUrls(null)
   return urls
 }
 
@@ -450,6 +716,8 @@ export function isLiderHtmlPaginatorListingUrl(pageUrl: string): boolean {
     const u = new URL(pageUrl)
     if (u.pathname.toLowerCase().includes('/api/')) return false
     const p = u.pathname.toLowerCase()
+    // Landings comerciales `/content/{slug}/{id}` suelen traer grilla con `?page=` igual que `/browse/`.
+    if (isLiderContentCommercialSurfacePath(p)) return true
     if (p.includes('/browse')) return true
     if (p === '/search' || p.startsWith('/search/')) return true
     if (p.includes('collection') || p.includes('shelf') || p.includes('department')) return true
@@ -518,9 +786,10 @@ export function nextLiderCatalogSystemSliceUrl(pageUrl: string, lastPageProductC
 
 export type LiderPageSeed = { page_url: string; page_index: number }
 
-export async function buildLiderFullCatalogPageSeeds(): Promise<LiderPageSeed[]> {
-  const { urls } = await discoverLiderCapturePlanUrls()
-  const origin = resolveLiderStoreBaseUrl()
+export async function buildLiderFullCatalogPageSeeds(storeOriginOverride?: string | null): Promise<LiderPageSeed[]> {
+  const { urls } = await discoverLiderCapturePlanUrls(storeOriginOverride)
+  const originRaw = (storeOriginOverride?.trim() || resolveLiderStoreBaseUrl()).trim()
+  const origin = trimBase(originRaw)
   const fallback = normalizeLiderStorefrontUrl(origin, '/') ?? `${trimBase(origin)}/`
   const list = urls.length > 0 ? urls : [fallback]
   return list.map((href, page_index) => ({ page_url: href, page_index }))

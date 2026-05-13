@@ -1,18 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { LiderPageSeed } from '@/server/retail/capture/lider-catalog-plan'
+import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
 
-export type ScrappingRunRow = {
-  id: string
-  retailer: string
-  source_chain: string
-  status: string
-  total_pages: number | null
-  pages_done: number
-  rows_inserted: number | string
-  error_message: string | null
-  started_at: string
-  finished_at: string | null
-}
+export type { RetailTargetRow, ScrappingRunRow }
 
 export type ScrappingPageJob = {
   id: string
@@ -35,22 +25,90 @@ export type ScrappingProductRow = {
   currency: string
   source_chain: string
   listing_url: string
+  /** Segmento de ruta de listado (regla en `retail.listing_url_path_config`). */
+  sections: string | null
+  /** Segmento de ruta de listado (regla en `retail.listing_url_path_config`). */
+  categories: string | null
   extracted_at: string
   created_at: string
 }
 
+/** UUID ficticio para `delete` masivo vía PostgREST (requiere filtro). */
+const SCRAPPING_PURGE_SENTINEL_UUID = '00000000-0000-0000-0000-000000000000'
+
+/** Purga completa: runs + páginas + filas (cascade). Solo mantenimiento o reset total. */
+export async function purgeAllScrappingChainData(admin: SupabaseClient): Promise<{ error: unknown | null }> {
+  const { error } = await admin
+    .from('scrapping_runs')
+    .delete()
+    .neq('id', SCRAPPING_PURGE_SENTINEL_UUID as never)
+  return { error: error ?? null }
+}
+
+/**
+ * Marca como fallidas las páginas en cola activa y cancela corridas `running`.
+ * Debe llamarse antes de un barrido nuevo o desde «Detener scrapping».
+ */
+export async function cancelAllRunningScrappingRuns(admin: SupabaseClient): Promise<{ error: unknown | null }> {
+  const now = new Date().toISOString()
+  const stopMsg = 'Detenido por el usuario.'
+
+  const { error: e1 } = await admin
+    .from('scrapping_pages')
+    .update({
+      status: 'failed',
+      finished_at: now,
+      error_message: stopMsg,
+      products_found: 0,
+      rows_written: 0,
+    } as never)
+    .in('status', ['pending', 'processing'])
+
+  if (e1) return { error: e1 }
+
+  const { error: e2 } = await admin
+    .from('scrapping_runs')
+    .update({
+      status: 'cancelled',
+      finished_at: now,
+      error_message: stopMsg,
+    } as never)
+    .eq('status', 'running')
+
+  return { error: e2 ?? null }
+}
+
+/**
+ * Vacía por completo `scrapping` y `scrapping_pages` sin borrar `scrapping_runs`.
+ * Llamar solo cuando no quede ninguna corrida `running` (p. ej. tras `cancelAllRunningScrappingRuns`).
+ */
+export async function purgeScrappingProductsAndPages(admin: SupabaseClient): Promise<{ error: unknown | null }> {
+  const { error: e1 } = await admin.from('scrapping').delete().neq('id', SCRAPPING_PURGE_SENTINEL_UUID as never)
+  if (e1) return { error: e1 }
+  const { error: e2 } = await admin.from('scrapping_pages').delete().neq('id', SCRAPPING_PURGE_SENTINEL_UUID as never)
+  return { error: e2 ?? null }
+}
+
 export async function insertScrappingRun(
   admin: SupabaseClient,
-  input: { retailer: string; sourceChain: string; totalPages: number },
+  input: {
+    retailer: string
+    sourceChain: string
+    totalPages: number
+    retailId?: string | null
+  },
 ): Promise<{ id: string } | { error: unknown }> {
   const { data, error } = await admin
     .from('scrapping_runs')
     .insert({
       retailer: input.retailer,
       source_chain: input.sourceChain,
+      retail_id: input.retailId ?? null,
       status: 'running',
       total_pages: input.totalPages,
       pages_done: 0,
+      pages_ok: 0,
+      pages_failed: 0,
       rows_inserted: 0,
     } as never)
     .select('id')
@@ -210,10 +268,33 @@ export async function listRecentScrappingRuns(
 ): Promise<ScrappingRunRow[]> {
   const { data, error } = await admin
     .from('scrapping_runs')
-    .select('*')
+    .select(
+      `
+      *,
+      retail (
+        id,
+        name,
+        base_url,
+        max_pages,
+        max_products,
+        listing_url_path_config
+      )
+    `,
+    )
     .order('started_at', { ascending: false })
     .limit(limit)
 
   if (error || !data) return []
   return data as ScrappingRunRow[]
+}
+
+/** Catálogo de retails configurados para scraping (origen `base_url`). */
+export async function listRetailTargets(admin: SupabaseClient): Promise<RetailTargetRow[]> {
+  const { data, error } = await admin
+    .from('retail')
+    .select('id,name,base_url,max_pages,max_products,listing_url_path_config')
+    .order('name', { ascending: true })
+
+  if (error || !data) return []
+  return data as RetailTargetRow[]
 }

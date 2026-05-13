@@ -1,17 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, Play, PlusCircle } from 'lucide-react'
+import { Loader2, Play, Square } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  fetchScrappingRowsPageAction,
+  listRetailTargetsAction,
   listScrappingRunsAction,
   processLiderScrappingRunPageAction,
   startLiderScrappingRunAction,
+  stopLiderScrappingAction,
 } from '@/app/actions/retail-scrapping'
-import type { ScrappingProductRow, ScrappingRunRow } from '@/server/retail/scrapping/lider-scrapping-service'
+import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
 import { Button } from '@/components/ui/button'
-import { GridPagingRow } from '@/components/grid/grid-paging-row'
+import { Label } from '@/components/ui/label'
 import {
   Select,
   SelectContent,
@@ -20,15 +21,146 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 
-const TOOLBAR_BTN = 'h-9 min-w-[190px] shrink-0'
+const TOOLBAR_BTN = 'h-9 min-w-[172px] shrink-0'
 
-function formatMoneyCl(n: number): string {
-  if (!Number.isFinite(n)) return '—'
-  return new Intl.NumberFormat('es-CL', {
-    style: 'currency',
-    currency: 'CLP',
-    maximumFractionDigits: 0,
-  }).format(n)
+/** Resumen legible al cerrar un barrido (éxito, error, red o corte). */
+export type CapturaCadenas2SweepDiagnostic = {
+  finishedAtIso: string
+  runId: string | null
+  retailName: string
+  outcome:
+    | 'cola_terminada'
+    | 'detencion'
+    | 'error_servidor'
+    | 'corte_navegador_o_red'
+    | 'sin_inicio'
+    | 'salida_sin_cierre'
+  outcomeHint: string
+  startError?: string
+  actionError?: string
+  browserError?: string
+  lastSnapshot: {
+    done: boolean
+    cancelled: boolean
+    queueTotal: number
+    queueProcessed: number
+    queueOk: number
+    queueFailed: number
+    queuePending: number
+    queueProcessing: number
+    runStatus: string
+    productsTally: number
+    pageError?: string
+  } | null
+  persistedRun?: {
+    status: string
+    error_message: string | null
+    total_pages: number | null
+    pages_ok: number
+    pages_failed: number
+    rows_inserted: number | string
+  }
+}
+
+function outcomeLabel(o: CapturaCadenas2SweepDiagnostic['outcome']): string {
+  switch (o) {
+    case 'cola_terminada':
+      return 'Cola terminada (sin pendientes ni en proceso)'
+    case 'detencion':
+      return 'Detención (corrida cancelada)'
+    case 'error_servidor':
+      return 'Error devuelto por el servidor'
+    case 'corte_navegador_o_red':
+      return 'Corte en el navegador o red (excepción al llamar al servidor)'
+    case 'sin_inicio':
+      return 'No se pudo iniciar el barrido'
+    case 'salida_sin_cierre':
+      return 'Salida antes de tiempo (revisá pendientes y estado en base)'
+    default:
+      return o
+  }
+}
+
+function buildSweepDiagnostic(input: {
+  finishedAtIso: string
+  runId: string | null
+  retailName: string
+  startError?: string
+  actionError?: string
+  browserError?: string
+  lastOk?: {
+    ok: true
+    done: boolean
+    cancelled: boolean
+    queuePagesTotal: number
+    queuePagesProcessed: number
+    queuePagesOk: number
+    queuePagesFailed: number
+    queuePagesPending: number
+    queuePagesProcessing: number
+    runPersistedStatus: string
+    scrappingRowsTally: number
+    error?: string
+  }
+  persistedRun?: CapturaCadenas2SweepDiagnostic['persistedRun']
+}): CapturaCadenas2SweepDiagnostic {
+  const lastSnapshot = input.lastOk ?
+    {
+      done: input.lastOk.done,
+      cancelled: input.lastOk.cancelled,
+      queueTotal: input.lastOk.queuePagesTotal,
+      queueProcessed: input.lastOk.queuePagesProcessed,
+      queueOk: input.lastOk.queuePagesOk,
+      queueFailed: input.lastOk.queuePagesFailed,
+      queuePending: input.lastOk.queuePagesPending,
+      queueProcessing: input.lastOk.queuePagesProcessing,
+      runStatus: input.lastOk.runPersistedStatus,
+      productsTally: input.lastOk.scrappingRowsTally,
+      pageError: input.lastOk.error,
+    }
+  : null
+
+  let outcome: CapturaCadenas2SweepDiagnostic['outcome'] = 'salida_sin_cierre'
+  let outcomeHint =
+    'El bucle terminó sin marcar cierre explícito. Revisá pendientes en base, tiempo máximo del servidor o pestaña en segundo plano.'
+
+  if (input.startError) {
+    outcome = 'sin_inicio'
+    outcomeHint = input.startError
+  } else if (input.browserError) {
+    outcome = 'corte_navegador_o_red'
+    outcomeHint =
+      'Falló la llamada desde el navegador (red, pestaña cerrada, suspensión del dispositivo o límite de tiempo del proveedor de hosting). Si usás Vercel u otro serverless, revisá maxDuration y el plan.'
+  } else if (input.actionError) {
+    outcome = 'error_servidor'
+    outcomeHint = input.actionError
+  } else if (input.lastOk?.cancelled) {
+    outcome = 'detencion'
+    outcomeHint = 'Corrida cancelada (Detener scrapping o nuevo barrido que reemplazó la cola).'
+  } else if (input.lastOk?.done && !input.lastOk.cancelled) {
+    const orphan = input.lastOk.queuePagesPending + input.lastOk.queuePagesProcessing
+    outcome = 'cola_terminada'
+    outcomeHint =
+      orphan > 0 ?
+        `El servidor indicó cierre pero aún hay ${input.lastOk.queuePagesPending} pendientes y ${input.lastOk.queuePagesProcessing} en proceso; conviene revisar la corrida en base.`
+      : 'Cola vacía de pendientes: todas las páginas quedaron en estado hecho o fallido.'
+  } else if (input.lastOk && !input.lastOk.done) {
+    outcome = 'salida_sin_cierre'
+    outcomeHint = `Última respuesta con cola inconclusa: ${input.lastOk.queuePagesPending} pendientes, ${input.lastOk.queuePagesProcessing} en proceso, estado ${input.lastOk.runPersistedStatus}.`
+  }
+
+  return {
+    finishedAtIso: input.finishedAtIso,
+    runId: input.runId,
+    retailName: input.retailName,
+    outcome,
+    outcomeHint,
+    startError: input.startError,
+    actionError: input.actionError,
+    browserError: input.browserError,
+    lastSnapshot,
+    persistedRun: input.persistedRun,
+  }
 }
 
 function formatWhen(iso: string): string {
@@ -42,34 +174,43 @@ function formatWhen(iso: string): string {
   }
 }
 
-function shortenUrl(u: string, max = 56): string {
-  if (u.length <= max) return u
-  return `${u.slice(0, max - 1)}…`
-}
-
 export function CapturaCadenas2Client() {
   const [runs, setRuns] = useState<ScrappingRunRow[]>([])
   const [runsBusy, setRunsBusy] = useState(true)
-  const [activeRunId, setActiveRunId] = useState<string | null>(null)
 
-  const [startBusy, setStartBusy] = useState(false)
-  const [processBusy, setProcessBusy] = useState(false)
+  const [retails, setRetails] = useState<RetailTargetRow[]>([])
+  const [retailsBusy, setRetailsBusy] = useState(true)
+  const [selectedRetailId, setSelectedRetailId] = useState<string>('')
 
-  const [rows, setRows] = useState<ScrappingProductRow[]>([])
-  const [gridPage, setGridPage] = useState(0)
-  const [gridTotal, setGridTotal] = useState(0)
-  const [gridPageSize, setGridPageSize] = useState(100)
-  const [gridBusy, setGridBusy] = useState(false)
+  const [fullSweepBusy, setFullSweepBusy] = useState(false)
+  const [stopBusy, setStopBusy] = useState(false)
+  const [sweepStartedAt, setSweepStartedAt] = useState<string | null>(null)
+  const [currentRetailLabel, setCurrentRetailLabel] = useState<string>('')
 
-  const effectiveRunId = useMemo(() => {
-    if (activeRunId && runs.some((r) => r.id === activeRunId)) return activeRunId
-    return runs[0]?.id ?? null
-  }, [activeRunId, runs])
+  const [queuePagesTotal, setQueuePagesTotal] = useState(0)
+  const [queuePagesProcessed, setQueuePagesProcessed] = useState(0)
+  const [queuePagesFailed, setQueuePagesFailed] = useState(0)
+  const [queuePagesOk, setQueuePagesOk] = useState(0)
+  const [scraperRowsTotal, setScraperRowsTotal] = useState(0)
+  const [retailMaxPages, setRetailMaxPages] = useState(0)
+  const [retailMaxProducts, setRetailMaxProducts] = useState(0)
+  const [sweepDiagnostic, setSweepDiagnostic] = useState<CapturaCadenas2SweepDiagnostic | null>(null)
 
-  const activeRun = useMemo(
-    () => (effectiveRunId ? runs.find((r) => r.id === effectiveRunId) ?? null : null),
-    [runs, effectiveRunId],
-  )
+  const canStopScrapping = useMemo(() => {
+    return fullSweepBusy || runs.some((r) => r.status === 'running')
+  }, [fullSweepBusy, runs])
+
+  const referenceRun = useMemo(() => {
+    return [...runs]
+      .filter((r) => r.status === 'completed' && r.finished_at)
+      .sort((a, b) => new Date(b.finished_at!).getTime() - new Date(a.finished_at!).getTime())[0] ?? null
+  }, [runs])
+
+  /** Radix Select rompe si `value` no coincide con ningún ítem (p. ej. `''` o id obsoleto). */
+  const retailSelectValue = useMemo(() => {
+    if (!selectedRetailId) return undefined
+    return retails.some((r) => r.id === selectedRetailId) ? selectedRetailId : undefined
+  }, [selectedRetailId, retails])
 
   const reloadRuns = useCallback(async () => {
     setRunsBusy(true)
@@ -80,290 +221,505 @@ export function CapturaCadenas2Client() {
       return
     }
     setRuns(res.runs)
-    setActiveRunId((prev) => {
-      if (prev && res.runs.some((r) => r.id === prev)) return prev
-      return res.runs[0]?.id ?? null
+  }, [])
+
+  const reloadRetails = useCallback(async () => {
+    setRetailsBusy(true)
+    const res = await listRetailTargetsAction()
+    setRetailsBusy(false)
+    if (!res.ok) {
+      toast.error(res.error)
+      return
+    }
+    setRetails(res.retails)
+    setSelectedRetailId((prev) => {
+      if (prev && res.retails.some((r) => r.id === prev)) return prev
+      return res.retails[0]?.id ?? ''
     })
   }, [])
 
   useEffect(() => {
     void reloadRuns()
-  }, [reloadRuns])
+    void reloadRetails()
+  }, [reloadRuns, reloadRetails])
 
-  const loadGrid = useCallback(async () => {
-    if (!effectiveRunId) {
-      setRows([])
-      setGridTotal(0)
-      return
-    }
-    setGridBusy(true)
-    const res = await fetchScrappingRowsPageAction({ runId: effectiveRunId, page: gridPage })
-    setGridBusy(false)
-    if (!res.ok) {
-      toast.error(res.error)
-      setRows([])
-      setGridTotal(0)
-      return
-    }
-    setRows(res.rows)
-    setGridTotal(res.total)
-    setGridPageSize(res.pageSize)
-  }, [effectiveRunId, gridPage])
+  const progressPercent = useMemo(() => {
+    if (!fullSweepBusy || queuePagesTotal <= 0) return 0
+    const denom =
+      retailMaxPages > 0 ? Math.max(retailMaxPages, queuePagesTotal) : queuePagesTotal
+    if (denom <= 0) return 0
+    return Math.min(100, Math.round((queuePagesProcessed / denom) * 100))
+  }, [fullSweepBusy, queuePagesTotal, queuePagesProcessed, retailMaxPages])
 
-  useEffect(() => {
-    void loadGrid()
-  }, [loadGrid])
-
-  async function onStartFull() {
-    if (startBusy || processBusy) return
-    setStartBusy(true)
-    const res = await startLiderScrappingRunAction()
-    setStartBusy(false)
-    if (!res.ok) {
-      toast.error(res.error)
-      return
-    }
-    toast.success(`Ejecución creada. Cola inicial: ${res.totalPages} URL(s) de listado.`)
-    setActiveRunId(res.runId)
-    setGridPage(0)
-    await reloadRuns()
+  function resetMetricBoxesOnly() {
+    setQueuePagesTotal(0)
+    setQueuePagesProcessed(0)
+    setQueuePagesFailed(0)
+    setQueuePagesOk(0)
+    setScraperRowsTotal(0)
   }
 
-  async function onProcessOnce() {
-    if (!effectiveRunId || processBusy) return
-    setProcessBusy(true)
-    const res = await processLiderScrappingRunPageAction({ runId: effectiveRunId })
-    setProcessBusy(false)
-    if (!res.ok) {
-      toast.error(res.error)
-      return
-    }
-    if (res.error) {
-      toast.error(res.error)
-    } else if (res.done) {
-      toast.message('Cola de páginas terminada para esta ejecución.')
-    } else {
-      toast.message(
-        `Página ${res.pageIndex + 1}: ${res.productsThisPage} vistos · ${res.rowsWritten} filas limpias guardadas.`,
-      )
-    }
-    await reloadRuns()
-    await loadGrid()
+  function resetForNewBarrido() {
+    resetMetricBoxesOnly()
+    setSweepStartedAt(null)
+    setCurrentRetailLabel('')
   }
 
-  async function onProcessTen() {
-    if (!effectiveRunId || processBusy) return
-    setProcessBusy(true)
+  const logReference = useMemo(() => {
+    if (!referenceRun) {
+      return 'Referencia: todavía no hay una corrida cerrada en el historial.'
+    }
+    const name = referenceRun.retail?.name ?? referenceRun.retailer
+    const ok = referenceRun.pages_ok ?? 0
+    const fail = referenceRun.pages_failed ?? 0
+    const total = referenceRun.total_pages ?? '—'
+    const prod = Number(referenceRun.rows_inserted ?? 0).toLocaleString('es-CL')
+    const maxP = referenceRun.retail?.max_pages ?? 0
+    const maxPr = referenceRun.retail?.max_products ?? 0
+    const maxLine =
+      maxP > 0 || maxPr > 0 ?
+        ` · máx. histórico retail: ${maxP} págs / ${maxPr.toLocaleString('es-CL')} prod`
+      : ''
+    return `Referencia (última corrida cerrada): ${name} · ${formatWhen(referenceRun.started_at)} · páginas ok ${ok} / total cola ${total} · lecturas fallidas ${fail} · productos en scrapping ${prod}${maxLine}`
+  }, [referenceRun])
+
+  const logCurrent = useMemo(() => {
+    if (!fullSweepBusy || !sweepStartedAt) {
+      return 'Actual: sin barrido en curso.'
+    }
+    const label = currentRetailLabel || 'Retail'
+    return `${label} en curso · ${formatWhen(sweepStartedAt)} · cola ${queuePagesProcessed} / ${queuePagesTotal} · ok ${queuePagesOk} · fallidas ${queuePagesFailed} · productos ${scraperRowsTotal.toLocaleString('es-CL')}`
+  }, [
+    fullSweepBusy,
+    sweepStartedAt,
+    currentRetailLabel,
+    queuePagesProcessed,
+    queuePagesTotal,
+    queuePagesOk,
+    queuePagesFailed,
+    scraperRowsTotal,
+  ])
+
+  async function onDetenerScrapping() {
+    if (!canStopScrapping || stopBusy) return
+    setStopBusy(true)
     try {
-      for (let i = 0; i < 10; i += 1) {
-        const res = await processLiderScrappingRunPageAction({ runId: effectiveRunId })
+      const res = await stopLiderScrappingAction()
+      if (!res.ok) {
+        toast.error(res.error)
+        return
+      }
+      if (!fullSweepBusy) {
+        toast.message('Scrapping detenido. Las corridas en curso quedaron canceladas.')
+      }
+      await reloadRuns()
+    } finally {
+      setStopBusy(false)
+    }
+  }
+
+  async function onBarrido() {
+    if (fullSweepBusy) return
+    if (!selectedRetailId) {
+      toast.error('Seleccioná un retail antes de ejecutar el barrido.')
+      return
+    }
+    const retailLabelAtStart = retails.find((x) => x.id === selectedRetailId)?.name ?? ''
+
+    setFullSweepBusy(true)
+    resetMetricBoxesOnly()
+    setSweepStartedAt(new Date().toISOString())
+
+    let sweepRunId: string | null = null
+    let warnedContinue = false
+    let resolvedScrappingRowTotal: number | undefined
+    let finalRetailName = ''
+    let startError: string | undefined
+    let actionError: string | undefined
+    let browserError: string | undefined
+    let lastOk:
+      | {
+          ok: true
+          done: boolean
+          cancelled: boolean
+          queuePagesTotal: number
+          queuePagesProcessed: number
+          queuePagesOk: number
+          queuePagesFailed: number
+          queuePagesPending: number
+          queuePagesProcessing: number
+          runPersistedStatus: string
+          scrappingRowsTally: number
+          error?: string
+          scrappingRowsTotal?: number
+        }
+      | undefined
+
+    try {
+      const started = await startLiderScrappingRunAction({ retailId: selectedRetailId })
+      if (!started.ok) {
+        startError = started.error
+        toast.error(started.error)
+        return
+      }
+
+      sweepRunId = started.runId
+      finalRetailName = started.retailName
+      setCurrentRetailLabel(started.retailName)
+      setRetailMaxPages(started.retailMaxPages)
+      setRetailMaxProducts(started.retailMaxProducts)
+      setQueuePagesTotal(started.totalPages)
+      setQueuePagesProcessed(0)
+      setQueuePagesOk(0)
+      setQueuePagesFailed(0)
+      setScraperRowsTotal(0)
+      await reloadRuns()
+
+      toast.message(`Cola inicial: ${started.totalPages} listado(s) · ${started.retailName}.`)
+
+      for (;;) {
+        let res: Awaited<ReturnType<typeof processLiderScrappingRunPageAction>>
+        try {
+          res = await processLiderScrappingRunPageAction({ runId: started.runId })
+        } catch (e) {
+          browserError = e instanceof Error ? e.message : String(e)
+          break
+        }
         if (!res.ok) {
+          actionError = res.error
           toast.error(res.error)
           break
         }
+        lastOk = res
+        setQueuePagesTotal(res.queuePagesTotal)
+        setQueuePagesProcessed(res.queuePagesProcessed)
+        setQueuePagesOk(res.queuePagesOk)
+        setQueuePagesFailed(res.queuePagesFailed)
+        setScraperRowsTotal(res.scrappingRowsTally)
+        setRetailMaxPages(res.retailMaxPages)
+        setRetailMaxProducts(res.retailMaxProducts)
+
         if (res.error) {
-          toast.error(res.error)
-          break
+          if (!warnedContinue) {
+            warnedContinue = true
+            toast.warning(
+              'Algunos listados pueden fallar (p. ej. HTTP 404). Se omiten y el barrido sigue hasta vaciar la cola.',
+            )
+          }
+        }
+
+        if (typeof res.scrappingRowsTotal === 'number') {
+          resolvedScrappingRowTotal = res.scrappingRowsTotal
         }
         if (res.done) {
-          toast.message('Cola de páginas terminada.')
+          if (typeof res.scrappingRowsTotal === 'number') {
+            setScraperRowsTotal(res.scrappingRowsTotal)
+          }
+          if (res.cancelled) {
+            toast.message('Barrido detenido.')
+          } else {
+            toast.success(
+              `Proceso finalizado · ${finalRetailName || 'Retail'} · páginas ok ${res.queuePagesOk} · fallidas ${res.queuePagesFailed} · productos en scrapping ${(res.scrappingRowsTotal ?? res.scrappingRowsTally).toLocaleString('es-CL')} · total en cola ${res.queuePagesTotal}.`,
+            )
+          }
           break
         }
       }
     } finally {
-      setProcessBusy(false)
-      await reloadRuns()
-      await loadGrid()
+      const finishedAtIso = new Date().toISOString()
+      let persistedRun: CapturaCadenas2SweepDiagnostic['persistedRun']
+
+      if (sweepRunId) {
+        const list = await listScrappingRunsAction()
+        if (list.ok) {
+          const row = list.runs.find((x) => x.id === sweepRunId)
+          if (row) {
+            persistedRun = {
+              status: row.status,
+              error_message: row.error_message,
+              total_pages: row.total_pages ?? null,
+              pages_ok: row.pages_ok ?? 0,
+              pages_failed: row.pages_failed ?? 0,
+              rows_inserted: row.rows_inserted,
+            }
+          }
+        }
+        await reloadRuns()
+        await reloadRetails()
+        if (typeof resolvedScrappingRowTotal === 'number') {
+          setScraperRowsTotal(resolvedScrappingRowTotal)
+        }
+      } else {
+        resetForNewBarrido()
+      }
+
+      setSweepDiagnostic(
+        buildSweepDiagnostic({
+          finishedAtIso,
+          runId: sweepRunId,
+          retailName: finalRetailName || retailLabelAtStart || '—',
+          startError,
+          actionError,
+          browserError,
+          lastOk,
+          persistedRun,
+        }),
+      )
+
+      setSweepStartedAt(null)
+      setFullSweepBusy(false)
     }
   }
-
-  const totalGridPages = Math.max(1, Math.ceil(gridTotal / Math.max(1, gridPageSize)))
-  const disablePrev = gridPage <= 0
-  const disableNext = gridPage + 1 >= totalGridPages || gridTotal === 0
 
   return (
     <div className="space-y-6">
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
-        <p className="text-sm font-medium text-foreground">Ejecución</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Cada ejecución es un barrido completo desde cero: cola de listados Lider → tabla{' '}
-          <code className="rounded bg-muted px-1">scrapping</code> con URL de producto, nombre, marca, precio,
-          cadena y fecha de extracción. El análisis es aparte; aquí solo acumulamos datos.
-        </p>
-
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-          <div className="min-w-[240px] flex-1">
-            {runs.length === 0 && !runsBusy ? (
-              <p className="text-sm text-muted-foreground">Aún no hay ejecuciones. Creá una con el botón de la derecha.</p>
-            ) : (
-              <Select
-                value={effectiveRunId ?? ''}
-                onValueChange={(v) => {
-                  setActiveRunId(v)
-                  setGridPage(0)
-                }}
-                disabled={runsBusy || runs.length === 0}
-              >
-                <SelectTrigger aria-label="Elegir ejecución de scrapping">
-                  <SelectValue placeholder={runsBusy ? 'Cargando…' : 'Elegir ejecución'} />
-                </SelectTrigger>
-                <SelectContent>
-                  {runs.map((r) => (
-                    <SelectItem key={r.id} value={r.id}>
-                      {formatWhen(r.started_at)} · {r.status} · págs. {r.pages_done}/
-                      {r.total_pages ?? '—'} · filas ~{Number(r.rows_inserted ?? 0)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">Scraper retail (motor Lider)</p>
+            <p className="mt-1 max-w-prose text-sm text-muted-foreground">
+              Podés usar el botón <span className="font-medium text-foreground">Detener scrapping</span> para
+              cancelar la cola en curso. Cada <span className="font-medium text-foreground">Barrido</span> nuevo cancela
+              cualquier corrida previa, vacía <code className="rounded bg-muted px-1">scrapping</code> y{' '}
+              <code className="rounded bg-muted px-1">scrapping_pages</code>, y crea un registro nuevo en{' '}
+              <code className="rounded bg-muted px-1">scrapping_runs</code> (el historial de corridas se conserva).
+              Elegí el retail y revisá el log abajo.
+            </p>
           </div>
+          <span
+            className={
+              fullSweepBusy ?
+                'inline-flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-800 dark:text-amber-200'
+              : 'inline-flex items-center rounded-md border border-border bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground'
+            }
+          >
+            {fullSweepBusy ? 'En ejecución' : 'Listo'}
+          </span>
+        </div>
 
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-[220px] flex-1 space-y-2">
+            <Label htmlFor="retail-scrape-select">Retail a consultar</Label>
+            <Select
+              value={retailSelectValue}
+              onValueChange={setSelectedRetailId}
+              disabled={fullSweepBusy || retailsBusy || retails.length === 0}
+            >
+              <SelectTrigger id="retail-scrape-select" className="w-full">
+                <SelectValue placeholder={retailsBusy ? 'Cargando retails…' : 'Elegí un retail'} />
+              </SelectTrigger>
+              <SelectContent>
+                {retails.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {retails.length > 0 && selectedRetailId ? (
+              <p className="text-[11px] text-muted-foreground">
+                Origen:{' '}
+                <span className="font-mono text-foreground">
+                  {retails.find((x) => x.id === selectedRetailId)?.base_url ?? '—'}
+                </span>
+                {(retails.find((x) => x.id === selectedRetailId)?.max_pages ?? 0) > 0 ?
+                  <>
+                    {' '}
+                    · máx. detectado: {retails.find((x) => x.id === selectedRetailId)?.max_pages} págs /{' '}
+                    {(retails.find((x) => x.id === selectedRetailId)?.max_products ?? 0).toLocaleString('es-CL')} prod
+                  </>
+                : null}
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Log</p>
+          <p className="mt-1 wrap-break-word font-mono text-xs leading-relaxed text-muted-foreground">{logReference}</p>
+          <p className="mt-2 wrap-break-word font-mono text-xs leading-relaxed text-foreground">{logCurrent}</p>
+          {referenceRun?.error_message && !fullSweepBusy ? (
+            <p className="mt-2 font-mono text-[11px] text-amber-700 dark:text-amber-300">
+              Aviso en última referencia: {referenceRun.error_message}
+            </p>
+          ) : null}
+          <div className="mt-3 space-y-1">
+            <div className="flex justify-between text-[10px] text-muted-foreground">
+              <span>Avance del scraping actual (respecto a cola y máximo histórico de páginas)</span>
+              <span className="tabular-nums">{fullSweepBusy ? `${progressPercent}%` : '—'}</span>
+            </div>
+            <div
+              className={`h-2 w-full overflow-hidden rounded-full bg-muted ${fullSweepBusy ? '' : 'opacity-50'}`}
+              role={fullSweepBusy ? 'progressbar' : undefined}
+              aria-valuenow={fullSweepBusy ? progressPercent : undefined}
+              aria-valuemin={fullSweepBusy ? 0 : undefined}
+              aria-valuemax={fullSweepBusy ? 100 : undefined}
+              aria-label={
+                fullSweepBusy ?
+                  'Avance del scraping actual según páginas de cola procesadas'
+                : 'Barra inactiva: solo muestra avance durante un barrido en curso'
+              }
+            >
+              <div
+                className={`h-full rounded-full bg-primary transition-[width] duration-300 ease-out ${fullSweepBusy ? '' : 'w-0'}`}
+                style={{ width: fullSweepBusy ? `${progressPercent}%` : '0%' }}
+              />
+            </div>
+            {!fullSweepBusy ? (
+              <p className="text-[10px] text-muted-foreground">
+                Si el retail aún no tiene máximo histórico, la barra sigue solo la cola actual.
+              </p>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-3">
+          <div className="rounded-md border border-border bg-background/80 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cola (scrapping_pages)</p>
+            <p className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+              {queuePagesProcessed} / {queuePagesTotal}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Procesadas · Total en cola</p>
+          </div>
+          <div className="rounded-md border border-border bg-background/80 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Lecturas fallidas</p>
+            <p className="mt-2 text-3xl font-semibold tabular-nums text-foreground">{queuePagesFailed}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Páginas con error en esta corrida (p. ej. 404)</p>
+          </div>
+          <div className="rounded-md border border-border bg-background/80 p-4">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Total scraper (scrapping)</p>
+            <p className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+              {scraperRowsTotal.toLocaleString('es-CL')}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">Filas acumuladas en esta corrida</p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          {runsBusy ? <p className="text-sm text-muted-foreground">Cargando historial…</p> : null}
           <Button
             type="button"
+            variant="secondary"
             className={TOOLBAR_BTN}
-            onClick={() => void onStartFull()}
-            disabled={startBusy || processBusy}
+            onClick={() => void onDetenerScrapping()}
+            disabled={!canStopScrapping || stopBusy || runsBusy}
+            title="Cancela corridas en estado «running» y marca la cola pendiente o en proceso como fallida"
+            aria-label="Detener scrapping"
           >
-            {startBusy ? (
+            {stopBusy ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
             ) : (
-              <PlusCircle className="mr-2 h-4 w-4" aria-hidden />
+              <Square className="mr-2 h-4 w-4" aria-hidden />
             )}
-            Nueva ejecución full Lider
+            Detener scrapping
           </Button>
-
           <Button
             type="button"
-            variant="outline"
             className={TOOLBAR_BTN}
-            onClick={() => void onProcessOnce()}
-            disabled={!effectiveRunId || processBusy || startBusy}
+            onClick={() => void onBarrido()}
+            disabled={fullSweepBusy || runsBusy || retailsBusy || !selectedRetailId}
           >
-            {processBusy ? (
+            {fullSweepBusy ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
             ) : (
               <Play className="mr-2 h-4 w-4" aria-hidden />
             )}
-            Procesar 1 página
-          </Button>
-
-          <Button
-            type="button"
-            variant="outline"
-            className={TOOLBAR_BTN}
-            onClick={() => void onProcessTen()}
-            disabled={!effectiveRunId || processBusy || startBusy}
-          >
-            Procesar 10 páginas
+            Barrido
           </Button>
         </div>
-
-        {activeRun ? (
-          <p className="mt-3 text-xs text-muted-foreground">
-            Estado: {activeRun.status}. Último mensaje servidor:{' '}
-            {activeRun.error_message ? (
-              <span className="text-amber-700">{activeRun.error_message}</span>
-            ) : (
-              '—'
-            )}
-          </p>
-        ) : null}
       </div>
 
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Filas en scrapping</h2>
-          <span className="text-xs text-muted-foreground">
-            Total: {gridTotal} · Página datos {gridPage + 1}/{totalGridPages}
-          </span>
-        </div>
-
-        <GridPagingRow
-          disablePrev={disablePrev || gridBusy}
-          disableNext={disableNext || gridBusy}
-          onPrev={() => setGridPage((p) => Math.max(0, p - 1))}
-          onNext={() => setGridPage((p) => p + 1)}
-          pageIndex={gridPage}
-          pageSize={gridPageSize}
-          metaSuffix={
-            gridTotal ? (
+      {sweepDiagnostic ? (
+        <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium text-foreground">Diagnóstico del último barrido</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {outcomeLabel(sweepDiagnostic.outcome)} · {formatWhen(sweepDiagnostic.finishedAtIso)}
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={() => setSweepDiagnostic(null)}
+            >
+              Limpiar
+            </Button>
+          </div>
+          <p className="mt-2 text-sm text-foreground">{sweepDiagnostic.outcomeHint}</p>
+          <ul className="mt-3 max-h-64 space-y-1.5 overflow-y-auto rounded-md border border-border bg-muted/30 px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+            <li>
+              <span className="text-foreground">Retail:</span> {sweepDiagnostic.retailName}
+            </li>
+            <li>
+              <span className="text-foreground">Corrida (run id):</span>{' '}
+              {sweepDiagnostic.runId ?? '— (no se creó corrida)'}
+            </li>
+            {sweepDiagnostic.startError ? (
+              <li className="text-destructive">
+                <span className="font-medium">Inicio:</span> {sweepDiagnostic.startError}
+              </li>
+            ) : null}
+            {sweepDiagnostic.actionError ? (
+              <li className="text-destructive">
+                <span className="font-medium">Error en proceso de página:</span> {sweepDiagnostic.actionError}
+              </li>
+            ) : null}
+            {sweepDiagnostic.browserError ? (
+              <li className="text-destructive">
+                <span className="font-medium">Fallo en el navegador o red:</span> {sweepDiagnostic.browserError}
+              </li>
+            ) : null}
+            {sweepDiagnostic.lastSnapshot ? (
               <>
-                {' '}
-                · Total filas {gridTotal}
+                <li>
+                  <span className="text-foreground">Última respuesta del servidor:</span> done=
+                  {String(sweepDiagnostic.lastSnapshot.done)} · cancelled=
+                  {String(sweepDiagnostic.lastSnapshot.cancelled)} · runStatus=
+                  {sweepDiagnostic.lastSnapshot.runStatus}
+                </li>
+                <li>
+                  Cola: total {sweepDiagnostic.lastSnapshot.queueTotal} · procesadas (ok+fallidas){' '}
+                  {sweepDiagnostic.lastSnapshot.queueProcessed} · ok {sweepDiagnostic.lastSnapshot.queueOk} · fallidas{' '}
+                  {sweepDiagnostic.lastSnapshot.queueFailed} · pendientes {sweepDiagnostic.lastSnapshot.queuePending}{' '}
+                  · en proceso {sweepDiagnostic.lastSnapshot.queueProcessing}
+                </li>
+                <li>
+                  Productos (tally en respuesta):{' '}
+                  {sweepDiagnostic.lastSnapshot.productsTally.toLocaleString('es-CL')}
+                </li>
+                {sweepDiagnostic.lastSnapshot.pageError ? (
+                  <li className="text-amber-800 dark:text-amber-200">
+                    Aviso en última página: {sweepDiagnostic.lastSnapshot.pageError}
+                  </li>
+                ) : null}
               </>
-            ) : null
-          }
-        />
-
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="app-data-table w-full min-w-[960px] text-sm">
-            <thead>
-              <tr>
-                <th className="text-left">Producto</th>
-                <th className="text-left">Marca</th>
-                <th className="text-left">Precio</th>
-                <th className="text-left">Cadena</th>
-                <th className="text-left">Extracción</th>
-                <th className="text-left">URL producto</th>
-                <th className="text-left">URL listado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {gridBusy ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                    <Loader2 className="mx-auto h-6 w-6 animate-spin" aria-hidden />
-                  </td>
-                </tr>
-              ) : rows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="py-8 text-center text-muted-foreground">
-                    {effectiveRunId ?
-                      'No hay filas aún. Procesá páginas de la cola o iniciá una ejecución nueva.'
-                    : 'Iniciá una ejecución o elegí una existente.'}
-                  </td>
-                </tr>
-              ) : (
-                rows.map((row) => (
-                  <tr key={row.id}>
-                    <td className="max-w-[220px] align-top">{row.product_name}</td>
-                    <td className="align-top">{row.brand ?? '—'}</td>
-                    <td className="align-top tabular-nums">{formatMoneyCl(Number(row.price))}</td>
-                    <td className="align-top">{row.source_chain}</td>
-                    <td className="align-top text-xs text-muted-foreground">
-                      {formatWhen(row.extracted_at)}
-                    </td>
-                    <td className="max-w-[200px] align-top font-mono text-[11px]">
-                      <span title={row.product_url}>{shortenUrl(row.product_url)}</span>
-                    </td>
-                    <td className="max-w-[200px] align-top font-mono text-[11px]">
-                      <span title={row.listing_url}>{shortenUrl(row.listing_url)}</span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <GridPagingRow
-          disablePrev={disablePrev || gridBusy}
-          disableNext={disableNext || gridBusy}
-          onPrev={() => setGridPage((p) => Math.max(0, p - 1))}
-          onNext={() => setGridPage((p) => p + 1)}
-          pageIndex={gridPage}
-          pageSize={gridPageSize}
-          metaSuffix={
-            gridTotal ? (
+            ) : null}
+            {sweepDiagnostic.persistedRun ? (
               <>
-                {' '}
-                · Total filas {gridTotal}
+                <li className="mt-1 border-t border-border pt-1.5 text-foreground">
+                  Tras recargar historial (base de datos)
+                </li>
+                <li>
+                  Estado corrida: {sweepDiagnostic.persistedRun.status} · total_pages en corrida:{' '}
+                  {sweepDiagnostic.persistedRun.total_pages ?? '—'} · ok {sweepDiagnostic.persistedRun.pages_ok} ·
+                  fallidas {sweepDiagnostic.persistedRun.pages_failed} · rows_inserted{' '}
+                  {String(sweepDiagnostic.persistedRun.rows_inserted)}
+                </li>
+                {sweepDiagnostic.persistedRun.error_message ? (
+                  <li className="text-amber-800 dark:text-amber-200">
+                    error_message en corrida: {sweepDiagnostic.persistedRun.error_message}
+                  </li>
+                ) : null}
               </>
-            ) : null
-          }
-        />
-      </div>
+            ) : sweepDiagnostic.runId ? (
+              <li>No se encontró la corrida en el historial recargado (id {sweepDiagnostic.runId}).</li>
+            ) : null}
+          </ul>
+        </div>
+      ) : null}
     </div>
   )
 }

@@ -1,5 +1,6 @@
 @import "tailwindcss";
-@import "tw-animate-css";
+/* Ruta explícita: el paquete solo declara export "style" y Turbopack/Tailwind a veces no resuelve `@import "tw-animate-css"`. */
+@import "../../node_modules/tw-animate-css/dist/tw-animate.css";
 @import "./ui-style-skins.css";
 
 /*

@@ -2,6 +2,9 @@ import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { CapturaCadenas2Client } from './CapturaCadenas2Client'
 
+/** Presupuesto de ejecución de server actions desde esta ruta (seg.). El hosting puede imponer un tope menor. */
+export const maxDuration = 3600
+
 export const metadata = {
   title: 'Captura de cadenas 2 | HubStock AI',
 }
