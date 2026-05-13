@@ -79,6 +79,46 @@ export async function cancelAllRunningScrappingRuns(admin: SupabaseClient): Prom
 }
 
 /**
+ * Marca pendientes/en proceso de una corrida como fallidas y cancela la corrida si sigue `running`.
+ * Usar cuando el barrido en el cliente termina sin cierre normal (corte de red, error de acción, etc.).
+ */
+export async function failPendingPagesAndCancelRunIfRunning(
+  admin: SupabaseClient,
+  runId: string,
+  runErrorMessage: string,
+  pageFailMessage = 'Barrido interrumpido antes de terminar esta página.',
+): Promise<{ error: unknown | null }> {
+  const now = new Date().toISOString()
+  const msg = runErrorMessage.trim().slice(0, 2000)
+
+  const { error: e1 } = await admin
+    .from('scrapping_pages')
+    .update({
+      status: 'failed',
+      finished_at: now,
+      error_message: pageFailMessage,
+      products_found: 0,
+      rows_written: 0,
+    } as never)
+    .eq('run_id', runId)
+    .in('status', ['pending', 'processing'])
+
+  if (e1) return { error: e1 }
+
+  const { error: e2 } = await admin
+    .from('scrapping_runs')
+    .update({
+      status: 'cancelled',
+      finished_at: now,
+      error_message: msg || 'Barrido interrumpido antes de completar la cola.',
+    } as never)
+    .eq('id', runId)
+    .eq('status', 'running')
+
+  return { error: e2 ?? null }
+}
+
+/**
  * Vacía por completo `scrapping` y `scrapping_pages` sin borrar `scrapping_runs`.
  * Llamar solo cuando no quede ninguna corrida `running` (p. ej. tras `cancelAllRunningScrappingRuns`).
  */

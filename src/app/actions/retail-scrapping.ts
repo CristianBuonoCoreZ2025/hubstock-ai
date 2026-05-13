@@ -17,6 +17,7 @@ import {
   cancelAllRunningScrappingRuns,
   claimNextScrappingPage,
   countScrappingPages,
+  failPendingPagesAndCancelRunIfRunning,
   fetchScrappingRunById,
   finalizeScrappingPage,
   insertScrappingPageRows,
@@ -151,7 +152,9 @@ export async function startLiderScrappingRunAction(input: {
       runId: string
       totalPages: number
       retailName: string
+      /** Valores actuales en `retail` (pico histórico); solo para contexto en UI, no limitan la cola. */
       retailMaxPages: number
+      /** Igual; referencia de productos históricos, no tope de captura. */
       retailMaxProducts: number
     }
   | { ok: false; error: string }
@@ -276,9 +279,9 @@ export async function processLiderScrappingRunPageAction(input: {
       queuePagesProcessing: number
       /** Estado de `scrapping_runs` tras esta respuesta (útil para diagnosticar cortes). */
       runPersistedStatus: string
-      /** Máximo histórico de páginas en cola para este retail (referencia de barra). */
+      /** Pico histórico `retail.max_pages` al momento de la respuesta; no condiciona el tamaño de la cola. */
       retailMaxPages: number
-      /** Máximo histórico de filas en `scrapping` para este retail (referencia). */
+      /** Pico histórico `retail.max_products`; referencia solamente. */
       retailMaxProducts: number
     }
   | { ok: false; error: string }
@@ -593,6 +596,34 @@ export async function listScrappingRunsAction(): Promise<
   try {
     const runs = await listRecentScrappingRuns(editor.admin, 32)
     return { ok: true, runs }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Si la corrida sigue `running`, la cancela y guarda `error_message` (cierre anómalo desde el cliente). */
+export async function persistScrappingRunBarridoOutcomeIfRunningAction(input: {
+  runId: string
+  summary: string
+}): Promise<{ ok: true; updated: boolean } | { ok: false; error: string }> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+
+  const runId = input.runId?.trim()
+  if (!runId) return { ok: false, error: 'Falta el identificador de la corrida.' }
+
+  const run = await fetchScrappingRunById(editor.admin, runId)
+  if (!run) return { ok: true, updated: false }
+  if (run.status !== 'running') return { ok: true, updated: false }
+
+  const summary = input.summary.trim().slice(0, 2000)
+  if (!summary) return { ok: true, updated: false }
+
+  try {
+    const { error } = await failPendingPagesAndCancelRunIfRunning(editor.admin, runId, summary)
+    if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    revalidatePath('/captura-cadenas-2')
+    return { ok: true, updated: true }
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }

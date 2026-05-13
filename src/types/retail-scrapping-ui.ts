@@ -9,7 +9,9 @@ export type RetailTargetRow = {
   id: string
   name: string
   base_url: string
+  /** Último pico histórico en corridas; solo referencia de UI, no tope del barrido. */
   max_pages: number
+  /** Último pico histórico de filas en scrapping; solo referencia de UI. */
   max_products: number
   /** Reglas para derivar `scrapping.sections` / `scrapping.categories` desde `listing_url`. */
   listing_url_path_config?: RetailListingPathConfig | null
