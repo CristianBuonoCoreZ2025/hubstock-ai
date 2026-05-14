@@ -41,6 +41,19 @@ export function isPermissionError(err: unknown): boolean {
   return msg.includes('row-level security') || msg.includes('rls') || msg.includes('permission')
 }
 
+/** PostgREST: columna no expuesta o ausente en caché de esquema (p. ej. migración no aplicada). */
+export function isPostgrestUnknownColumnError(err: unknown): boolean {
+  const e = asDbError(err)
+  const code = e?.code
+  if (code === 'PGRST204' || code === '42703') return true
+  const m = (e?.message ?? '').toLowerCase()
+  return (
+    (m.includes('schema cache') && m.includes('column')) ||
+    (m.includes('could not find') && m.includes('column')) ||
+    m.includes('column') && m.includes('does not exist')
+  )
+}
+
 function uniqueMessageForContext(ctx: UserFriendlyErrorContext): string {
   switch (ctx) {
     case 'brand':
@@ -69,6 +82,9 @@ export function getUserFriendlyErrorMessage(
   if (isForeignKeyError(err)) return 'No se pudo guardar porque falta una relación requerida.'
   if (isCheckConstraintError(err)) return 'No se pudo guardar porque no cumple una regla de validación.'
   if (isUniqueViolation(err)) return uniqueMessageForContext(ctx)
+  if (isPostgrestUnknownColumnError(err)) {
+    return 'No se pudo guardar en la base de datos porque falta una columna esperada. Aplicá las migraciones pendientes del proyecto en Supabase y volvé a intentar.'
+  }
   return 'No se pudo completar la acción. Intenta nuevamente.'
 }
 

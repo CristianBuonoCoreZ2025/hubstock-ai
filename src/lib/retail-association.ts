@@ -104,7 +104,8 @@ export function enrichRetailCandidatesCompositeScore(
   return enriched.sort((a, b) => Number(b.match_score) - Number(a.match_score))
 }
 
-function brandHintInName(brandHint: string | null | undefined, productName: string): boolean {
+/** Marca de la tienda coherente con nombre de maestro (inclusión / similitud simple). */
+export function brandHintInName(brandHint: string | null | undefined, productName: string): boolean {
   if (!brandHint?.trim()) return true
   const nb = norm(brandHint)
   const nn = norm(productName)

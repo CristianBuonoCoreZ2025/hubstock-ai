@@ -7,7 +7,6 @@
 import { extractListedProductsFromRetailHtml, htmlListedProductToSyntheticVtex } from '@/server/retail-capture/extract-products-from-retail-html'
 import { extractVtexProductArrayFromResponse } from '@/server/retail-capture/parse-json-products'
 import {
-  mapVtexProductList,
   mapVtexProductToSnapshot,
   type RetailSnapshotRow,
 } from '@/server/retail-capture/map-vtex-product'
@@ -290,20 +289,21 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
   if (!fetched.ok) return fetched
 
   const listed = extractListedProductsFromRetailHtml(fetched.html, pageUrl)
-  const synthetic = listed.map((p) => htmlListedProductToSyntheticVtex(p))
-  const snapshots = mapVtexProductList(synthetic, {
-    retailer: 'lider',
+  const ctx = {
+    retailer: 'lider' as const,
     vtexBaseUrl: base,
-    matchMethod: 'retail_batch_lider_page',
-  })
-
+    matchMethod: 'retail_batch_lider_page' as const,
+  }
   const catHint = categoryHintFromPageUrl(pageUrl)
+  const snapshots: RetailSnapshotRow[] = []
   const stagingRows: LiderCapturePageResult['stagingRows'] = []
 
-  for (let i = 0; i < snapshots.length; i++) {
-    const snap = snapshots[i]!
-    const raw = synthetic[i] as Record<string, unknown>
-
+  // Un producto listado → un synthetic → un snapshot; no usar mapVtexProductList y luego indexar mal.
+  for (const p of listed) {
+    const synthetic = htmlListedProductToSyntheticVtex(p)
+    const snap = mapVtexProductToSnapshot(synthetic, ctx)
+    if (!snap) continue
+    const raw = synthetic as Record<string, unknown>
     const input: RetailCapturedProductInput = {
       retailer: 'lider',
       external_ref: snap.external_ref,
@@ -318,6 +318,7 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
       raw_data: raw,
     }
     const norm = normalizeRetailCapturedInput(input)
+    snapshots.push(snap)
     stagingRows.push({
       ...input,
       external_ref: snap.external_ref,

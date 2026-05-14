@@ -13,23 +13,26 @@ import { retailSweepLogInfo } from '@/lib/retail-sweep-log'
  * Límites del plan de URLs (rendimiento: colas enormes degradan descubrimiento y scrapping).
  * Configurables en `.env.local` (servidor / build):
  *
- * - `RETAIL_LIDER_MAX_SEED_URLS` — tope de semillas finales (default 6000, rango 100–80000).
+ * - `RETAIL_LIDER_MAX_SEED_URLS` — tope de semillas finales (default 2000, mínimo 2000, máx. 80000). Solo rutas `/browse` y `/content`.
  * - `RETAIL_LIDER_MAX_CONTENT_STICKY_SEEDS` — landings `/content/…` preservadas al tope (default 900).
- * - `RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS` — visitas BFS content→browse (default 320).
+ * - `RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS` — visitas BFS content→browse (default 1600; sube si faltan semillas).
  * - `RETAIL_LIDER_MAX_HREFS_FROM_HOME` — enlaces máx. en la home (default 8000).
  * - `RETAIL_LIDER_MAX_SITEMAP_CHILDREN` — sitemaps hijos a seguir desde el índice (default 48).
  * - `RETAIL_LIDER_MAX_LOCS_PER_SITEMAP` — `<loc>` máx. por sitemap hijo (default 2500).
- * - `RETAIL_LIDER_DISCOVERY_TIMEOUT_MS` — presupuesto global de descubrimiento en ms (default 60000; máx. 3600000 = 1 h).
+ * - `RETAIL_LIDER_DISCOVERY_TIMEOUT_MS` — presupuesto global de descubrimiento en ms (default 120000; máx. 3600000 = 1 h).
  *   Incluye sitemap, home y expansión `/content`→`/browse`. Si es bajo, el plan queda corto antes de terminar de leer el sitio.
  * - `RETAIL_LIDER_MAX_BROWSE_LINKS_PER_HTML` — enlaces `/browse/` máx. extraídos por HTML (default 5000).
  * - `RETAIL_LIDER_MAX_LINKED_CONTENT_URLS_PER_HTML` — enlaces `/content/` máx. por HTML al expandir (default 800).
  *
  * Semillas extra: `RETAIL_LIDER_STOREFRONT_BROWSE_URLS` o `RETAIL_LIDER_BROWSE_URLS` (coma).
- * Las rutas `/ip/…` (Lider) se priorizan como listado en el plan de semillas para no quedar siempre fuera del tope frente a `/browse/`.
+ * Las semillas finales excluyen PDP (`/ip/`, `/p/`, etc.): el barrido se concentra en `/browse` y `/content`.
  */
 
 const DEFAULT_STORE = 'https://super.lider.cl'
 const HTML_LIST_PAGE_SIZE_HINT = 40
+
+/** Mínimo de semillas `/browse` + `/content` que se intenta alimentar (tope y piso del env `RETAIL_LIDER_MAX_SEED_URLS`). */
+const MIN_SCRAPPING_SEED_URLS = 2000
 
 /** Landings `/content/{slug}/{id}` (hubs comerciales) siempre en el plan de URLs. */
 const LIDER_CONTENT_HUB_REL_PATHS: readonly string[] = [
@@ -82,7 +85,11 @@ function readPositiveIntFromEnv(
 }
 
 function maxFinalSeeds(): number {
-  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_SEED_URLS', 6000, { min: 100, max: 80_000 })
+  return readPositiveIntFromEnv(
+    'RETAIL_LIDER_MAX_SEED_URLS',
+    MIN_SCRAPPING_SEED_URLS,
+    { min: MIN_SCRAPPING_SEED_URLS, max: 80_000 },
+  )
 }
 
 function maxContentSurfacesSticky(): number {
@@ -90,7 +97,7 @@ function maxContentSurfacesSticky(): number {
 }
 
 function maxContentSurfaceVisits(): number {
-  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS', 320, { min: 0, max: 2000 })
+  return readPositiveIntFromEnv('RETAIL_LIDER_MAX_CONTENT_SURFACE_VISITS', 1600, { min: 0, max: 8000 })
 }
 
 function maxHrefsFromHome(): number {
@@ -107,7 +114,7 @@ function maxLocsPerSitemap(): number {
 
 /** Tiempo máx. de todo el descubrimiento (sitemap + home + expansión content→browse). */
 function discoveryAbortTimeoutMs(): number {
-  return readPositiveIntFromEnv('RETAIL_LIDER_DISCOVERY_TIMEOUT_MS', 60_000, { min: 15_000, max: 3_600_000 })
+  return readPositiveIntFromEnv('RETAIL_LIDER_DISCOVERY_TIMEOUT_MS', 120_000, { min: 15_000, max: 3_600_000 })
 }
 
 function maxBrowseLinksPerHtml(): number {
@@ -193,8 +200,8 @@ function isJunkPathname(pathname: string): boolean {
 function isLikelyProductPath(pathname: string): boolean {
   const p = pathname.toLowerCase()
   if (isJunkPathname(p)) return false
-  // `/ip/` (Lider) no va aquí: se prioriza como semilla tipo listado en `isLikelyListingPath` para no quedar siempre al final del tope.
   return (
+    p.includes('/ip/') ||
     /\/p\//.test(p) ||
     /\/product\//.test(p) ||
     (p.endsWith('.html') && p.split('/').filter(Boolean).length >= 3)
@@ -204,8 +211,6 @@ function isLikelyProductPath(pathname: string): boolean {
 function isLikelyListingPath(pathname: string): boolean {
   const p = pathname.toLowerCase()
   if (isJunkPathname(p)) return false
-  // Lider: fichas y rutas de catálogo bajo `/ip/categoría/id` deben competir con `/browse/` en el plan de semillas.
-  if (p.includes('/ip/')) return true
   if (isLikelyProductPath(p)) return false
   return (
     p.includes('/browse') ||
@@ -235,9 +240,30 @@ function isLiderContentCommercialSurfacePath(pathname: string): boolean {
   return /^\d{4,14}$/.test(parts[2] ?? '')
 }
 
-function isLiderContentCommercialSurfaceUrl(href: string): boolean {
+/**
+ * URLs que deben entrar en la cola inicial de scrapping: listados `/browse` y landings `/content`.
+ * Excluye PDP y rutas de producto (`/ip/`, `/p/`, etc.) para no desperdiciar el tope de semillas.
+ */
+function isLiderScrappingSeedUrl(href: string): boolean {
   try {
-    return isLiderContentCommercialSurfacePath(new URL(href).pathname)
+    const u = new URL(href)
+    const p = u.pathname.toLowerCase()
+    if (isJunkPathname(p)) return false
+    if (isLikelyProductPath(p)) return false
+    if (p.includes('/browse')) return true
+    if (p === '/content' || p.startsWith('/content/')) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+/** Páginas `/content` a visitar para extraer enlaces `/browse` (más amplio que solo id numérico en 3.er segmento). */
+function isLiderContentHubPageForBrowseDiscovery(href: string): boolean {
+  try {
+    const p = new URL(href).pathname.toLowerCase()
+    if (isJunkPathname(p) || isLikelyProductPath(p)) return false
+    return p === '/content' || p.startsWith('/content/')
   } catch {
     return false
   }
@@ -344,7 +370,7 @@ function isSitemapUrl(href: string): boolean {
 async function collectUrlsFromSitemaps(origin: string, signal: AbortSignal): Promise<string[]> {
   const base = trimBase(origin)
   const collected = new Set<string>()
-  const indexCandidates = [`${base}/sitemap.xml`, `${base}/sitemap_index.xml`]
+  const indexCandidates = [`${base}/siteindex.xml`, `${base}/sitemap.xml`, `${base}/sitemap_index.xml`]
 
   for (const idxUrl of indexCandidates) {
     const xml = await fetchText(idxUrl, signal)
@@ -444,6 +470,12 @@ async function collectUrlsFromHomepage(origin: string, signal: AbortSignal): Pro
     }
   }
 
+  const originBase = trimBase(origin)
+  const pageUrl = `${originBase}/`
+  for (const b of extractLiderBrowseListingUrlsFromHtml(html, pageUrl, originBase)) {
+    collected.add(b)
+  }
+
   return [...collected]
 }
 
@@ -514,7 +546,7 @@ function extractLiderLinkedContentSurfaceUrlsFromHtml(
     try {
       const abs = raw.startsWith('http') ? raw : new URL(raw, pageUrl).href
       const n = normalizeLiderStorefrontUrl(originBase, abs)
-      if (!n || !isLiderContentCommercialSurfaceUrl(n)) continue
+      if (!n || !isLiderContentHubPageForBrowseDiscovery(n)) continue
       found.add(n)
       if (found.size >= maxLinkedContentUrlsPerHtml()) break
     } catch {
@@ -539,7 +571,7 @@ async function expandLiderContentSurfacesToBrowseListings(
   const pending: string[] = []
 
   for (const u of dedupeByPath([...seedSurfaces])) {
-    if (!isLiderContentCommercialSurfaceUrl(u)) continue
+    if (!isLiderContentHubPageForBrowseDiscovery(u)) continue
     const k = urlPathKey(u)
     if (!k || queuedPathKeys.has(k)) continue
     queuedPathKeys.add(k)
@@ -601,6 +633,64 @@ export type LiderCapturePlanDiscoveryMeta = {
 }
 
 /**
+ * Fase rápida del plan: sitemap + home + env + landings internas, **sin** el BFS largo
+ * `/content` → `/browse` (eso va en la fase completa paralela al scrapping).
+ * Sirve para llenar `scrapping_pages` temprano y que los workers ya lean productos.
+ */
+export async function discoverLiderScrapingUrlsPhase1Only(storeOriginOverride?: string | null): Promise<{
+  urls: string[]
+  meta: LiderCapturePlanDiscoveryMeta
+}> {
+  const originRaw = (storeOriginOverride?.trim() || resolveLiderStoreBaseUrl()).trim()
+  const origin = trimBase(originRaw)
+  const ctl = new AbortController()
+  const tm = setTimeout(() => ctl.abort(), discoveryAbortTimeoutMs())
+  const meta: LiderCapturePlanDiscoveryMeta = {
+    fromSitemap: 0,
+    fromHomepage: 0,
+    fromEnv: 0,
+    fromFallback: 0,
+    fromContentHubBrowse: 0,
+    finalCount: 0,
+  }
+
+  try {
+    const fromSitemap = await collectUrlsFromSitemaps(origin, ctl.signal)
+    meta.fromSitemap = fromSitemap.length
+
+    const fromHome = await collectUrlsFromHomepage(origin, ctl.signal)
+    meta.fromHomepage = fromHome.length
+
+    const fromEnv = envAdvancedSeedUrls(origin)
+    meta.fromEnv = fromEnv.length
+
+    let merged = dedupeByPath([...fromSitemap, ...fromHome, ...fromEnv])
+    merged = mergeLiderContentHubSeedUrls(origin, merged)
+    const beforeFallback = merged.length
+
+    merged = applyInternalFallbackSeeds(origin, merged)
+    if (merged.length > beforeFallback) meta.fromFallback = merged.length - beforeFallback
+
+    merged = merged.filter(isLiderScrappingSeedUrl)
+    merged = sortSeedsByPriority(merged)
+    meta.fromContentHubBrowse = 0
+    meta.finalCount = merged.length
+
+    return { urls: merged, meta }
+  } catch {
+    const home = normalizeLiderStorefrontUrl(origin, '/')!
+    meta.fromFallback = 1
+    meta.finalCount = 1
+    return { urls: [home], meta }
+  } finally {
+    clearTimeout(tm)
+  }
+}
+
+/** `scrapping_runs.total_pages` mientras la cola aún puede crecer (fase 2 de descubrimiento en curso). */
+export const LIDER_SCRAPPING_QUEUE_TOTAL_PAGES_OPEN = -1
+
+/**
  * Descubre URLs de captura por capas (sin exigir `/browse` ni configuración del usuario).
  * @param storeOriginOverride Origen del storefront (p. ej. fila `retail.base_url`). Si falta, usa env o Lider por defecto.
  */
@@ -638,7 +728,7 @@ export async function discoverLiderCapturePlanUrls(storeOriginOverride?: string 
     merged = applyInternalFallbackSeeds(origin, merged)
     if (merged.length > beforeFallback) meta.fromFallback = merged.length - beforeFallback
 
-    const surfacesForExpand = dedupeByPath(merged).filter(isLiderContentCommercialSurfaceUrl)
+    const surfacesForExpand = dedupeByPath(merged).filter(isLiderContentHubPageForBrowseDiscovery)
     const fromContentBrowse =
       surfacesForExpand.length > 0 && !ctl.signal.aborted ?
         await expandLiderContentSurfacesToBrowseListings(trimBase(origin), surfacesForExpand, ctl.signal)
@@ -646,9 +736,11 @@ export async function discoverLiderCapturePlanUrls(storeOriginOverride?: string 
     meta.fromContentHubBrowse = fromContentBrowse.length
     merged = dedupeByPath([...merged, ...fromContentBrowse])
 
+    merged = merged.filter(isLiderScrappingSeedUrl)
+
     merged = sortSeedsByPriority(merged)
     // Sin esto, casi solo quedan `/browse/…` al aplicar el tope: muchos `/content/…` del sitemap caen fuera del plan.
-    const contentSurfacesSticky = dedupeByPath(merged.filter(isLiderContentCommercialSurfaceUrl)).slice(
+    const contentSurfacesSticky = dedupeByPath(merged.filter(isLiderContentHubPageForBrowseDiscovery)).slice(
       0,
       maxContentSurfacesSticky(),
     )
@@ -736,14 +828,18 @@ export function isLiderHtmlBrowseListingUrl(pageUrl: string): boolean {
 function htmlListPageSizeHint(): number {
   const raw = process.env.RETAIL_LIDER_HTML_LIST_PAGE_SIZE_HINT?.trim()
   const n = raw ? Number(raw) : HTML_LIST_PAGE_SIZE_HINT
-  if (!Number.isFinite(n) || n < 8) return HTML_LIST_PAGE_SIZE_HINT
+  if (!Number.isFinite(n) || n < 1) return HTML_LIST_PAGE_SIZE_HINT
   return Math.min(Math.floor(n), 120)
 }
 
 export function nextLiderHtmlBrowseListingPageUrl(pageUrl: string, lastPageProductCount: number): string | null {
   if (!isLiderHtmlPaginatorListingUrl(pageUrl)) return null
   const hint = htmlListPageSizeHint()
-  if (lastPageProductCount < hint) return null
+  if (lastPageProductCount < hint) {
+    if (process.env.NODE_ENV === 'development')
+      console.log(`[PAG] Cortada: ${pageUrl.slice(0, 80)} → ${lastPageProductCount} prod < hint=${hint}`)
+    return null
+  }
   try {
     const u = new URL(pageUrl)
     const cur = Math.max(1, Number.parseInt(u.searchParams.get('page') ?? '1', 10) || 1)

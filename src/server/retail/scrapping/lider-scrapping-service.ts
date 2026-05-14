@@ -31,6 +31,9 @@ export type ScrappingProductRow = {
   categories: string | null
   extracted_at: string
   created_at: string
+  catalog_match_status?: string | null
+  matched_catalog_product_id?: string | null
+  catalog_matched_at?: string | null
 }
 
 /** UUID ficticio para `delete` masivo vía PostgREST (requiere filtro). */
@@ -76,6 +79,43 @@ export async function cancelAllRunningScrappingRuns(admin: SupabaseClient): Prom
     .eq('status', 'running')
 
   return { error: e2 ?? null }
+}
+
+const SCRAPPING_PAGE_FORCE_DONE_MSG =
+  'Listado cerrado manualmente: marcado como listo sin descargar (cierre forzado de la corrida).'
+
+/**
+ * Marca páginas `pending` / `processing` de una corrida como `done` sin leer el listado (cierre limpio operativo).
+ * No altera el estado de la corrida: quien llama debe actualizar `scrapping_runs` después.
+ */
+export async function forceClosePendingScrappingPagesAsDone(
+  admin: SupabaseClient,
+  runId: string,
+): Promise<{ error: unknown | null; forcedPages: number }> {
+  const { count: c1, error: errCount } = await admin
+    .from('scrapping_pages')
+    .select('id', { count: 'exact', head: true })
+    .eq('run_id', runId)
+    .in('status', ['pending', 'processing'])
+
+  if (errCount) return { error: errCount, forcedPages: 0 }
+  const pending = c1 ?? 0
+  if (pending === 0) return { error: null, forcedPages: 0 }
+
+  const now = new Date().toISOString()
+  const { error } = await admin
+    .from('scrapping_pages')
+    .update({
+      status: 'done',
+      finished_at: now,
+      error_message: SCRAPPING_PAGE_FORCE_DONE_MSG,
+      products_found: 0,
+      rows_written: 0,
+    } as never)
+    .eq('run_id', runId)
+    .in('status', ['pending', 'processing'])
+
+  return { error: error ?? null, forcedPages: pending }
 }
 
 /**
@@ -134,7 +174,8 @@ export async function insertScrappingRun(
   input: {
     retailer: string
     sourceChain: string
-    totalPages: number
+    /** `null` mientras solo está registrada la corrida; se actualiza al cerrar el descubrimiento de URLs. */
+    totalPages: number | null
     retailId?: string | null
   },
 ): Promise<{ id: string } | { error: unknown }> {
@@ -165,15 +206,61 @@ export async function insertScrappingPageRows(
   seeds: LiderPageSeed[],
 ): Promise<{ error: unknown | null }> {
   if (seeds.length === 0) return { error: new Error('empty_seeds') }
-  const rows = seeds.map((s) => ({
-    run_id: runId,
-    retailer,
-    page_url: s.page_url,
-    page_index: s.page_index,
-    status: 'pending',
-  }))
-  const { error } = await admin.from('scrapping_pages').insert(rows as never)
-  return { error }
+  const batchSize = 250
+  for (let offset = 0; offset < seeds.length; offset += batchSize) {
+    const slice = seeds.slice(offset, offset + batchSize).map((s) => ({
+      run_id: runId,
+      retailer,
+      page_url: s.page_url,
+      page_index: s.page_index,
+      status: 'pending',
+    }))
+    const { error } = await admin.from('scrapping_pages').insert(slice as never)
+    if (error) return { error }
+  }
+  return { error: null }
+}
+
+/** Mayor `page_index` en la cola de una corrida (-1 si no hay filas). */
+export async function getMaxScrappingPageIndexForRun(
+  admin: SupabaseClient,
+  runId: string,
+): Promise<number> {
+  const { data, error } = await admin
+    .from('scrapping_pages')
+    .select('page_index')
+    .eq('run_id', runId)
+    .order('page_index', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return -1
+  const n = (data as { page_index?: number }).page_index
+  return typeof n === 'number' ? n : -1
+}
+
+/** Conjunto de `page_url` ya encolados (paginado por rango). */
+export async function listScrappingPageUrlsForRun(
+  admin: SupabaseClient,
+  runId: string,
+): Promise<{ urls: Set<string>; error: unknown | null }> {
+  const urls = new Set<string>()
+  const step = 1000
+  for (let from = 0; ; from += step) {
+    const { data, error } = await admin
+      .from('scrapping_pages')
+      .select('page_url')
+      .eq('run_id', runId)
+      .order('page_index', { ascending: true })
+      .range(from, from + step - 1)
+    if (error) return { urls, error }
+    const rows = (data ?? []) as { page_url?: string }[]
+    for (const r of rows) {
+      const u = (r.page_url ?? '').trim()
+      if (u) urls.add(u)
+    }
+    if (rows.length < step) break
+  }
+  return { urls, error: null }
 }
 
 export async function appendScrappingPage(
@@ -213,48 +300,68 @@ export async function countScrappingPages(
   admin: SupabaseClient,
   runId: string,
 ): Promise<{ total: number; pending: number; processing: number; done: number; failed: number }> {
-  const { data, error } = await admin.from('scrapping_pages').select('status').eq('run_id', runId)
-  if (error || !data) {
-    return { total: 0, pending: 0, processing: 0, done: 0, failed: 0 }
+  /** Conteo exacto por estado (sin traer filas: evita el tope ~1000 del API en tablas grandes). */
+  async function countStatus(status: string): Promise<number> {
+    const { count, error } = await admin
+      .from('scrapping_pages')
+      .select('id', { count: 'exact', head: true })
+      .eq('run_id', runId)
+      .eq('status', status)
+    if (error) {
+      console.error('[countScrappingPages]', runId, status, error.message)
+      return 0
+    }
+    return count ?? 0
   }
-  const tallies = { total: 0, pending: 0, processing: 0, done: 0, failed: 0 }
-  for (const r of data as { status: string }[]) {
-    tallies.total++
-    const s = (r.status ?? '').toLowerCase()
-    if (s === 'pending') tallies.pending++
-    else if (s === 'processing') tallies.processing++
-    else if (s === 'done') tallies.done++
-    else if (s === 'failed') tallies.failed++
-  }
-  return tallies
+
+  const [pending, processing, done, failed] = await Promise.all([
+    countStatus('pending'),
+    countStatus('processing'),
+    countStatus('done'),
+    countStatus('failed'),
+  ])
+  const total = pending + processing + done + failed
+  return { total, pending, processing, done, failed }
 }
 
 export async function claimNextScrappingPage(
   admin: SupabaseClient,
   runId: string,
 ): Promise<ScrappingPageJob | null> {
-  const { data: next, error: selErr } = await admin
-    .from('scrapping_pages')
-    .select('id,run_id,retailer,page_url,page_index,status')
-    .eq('run_id', runId)
-    .eq('status', 'pending')
-    .order('page_index', { ascending: true })
-    .limit(1)
-    .maybeSingle()
+  /** Varios intentos: el flujo select + update no es atómico; otra petición puede ganar la fila entre medias. */
+  const maxAttempts = 12
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const { data: next, error: selErr } = await admin
+      .from('scrapping_pages')
+      .select('id,run_id,retailer,page_url,page_index,status')
+      .eq('run_id', runId)
+      .eq('status', 'pending')
+      .order('page_index', { ascending: true })
+      .limit(1)
+      .maybeSingle()
 
-  if (selErr || !next) return null
+    if (selErr) {
+      console.error('[claimNextScrappingPage] select', runId, selErr.message)
+      return null
+    }
+    if (!next) return null
 
-  const started = new Date().toISOString()
-  const { data: claimed, error: upErr } = await admin
-    .from('scrapping_pages')
-    .update({ status: 'processing', started_at: started } as never)
-    .eq('id', (next as { id: string }).id)
-    .eq('status', 'pending')
-    .select('id,run_id,retailer,page_url,page_index,status')
-    .maybeSingle()
+    const started = new Date().toISOString()
+    const { data: claimed, error: upErr } = await admin
+      .from('scrapping_pages')
+      .update({ status: 'processing', started_at: started } as never)
+      .eq('id', (next as { id: string }).id)
+      .eq('status', 'pending')
+      .select('id,run_id,retailer,page_url,page_index,status')
+      .maybeSingle()
 
-  if (upErr || !claimed) return null
-  return claimed as ScrappingPageJob
+    if (upErr) {
+      console.error('[claimNextScrappingPage] update', runId, upErr.message)
+      return null
+    }
+    if (claimed) return claimed as ScrappingPageJob
+  }
+  return null
 }
 
 export async function finalizeScrappingPage(
@@ -326,6 +433,116 @@ export async function listRecentScrappingRuns(
 
   if (error || !data) return []
   return data as ScrappingRunRow[]
+}
+
+/** Cantidad de corridas con estado `running` (cualquier retail). */
+export async function countRunningScrappingRuns(admin: SupabaseClient): Promise<number> {
+  const { count, error } = await admin
+    .from('scrapping_runs')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'running')
+  if (error) return -1
+  return count ?? 0
+}
+
+export async function countScrappingProductRowsGlobal(admin: SupabaseClient): Promise<number> {
+  const { count, error } = await admin.from('scrapping').select('id', { count: 'exact', head: true })
+  if (error) return -1
+  return count ?? 0
+}
+
+/** Filas de producto aún pendientes de homologación (paso 1 en adelante). */
+export async function countScrappingProductRowsPendingHomologation(admin: SupabaseClient): Promise<number> {
+  const { count, error } = await admin
+    .from('scrapping')
+    .select('id', { count: 'exact', head: true })
+    .eq('catalog_match_status', 'pending')
+  if (error) return -1
+  return count ?? 0
+}
+
+export async function countScrappingPageRowsGlobal(admin: SupabaseClient): Promise<number> {
+  const { count, error } = await admin.from('scrapping_pages').select('id', { count: 'exact', head: true })
+  if (error) return -1
+  return count ?? 0
+}
+
+/** Última corrida `running` para el retail (si existe). */
+export async function fetchRunningScrappingRunForRetail(
+  admin: SupabaseClient,
+  retailId: string,
+): Promise<ScrappingRunRow | null> {
+  const { data, error } = await admin
+    .from('scrapping_runs')
+    .select('*')
+    .eq('retail_id', retailId)
+    .eq('status', 'running')
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  return data as ScrappingRunRow
+}
+
+/** Última corrida del retail (cualquier estado), por `started_at`. */
+export async function fetchLatestScrappingRunForRetail(
+  admin: SupabaseClient,
+  retailId: string,
+): Promise<ScrappingRunRow | null> {
+  const { data, error } = await admin
+    .from('scrapping_runs')
+    .select('*')
+    .eq('retail_id', retailId)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error || !data) return null
+  return data as ScrappingRunRow
+}
+
+/** Pasa páginas `failed` a `pending` para volver a leerlas (misma corrida). */
+export async function requeueFailedScrappingPagesForRun(
+  admin: SupabaseClient,
+  runId: string,
+): Promise<{ error: unknown | null; requeued: number }> {
+  const { count, error: cErr } = await admin
+    .from('scrapping_pages')
+    .select('id', { count: 'exact', head: true })
+    .eq('run_id', runId)
+    .eq('status', 'failed')
+  if (cErr) return { error: cErr, requeued: 0 }
+  const n = count ?? 0
+  if (n === 0) return { error: null, requeued: 0 }
+  const { error } = await admin
+    .from('scrapping_pages')
+    .update({
+      status: 'pending',
+      error_message: null,
+      finished_at: null,
+      started_at: null,
+      products_found: 0,
+      rows_written: 0,
+    } as never)
+    .eq('run_id', runId)
+    .eq('status', 'failed')
+  return { error: error ?? null, requeued: n }
+}
+
+/** Permite seguir procesando la cola tras `completed` o `cancelled` (p. ej. reencolar fallidas). */
+export async function reopenScrappingRunForQueueProcessing(
+  admin: SupabaseClient,
+  runId: string,
+): Promise<{ error: unknown | null }> {
+  const { error } = await admin
+    .from('scrapping_runs')
+    .update({
+      status: 'running',
+      finished_at: null,
+      error_message: null,
+    } as never)
+    .eq('id', runId)
+    .in('status', ['completed', 'cancelled'] as never)
+  return { error: error ?? null }
 }
 
 /** Catálogo de retails configurados para scraping (origen `base_url`). */

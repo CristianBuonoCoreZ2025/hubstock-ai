@@ -45,8 +45,13 @@ function parseOfferPrice(offers: unknown): number | null {
 
 function slugFromVtPath(pathname: string): string | undefined {
   const parts = pathname.split('/').filter(Boolean)
+  const lower = parts.map((s) => s.toLowerCase())
+  const ipIdx = lower.indexOf('ip')
+  if (ipIdx >= 0 && ipIdx + 1 < parts.length) {
+    return parts[ipIdx + 1]!.replace(/\.html$/i, '')
+  }
   const pIdx = parts.indexOf('p')
-  if (pIdx >= 1) return parts[pIdx - 1]
+  if (pIdx >= 1) return parts[pIdx - 1]!.replace(/\.html$/i, '')
   const last = parts[parts.length - 1]
   return last?.replace(/\.html$/i, '') || undefined
 }
@@ -170,19 +175,94 @@ function parseDigitsClpPrice(raw: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
-/** Listados tipo Lider (search, browse por categoría, etc.): mismo itemStacks en distintas ramas. */
-function itemStacksFromInitialData(initial: Record<string, unknown> | undefined): unknown[] | null {
+/** Busca itemStacks en TODAS las keys de initialData y acumula, no solo la primera. */
+function collectItemStacksFromInitialData(initial: Record<string, unknown> | undefined): unknown[] | null {
   if (!initial) return null
-  const keys = ['searchResult', 'browseResult', 'categoryResult', 'shelfResult', 'departmentResult']
+  const keys = [
+    'searchResult', 'browseResult', 'categoryResult', 'shelfResult', 'departmentResult',
+    'listingResult', 'plpResult', 'productResult',
+    'search', 'browse', 'category', 'shelf', 'department', 'listing', 'plp', 'products',
+  ]
+  const allStacks: unknown[] = []
   for (const key of keys) {
     const raw = initial[key]
     const block = Array.isArray(raw) ? raw[0] : raw
     if (block !== null && typeof block === 'object') {
-      const stacks = (block as Record<string, unknown>).itemStacks
-      if (Array.isArray(stacks) && stacks.length > 0) return stacks
+      const b = block as Record<string, unknown>
+      const stacks = b.itemStacks
+      if (Array.isArray(stacks)) {
+        for (const s of stacks) allStacks.push(s)
+      }
+      const items = b.items ?? b.products
+      if (Array.isArray(items) && items.length > 0) {
+        allStacks.push({ items } as never)
+      }
     }
   }
-  return null
+  return allStacks.length > 0 ? allStacks : null
+}
+
+function ingestItem(rawItem: unknown, pageOrigin: string, pageUrl: string): HtmlListedProductExtract | null {
+  if (!rawItem || typeof rawItem !== 'object') return null
+  const item = rawItem as Record<string, unknown>
+  const tn = typeof item.__typename === 'string' ? item.__typename : ''
+  if (tn === 'TileTakeOverProductPlaceholder' || tn === 'AdPlaceholder') return null
+  // No descartar por `__typename` vacío: en algunos SSR de Lider los tiles traen precio/nombre sin tipo.
+
+  const name =
+    (typeof item.name === 'string' && item.name.trim() ? item.name.trim() : '') ||
+    (typeof item.title === 'string' && item.title.trim() ? item.title.trim() : '') ||
+    (typeof item.productTitle === 'string' && item.productTitle.trim() ? item.productTitle.trim() : '')
+  if (!name) return null
+
+  let priceNum: number | null = null
+  const pi = item.priceInfo
+  if (pi !== null && typeof pi === 'object') {
+    const pir = pi as Record<string, unknown>
+    const keys = ['linePrice', 'currentPrice', 'displayPrice', 'listPrice', 'unitPrice'] as const
+    for (const key of keys) {
+      const v = pir[key]
+      if (typeof v === 'number' && Number.isFinite(v) && v > 0) {
+        priceNum = v
+        break
+      }
+      if (typeof v === 'string') {
+        priceNum = parseDigitsClpPrice(v)
+        if (priceNum !== null) break
+      }
+    }
+  }
+  if (priceNum === null && typeof item.price === 'number' && Number.isFinite(item.price) && item.price > 0) {
+    priceNum = item.price
+  }
+  if (priceNum === null && typeof item.currentPrice === 'number' && Number.isFinite(item.currentPrice)) {
+    priceNum = item.currentPrice > 0 ? item.currentPrice : null
+  }
+  if (priceNum === null) return null
+  const price = priceNum
+
+  const cu = typeof item.canonicalUrl === 'string' ? item.canonicalUrl.trim() : ''
+  let absoluteUrl: string | undefined
+  if (cu) {
+    absoluteUrl = cu.startsWith('http') ?
+      cu
+    : pageOrigin ?
+      `${pageOrigin.replace(/\/+$/, '')}${cu.startsWith('/') ? cu : `/${cu}`}`
+    : resolveHref(cu, pageOrigin, pageUrl)
+  }
+
+  const id =
+    item.id !== undefined && item.id !== null ? String(item.id)
+    : item.usItemId !== undefined && item.usItemId !== null ? String(item.usItemId)
+    : undefined
+
+  const brand =
+    typeof item.brand === 'string' && item.brand.trim() ? item.brand.trim()
+    : typeof item.manufacturerName === 'string' && item.manufacturerName.trim() ?
+      item.manufacturerName.trim()
+    : undefined
+
+  return { name, price, absoluteUrl, sku: id, brand }
 }
 
 function ingestNextSearchStacks(
@@ -194,57 +274,34 @@ function ingestNextSearchStacks(
   const props = parsed.props as Record<string, unknown> | undefined
   const pageProps = props?.pageProps as Record<string, unknown> | undefined
   const initial = pageProps?.initialData as Record<string, unknown> | undefined
-  const stacks = itemStacksFromInitialData(initial)
-  if (!stacks) return
+  const stacks = collectItemStacksFromInitialData(initial)
+  if (stacks) {
+    for (const stack of stacks) {
+      if (!stack || typeof stack !== 'object') continue
+      const items = (stack as Record<string, unknown>).items
+      if (!Array.isArray(items)) continue
+      for (const rawItem of items) {
+        const p = ingestItem(rawItem, pageOrigin, pageUrl)
+        if (p) out.push(p)
+      }
+    }
+  }
 
-  for (const stack of stacks) {
-    if (!stack || typeof stack !== 'object') continue
-    const items = (stack as Record<string, unknown>).items
-    if (!Array.isArray(items)) continue
-    for (const rawItem of items) {
-      if (!rawItem || typeof rawItem !== 'object') continue
-      const item = rawItem as Record<string, unknown>
-      const tn = typeof item.__typename === 'string' ? item.__typename : ''
-      if (tn === 'TileTakeOverProductPlaceholder' || tn === 'AdPlaceholder' || tn === '') continue
-
-      const name = typeof item.name === 'string' ? item.name.trim() : ''
-      if (!name) continue
-
-      let priceNum: number | null = null
-      const pi = item.priceInfo
-      if (pi !== null && typeof pi === 'object') {
-        const pir = pi as Record<string, unknown>
-        if (typeof pir.linePrice === 'number' && Number.isFinite(pir.linePrice) && pir.linePrice > 0) {
-          priceNum = pir.linePrice
-        } else if (typeof pir.linePrice === 'string') {
-          priceNum = parseDigitsClpPrice(pir.linePrice)
+  if (pageProps && !stacks) {
+    const page = pageProps.page as Record<string, unknown> | undefined
+    if (page) {
+      const modules = page.pageModules ?? page.modules
+      if (Array.isArray(modules)) {
+        for (const mod of modules) {
+          if (!mod || typeof mod !== 'object') continue
+          const items = (mod as Record<string, unknown>).items ?? (mod as Record<string, unknown>).products
+          if (!Array.isArray(items)) continue
+          for (const rawItem of items) {
+            const p = ingestItem(rawItem, pageOrigin, pageUrl)
+            if (p) out.push(p)
+          }
         }
       }
-      if (priceNum === null) continue
-      const price = priceNum
-
-      const cu = typeof item.canonicalUrl === 'string' ? item.canonicalUrl.trim() : ''
-      let absoluteUrl: string | undefined
-      if (cu) {
-        absoluteUrl = cu.startsWith('http') ?
-          cu
-        : pageOrigin ?
-          `${pageOrigin.replace(/\/+$/, '')}${cu.startsWith('/') ? cu : `/${cu}`}`
-        : resolveHref(cu, pageOrigin, pageUrl)
-      }
-
-      const id =
-        item.id !== undefined && item.id !== null ? String(item.id)
-        : item.usItemId !== undefined && item.usItemId !== null ? String(item.usItemId)
-        : undefined
-
-      const brand =
-        typeof item.brand === 'string' && item.brand.trim() ? item.brand.trim()
-        : typeof item.manufacturerName === 'string' && item.manufacturerName.trim() ?
-          item.manufacturerName.trim()
-        : undefined
-
-      out.push({ name, price, absoluteUrl, sku: id, brand })
     }
   }
 }
@@ -345,7 +402,7 @@ function parseEmbeddedNextShopData(html: string, pageUrl: string, out: HtmlListe
     }
   }
 
-  for (const [, body] of html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)) {
+  for (const [, body] of Array.from(html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi))) {
     const t = body?.trimStart()
     if (!t?.startsWith('{"props"')) continue
     try {
@@ -354,6 +411,85 @@ function parseEmbeddedNextShopData(html: string, pageUrl: string, out: HtmlListe
     } catch {
       /* siguiente script */
     }
+  }
+}
+
+/**
+ * Intenta extraer productos directamente del HTML renderizado (DOM).
+ * Útil cuando __NEXT_DATA__ no tiene todos los productos o la página tiene una estructura distinta.
+ */
+function extractProductsFromRenderedHtml(
+  html: string,
+  pageUrl: string,
+  out: HtmlListedProductExtract[],
+): void {
+  const origin = (() => { try { return new URL(pageUrl).origin } catch { return '' } })()
+  if (!origin) return
+
+  const before = out.length
+
+  const priceRe = /\$\s*[\d.]+(?:\.?\d{3})*/g
+  const clpParse = (raw: string): number | null => {
+    const d = raw.replace(/[^\d]/g, '')
+    const n = Number.parseInt(d, 10)
+    return Number.isFinite(n) && n > 100 ? n : null
+  }
+
+  const visitedHrefs = new Set<string>()
+
+  const anchorRe = /<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
+  let m: RegExpExecArray | null
+  while ((m = anchorRe.exec(html)) !== null) {
+    const href = m[1]?.trim()
+    if (!href) continue
+    if (!/\/([^\/]+)\/p(?:\?|$)/.test(href) && !/\/product\//.test(href)) continue
+
+    try {
+      const abs = href.startsWith('http') ? href : `${origin}${href.startsWith('/') ? '' : '/'}${href}`
+      const absLower = abs.toLowerCase()
+      if (visitedHrefs.has(absLower)) continue
+      visitedHrefs.add(absLower)
+
+      const inner = m[2]
+      const nameMatch = inner ? /<[^>]*>([^<]+)<\/[^>]*>/.exec(inner) : null
+      let name = nameMatch ? nameMatch[1]?.trim() : ''
+      if (!name || name.length > 120) {
+        const textBits = inner.replace(/<[^>]*>/g, '').trim()
+        if (textBits && textBits.length < 120) name = textBits
+      }
+      if (!name) {
+        const slug = /\/([^\/]+)\/p(?:\?|$)/.exec(href)
+        if (slug) name = slug[1]!.replace(/-/g, ' ')
+      }
+      if (!name || name.length < 2 || name.length > 150) continue
+
+      const windowStart = Math.max(0, m.index - 500)
+      const windowEnd = Math.min(html.length, m.index + m[0].length + 500)
+      const context = html.slice(windowStart, windowEnd)
+
+      let price: number | null = null
+      const priceMatches = Array.from(context.matchAll(priceRe))
+      for (const pm of priceMatches) {
+        const p = clpParse(pm[0])
+        if (p !== null) {
+          price = p
+          break
+        }
+      }
+      if (price === null) continue
+
+      const slug = /\/([^\/]+)\/p(?:\?|$)/.exec(abs)
+      const sku = slug ? slug[1]!.replace(/[^a-zA-Z0-9_-]/g, '') : undefined
+
+      out.push({ name, price, absoluteUrl: abs, sku, brand: undefined })
+    } catch {
+      continue
+    }
+  }
+
+  const added = out.length - before
+  if (added > 0 && process.env.NODE_ENV === 'development') {
+    console.log(`[HTML-DOM] ${pageUrl.slice(0, 80)} → ${added} prod from DOM`)
   }
 }
 
@@ -409,5 +545,9 @@ export function extractListedProductsFromRetailHtml(html: string, pageUrl: strin
   parseJsonLdBlocks(html, pageUrl, out)
   parseEmbeddedNextShopData(html, pageUrl, out)
   parseReactQueryStateScript(html, pageUrl, out)
-  return dedupeByUrlOrName(out)
+  extractProductsFromRenderedHtml(html, pageUrl, out)
+  const result = dedupeByUrlOrName(out)
+  if (process.env.NODE_ENV === 'development')
+    console.log(`[HTML] ${pageUrl.slice(0, 80)} → ${result.length} prod`)
+  return result
 }
