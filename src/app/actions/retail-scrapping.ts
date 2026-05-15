@@ -13,11 +13,16 @@ import {
 } from '@/lib/retail-listing-url-path'
 import { captureLiderRetailPage, partitionLiderCaptureForCleanInsert } from '@/server/retail/capture/lider-capture'
 import {
+  countScrappingSimilarityPending,
+  processScrappingSimilarityBulkBatch,
+} from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
+import type { SimilarityBulkBatchStats } from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
+import {
   confirmManualScrappingSimilarityLink,
   fetchScrappingSimilarityManualCandidates,
   markScrappingRowPendingNew,
-  type ScrappingSimilarityManualCandidate,
 } from '@/server/retail/scrapping/scrapping-similarity-manual'
+import type { ScrappingSimilarityManualCandidate } from '@/server/retail/scrapping/scrapping-similarity-manual'
 import {
   appendScrappingPage,
   cancelAllRunningScrappingRuns,
@@ -31,6 +36,7 @@ import {
   fetchLatestScrappingRunForRetail,
   fetchRunningScrappingRunForRetail,
   fetchScrappingRunById,
+  filterScrappingUpsertRowsWithoutExistingRetailLinks,
   finalizeScrappingPage,
   forceClosePendingScrappingPagesAsDone,
   getMaxScrappingPageIndexForRun,
@@ -40,6 +46,7 @@ import {
   purgeScrappingProductsAndPages,
   listRecentScrappingRuns,
   listRetailTargets,
+  purgeScrappingRowsThatAlreadyHaveRetailLink,
   reopenScrappingRunForQueueProcessing,
   requeueFailedScrappingPagesForRun,
   resetStaleScrappingPagesProcessing,
@@ -1134,9 +1141,19 @@ export async function processLiderScrappingRunPageAction(input: {
       }))
 
       if (rows.length > 0) {
+        const { kept: rowsFiltered, skipped: skippedLinked } = await filterScrappingUpsertRowsWithoutExistingRetailLinks(
+          editor.admin,
+          page.retailer,
+          rows,
+        )
+        if (skippedLinked > 0) {
+          console.info(
+            `[scrapping] página ${page.page_index}: omitidos ${skippedLinked} producto(s) ya homologados (vínculo en catalog_retail_links).`,
+          )
+        }
         const chunk = 300
-        for (let i = 0; i < rows.length; i += chunk) {
-          const slice = rows.slice(i, i + chunk) as ScrappingUpsertRow[]
+        for (let i = 0; i < rowsFiltered.length; i += chunk) {
+          const slice = rowsFiltered.slice(i, i + chunk) as ScrappingUpsertRow[]
           const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
           if (upErr) {
             lastPersistErr = upErr
@@ -1145,7 +1162,7 @@ export async function processLiderScrappingRunPageAction(input: {
           }
         }
         if (!pageError) {
-          rowsWritten = part.cleanStaging.length
+          rowsWritten = rowsFiltered.length
         }
       }
 
@@ -1367,6 +1384,8 @@ export async function fetchScrappingRowsPageAction(input: {
 
 /** Totales devueltos por `scrapping_apply_exact_catalog_matches` en base. */
 export type ScrappingExactCatalogMatchStats = {
+  /** Filas scrapping quitadas porque ya existía vínculo en `catalog_retail_links` (cadena + ref). */
+  scrappingDuplicatesPurged: number
   /** Filas eliminadas de scrapping (homologadas por nombre+marca en paso 1). */
   scrappingRowsRemoved: number
   catalogProductsUpdated: number
@@ -1415,6 +1434,11 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
       }
     }
 
+    const purgeRes = await purgeScrappingRowsThatAlreadyHaveRetailLink(editor.admin)
+    if (purgeRes.error) {
+      return { ok: false, error: getUserFriendlyErrorMessage(purgeRes.error, 'generic') }
+    }
+
     const { data, error } = await editor.admin.rpc('scrapping_apply_exact_catalog_matches')
     if (error) {
       return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
@@ -1424,11 +1448,13 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
       return { ok: false, error: 'No se pudo completar la acción. Intenta nuevamente.' }
     }
     const o = raw as Record<string, unknown>
+    const pendingN = await countScrappingProductRowsPendingHomologation(editor.admin)
     const result: ScrappingExactCatalogMatchStats = {
+      scrappingDuplicatesPurged: purgeRes.deleted,
       scrappingRowsRemoved: Number(o.scrappingRowsRemoved ?? o.scrappingRowsMatched ?? 0),
       catalogProductsUpdated: Number(o.catalogProductsUpdated ?? 0),
       distinctCatalogProducts: Number(o.distinctCatalogProducts ?? 0),
-      pendingScrappingRemaining: 0,
+      pendingScrappingRemaining: pendingN >= 0 ? pendingN : 0,
     }
     revalidatePath('/captura-cadenas-2')
     revalidatePath('/catalogo')
@@ -1437,8 +1463,6 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }
 }
-
-export type { ScrappingSimilarityManualCandidate }
 
 async function assertNoRunningScrappingForHomologation(): Promise<
   { ok: true; admin: ReturnType<typeof createServiceRoleClient> } | { ok: false; error: string }
@@ -1460,6 +1484,44 @@ async function assertNoRunningScrappingForHomologation(): Promise<
     }
   }
   return { ok: true, admin: editor.admin }
+}
+
+/** Total de filas `pending` antes de la pasada masiva paso 2. */
+export async function countScrappingSimilarityPendingAction(): Promise<
+  { ok: true; total: number } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  try {
+    const total = await countScrappingSimilarityPending(gate.admin)
+    return { ok: true, total }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Lote de homologación automática paso 2 (servidor). */
+export async function processScrappingSimilarityBulkBatchAction(input: {
+  afterId?: string | null
+}): Promise<
+  | { ok: true; stats: SimilarityBulkBatchStats }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  try {
+    const r = await processScrappingSimilarityBulkBatch(gate.admin, {
+      afterId: input.afterId ?? null,
+    })
+    if (!r.ok) return r
+    if (r.stats.autoLinked > 0 || r.stats.autoPendingNew > 0) {
+      revalidatePath('/captura-cadenas-2')
+      revalidatePath('/catalogo')
+    }
+    return r
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
 }
 
 /** Grilla paso 2: filas globales `pending` para revisión manual de similitud. */
@@ -1501,7 +1563,7 @@ export async function listScrappingSimilarityReviewPageAction(input: {
 export async function getScrappingSimilarityCandidatesAction(input: {
   scrappingId: string
 }): Promise<
-  | { ok: true; candidates: ScrappingSimilarityManualCandidate[] }
+  | { ok: true; candidates: ScrappingSimilarityManualCandidate[]; autoResolvedAsPendingNew?: boolean }
   | { ok: false; error: string }
 > {
   const editor = await requireCatalogEditorRetail()
@@ -1523,7 +1585,18 @@ export async function getScrappingSimilarityCandidatesAction(input: {
       return { ok: false, error: 'Esa fila ya no está pendiente de similitud.' }
     }
 
-    return await fetchScrappingSimilarityManualCandidates(editor.admin, row as never)
+    const cand = await fetchScrappingSimilarityManualCandidates(editor.admin, row as never)
+    if (!cand.ok) return cand
+
+    if (cand.candidates.length === 0) {
+      const resolved = await markScrappingRowPendingNew(editor.admin, id)
+      if (!resolved.ok) return { ok: false, error: resolved.error }
+      revalidatePath('/captura-cadenas-2')
+      revalidatePath('/catalogo')
+      return { ok: true, candidates: [], autoResolvedAsPendingNew: true }
+    }
+
+    return cand
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }
@@ -1545,6 +1618,92 @@ export async function confirmScrappingSimilarityLinkAction(input: {
     revalidatePath('/captura-cadenas-2')
     revalidatePath('/catalogo')
     return { ok: true }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+const SCRAPPING_SIMILARITY_BATCH_LINK_MAX = 120
+
+/** Varios vínculos paso 2 en una sola operación (misma página de revisión). */
+export async function confirmScrappingSimilarityLinksBatchAction(input: {
+  links: { scrappingId: string; catalogProductId: string }[]
+}): Promise<
+  | { ok: true; applied: number; failed: { scrappingId: string; error: string }[] }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+
+  const dedup = new Map<string, string>()
+  for (const raw of input.links ?? []) {
+    const sid = raw.scrappingId?.trim()
+    const cid = raw.catalogProductId?.trim()
+    if (sid && cid) dedup.set(sid, cid)
+  }
+  const links = [...dedup.entries()].map(([scrappingId, catalogProductId]) => ({ scrappingId, catalogProductId }))
+  if (links.length === 0) {
+    return { ok: false, error: 'No hay vínculos pendientes para procesar.' }
+  }
+  if (links.length > SCRAPPING_SIMILARITY_BATCH_LINK_MAX) {
+    return {
+      ok: false,
+      error: `Como máximo ${SCRAPPING_SIMILARITY_BATCH_LINK_MAX.toLocaleString('es-CL')} vínculos por lote. El cliente debe enviar varios lotes.`,
+    }
+  }
+
+  const failed: { scrappingId: string; error: string }[] = []
+  let applied = 0
+  try {
+    for (const L of links) {
+      const r = await confirmManualScrappingSimilarityLink(gate.admin, L.scrappingId, L.catalogProductId)
+      if (!r.ok) failed.push({ scrappingId: L.scrappingId, error: r.error })
+      else applied++
+    }
+    if (applied > 0) {
+      revalidatePath('/captura-cadenas-2')
+      revalidatePath('/catalogo')
+    }
+    return { ok: true, applied, failed }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Varias filas paso 2 a `pending_new` en un lote. */
+export async function rejectScrappingSimilarityToPendingNewBatchAction(input: {
+  scrappingIds: string[]
+}): Promise<
+  | { ok: true; applied: number; failed: { scrappingId: string; error: string }[] }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+
+  const ids = [...new Set((input.scrappingIds ?? []).map((id) => id?.trim()).filter(Boolean))]
+  if (ids.length === 0) {
+    return { ok: false, error: 'No hay filas marcadas como producto nuevo para procesar.' }
+  }
+  if (ids.length > SCRAPPING_SIMILARITY_BATCH_LINK_MAX) {
+    return {
+      ok: false,
+      error: `Como máximo ${SCRAPPING_SIMILARITY_BATCH_LINK_MAX.toLocaleString('es-CL')} filas por lote. El cliente debe enviar varios lotes.`,
+    }
+  }
+
+  const failed: { scrappingId: string; error: string }[] = []
+  let applied = 0
+  try {
+    for (const sid of ids) {
+      const r = await markScrappingRowPendingNew(gate.admin, sid)
+      if (!r.ok) failed.push({ scrappingId: sid, error: r.error })
+      else applied++
+    }
+    if (applied > 0) {
+      revalidatePath('/captura-cadenas-2')
+      revalidatePath('/catalogo')
+    }
+    return { ok: true, applied, failed }
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }

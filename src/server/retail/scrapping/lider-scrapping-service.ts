@@ -555,3 +555,112 @@ export async function listRetailTargets(admin: SupabaseClient): Promise<RetailTa
   if (error || !data) return []
   return data as RetailTargetRow[]
 }
+
+type ScrappingRowRef = { id: string; retailer: string; external_ref: string }
+
+/**
+ * Omite filas que ya tienen vínculo en `catalog_retail_links` (mismo retailer + external_ref)
+ * para no volver a cargar en `scrapping` productos ya homologados.
+ */
+export async function filterScrappingUpsertRowsWithoutExistingRetailLinks<T extends { external_ref: string }>(
+  admin: SupabaseClient,
+  retailer: string,
+  rows: T[],
+): Promise<{ kept: T[]; skipped: number }> {
+  if (rows.length === 0) return { kept: [], skipped: 0 }
+  const refs = [...new Set(rows.map((r) => String(r.external_ref ?? '').trim()).filter(Boolean))]
+  const linked = new Set<string>()
+  const chunkSize = 200
+  for (let i = 0; i < refs.length; i += chunkSize) {
+    const slice = refs.slice(i, i + chunkSize)
+    const { data, error } = await admin
+      .from('catalog_retail_links')
+      .select('external_ref')
+      .eq('retailer', retailer)
+      .in('external_ref', slice)
+    if (error) {
+      console.warn('[scrapping] no se pudo filtrar vínculos existentes; se insertan todas las filas.', error)
+      return { kept: rows, skipped: 0 }
+    }
+    for (const row of data ?? []) {
+      linked.add(String((row as { external_ref: string }).external_ref))
+    }
+  }
+  const kept = rows.filter((r) => !linked.has(String(r.external_ref ?? '').trim()))
+  return { kept, skipped: rows.length - kept.length }
+}
+
+async function collectScrappingIdsWithExistingRetailLink(
+  admin: SupabaseClient,
+  batch: ScrappingRowRef[],
+): Promise<string[]> {
+  const byRetailer = new Map<string, Map<string, string>>()
+  for (const r of batch) {
+    const ref = String(r.external_ref ?? '').trim()
+    if (!ref) continue
+    if (!byRetailer.has(r.retailer)) byRetailer.set(r.retailer, new Map())
+    byRetailer.get(r.retailer)!.set(ref, r.id)
+  }
+  const toDelete: string[] = []
+  for (const [retailer, refMap] of byRetailer) {
+    const refs = [...refMap.keys()]
+    const chunk = 200
+    for (let i = 0; i < refs.length; i += chunk) {
+      const slice = refs.slice(i, i + chunk)
+      const { data: links, error } = await admin
+        .from('catalog_retail_links')
+        .select('external_ref')
+        .eq('retailer', retailer)
+        .in('external_ref', slice)
+      if (error) {
+        console.warn('[scrapping] purge vínculos: error consultando links', error)
+        continue
+      }
+      for (const row of links ?? []) {
+        const er = String((row as { external_ref: string }).external_ref)
+        const sid = refMap.get(er)
+        if (sid) toDelete.push(sid)
+      }
+    }
+  }
+  return toDelete
+}
+
+/**
+ * Elimina filas de `scrapping` que ya tienen entrada en `catalog_retail_links` (mismo retailer + external_ref).
+ * Mantención: corrida sin `running`; no borra vínculos ni maestros.
+ */
+export async function purgeScrappingRowsThatAlreadyHaveRetailLink(
+  admin: SupabaseClient,
+): Promise<{ deleted: number; error: unknown | null }> {
+  let deletedTotal = 0
+  let lastId: string | null = null
+  const batchN = 350
+  for (;;) {
+    let q = admin
+      .from('scrapping')
+      .select('id, retailer, external_ref')
+      .order('id', { ascending: true })
+      .limit(batchN)
+    if (lastId) {
+      q = q.gt('id', lastId)
+    }
+    const { data: batch, error } = await q
+    if (error) return { deleted: deletedTotal, error }
+    if (!batch?.length) break
+
+    const typed = batch as ScrappingRowRef[]
+    const ids = await collectScrappingIdsWithExistingRetailLink(admin, typed)
+    if (ids.length > 0) {
+      for (let i = 0; i < ids.length; i += 150) {
+        const slice = ids.slice(i, i + 150)
+        const { error: dErr } = await admin.from('scrapping').delete().in('id', slice)
+        if (dErr) return { deleted: deletedTotal, error: dErr }
+      }
+      deletedTotal += ids.length
+    }
+    lastId = typed[typed.length - 1]!.id
+    if (typed.length < batchN) break
+  }
+  return { deleted: deletedTotal, error: null }
+}

@@ -478,10 +478,27 @@ export function CapturaCadenas2Client() {
       }
       setExactMatchLast(r.result)
       setScrappingPendingHomologacion(r.result.pendingScrappingRemaining)
-      const { scrappingRowsRemoved, distinctCatalogProducts, catalogProductsUpdated, pendingScrappingRemaining } =
-        r.result
+      const {
+        scrappingDuplicatesPurged,
+        scrappingRowsRemoved,
+        distinctCatalogProducts,
+        catalogProductsUpdated,
+        pendingScrappingRemaining,
+      } = r.result
+      const parts: string[] = []
+      if (scrappingDuplicatesPurged > 0) {
+        parts.push(
+          `${scrappingDuplicatesPurged.toLocaleString('es-CL')} ya homologada(s) en catálogo (quitadas de scrapping)`,
+        )
+      }
+      parts.push(
+        `${distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) · ${scrappingRowsRemoved.toLocaleString('es-CL')} por nombre exacto`,
+      )
+      if (catalogProductsUpdated > 0) {
+        parts.push(`${catalogProductsUpdated.toLocaleString('es-CL')} precio(s) actualizado(s)`)
+      }
       toast.success(
-        `Paso 1 · ${distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) con precio actualizado · ${scrappingRowsRemoved.toLocaleString('es-CL')} fila(s) quitada(s) de scrapping. Quedan ${pendingScrappingRemaining.toLocaleString('es-CL')} fila(s) pending.${pendingScrappingRemaining > 0 ? ' Podés usar el paso 2 (similitud inteligente) sobre las que quedaron.' : ''}`,
+        `Paso 1 · ${parts.join(' · ')}. Quedan ${pendingScrappingRemaining.toLocaleString('es-CL')} pending.${pendingScrappingRemaining > 0 ? ' Usá paso 2 sobre el resto.' : ''}`,
       )
       await reloadRuns()
       await refreshScrappingPendingHomologacion()
@@ -1444,8 +1461,11 @@ export function CapturaCadenas2Client() {
             <p className="mt-1 max-w-prose text-xs text-muted-foreground">
               Solo podés ejecutar estos pasos cuando no haya una corrida de scrapping en curso (completada
               automáticamente o cerrada con «Dar por finalizado…» en el plan del barrido). La tabla{' '}
-              <code className="rounded bg-muted px-1">scrapping</code> se va <span className="font-medium text-foreground">limpiando paso a paso</span>: cada etapa resuelve un tipo de filas (hoy el paso 1 las quita al homologarlas con el maestro); lo que queda en{' '}
-              <span className="font-mono">pending</span> es lo que sigue para similitud y altas nuevas.
+              <code className="rounded bg-muted px-1">scrapping</code> se va limpiando paso a paso. El maestro
+              surgió del mismo universo Lider: muchas filas pueden pasar a «nuevo» hasta que el catálogo diverja; en
+              futuros scrapping (otras cadenas) la similitud será más discriminante. Al barrer, los productos que ya
+              tienen vínculo en <span className="font-mono">catalog_retail_links</span> no se vuelven a insertar; podés
+              El paso 1 quita de scrapping lo que ya está en tu catálogo (cadena + ref) antes de homologar por nombre exacto.
             </p>
           </div>
         </div>
@@ -1486,11 +1506,9 @@ export function CapturaCadenas2Client() {
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Paso 1 · Listo</p>
             <p className="mt-1 text-sm font-medium text-foreground">Nombre + marca = maestro</p>
             <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Cada fila <span className="font-mono">pending</span> con el mismo nombre (trim) y la misma marca
-              (minúsculas/trim) que un <span className="font-mono">catalog_products</span> activo: se actualiza{' '}
-              <span className="font-mono">default_reference_price</span> en el maestro con el mayor precio visto en
-              scrapping para ese par, y esas filas se <span className="font-medium text-foreground">eliminan</span> de
-              scrapping para no mezclar con el trabajo pendiente.
+              Primero quita de scrapping lo que ya está en tu catálogo (<span className="font-mono">catalog_retail_links</span>
+              , misma cadena + ref). Luego homologa por nombre y marca exactos al maestro y actualiza precio de
+              referencia. No vuelve a pedirte lo que ya tenías vinculado.
             </p>
             <Button
               type="button"
@@ -1523,10 +1541,8 @@ export function CapturaCadenas2Client() {
             </p>
             <p className="mt-1 text-sm font-medium text-foreground">Similitud inteligente</p>
             <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Primero marca y nombre relativos al catálogo; luego se acota por precio de referencia del maestro dentro
-              de ±3000 CLP respecto al precio capturado. Abrís el combo por fila para ver pocos candidatos (o ninguno).
-              Vinculás al maestro o indicás «No / nuevo» y la fila queda en <span className="font-mono">pending_new</span>{' '}
-              para el paso 3.
+              Solo sobre lo que quedó pending tras el paso 1. Pasada automática con progreso; después revisás casos
+              ambiguos y aplicás la cola.
             </p>
             <Button
               type="button"
@@ -1574,12 +1590,16 @@ export function CapturaCadenas2Client() {
 
         {exactMatchLast ?
           <p className="mt-4 rounded-md border border-border bg-background/80 px-3 py-2 text-xs text-muted-foreground tabular-nums">
-            Último paso 1: {exactMatchLast.scrappingRowsRemoved.toLocaleString('es-CL')} fila(s) quitada(s) de scrapping
-            · {exactMatchLast.distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) tocado(s) ·{' '}
-            {exactMatchLast.catalogProductsUpdated.toLocaleString('es-CL')} precio(s) actualizado(s) en catálogo ·
-            quedaron {exactMatchLast.pendingScrappingRemaining.toLocaleString('es-CL')} pending
+            Último paso 1:{' '}
+            {exactMatchLast.scrappingDuplicatesPurged > 0 ?
+              `${exactMatchLast.scrappingDuplicatesPurged.toLocaleString('es-CL')} ya en catálogo · `
+            : null}
+            {exactMatchLast.scrappingRowsRemoved.toLocaleString('es-CL')} por nombre exacto ·{' '}
+            {exactMatchLast.distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) · quedaron{' '}
+            {exactMatchLast.pendingScrappingRemaining.toLocaleString('es-CL')} pending
           </p>
         : null}
+
       </div>
 
       <ScrappingSimilarityReviewModal

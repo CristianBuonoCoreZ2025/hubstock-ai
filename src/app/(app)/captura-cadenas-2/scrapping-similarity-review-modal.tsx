@@ -1,14 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
-  confirmScrappingSimilarityLinkAction,
+  confirmScrappingSimilarityLinksBatchAction,
+  countScrappingSimilarityPendingAction,
   getScrappingSimilarityCandidatesAction,
   listScrappingSimilarityReviewPageAction,
-  rejectScrappingSimilarityToPendingNewAction,
+  processScrappingSimilarityBulkBatchAction,
+  rejectScrappingSimilarityToPendingNewBatchAction,
 } from '@/app/actions/retail-scrapping'
+import {
+  ScrappingSimilarityBulkProgress,
+  type SimilarityBulkProgressState,
+} from '@/app/(app)/captura-cadenas-2/scrapping-similarity-bulk-progress'
 import { GridPagingRow } from '@/components/grid/grid-paging-row'
 import { Button } from '@/components/ui/button'
 import {
@@ -29,7 +35,28 @@ import {
 import type { ScrappingProductRow } from '@/server/retail/scrapping/lider-scrapping-service'
 import type { ScrappingSimilarityManualCandidate } from '@/server/retail/scrapping/scrapping-similarity-manual'
 
-const ROW_ACTION_BTN = 'h-9 min-w-[148px] shrink-0'
+const FOOTER_ACTION_BTN = 'h-9 min-w-[280px] shrink-0'
+const CANDIDATE_PREFETCH_CONCURRENCY = 6
+const APPLY_BATCH_SIZE = 120
+
+type ModalPhase = 'bulk' | 'review' | 'empty'
+
+const EMPTY_BULK_PROGRESS: SimilarityBulkProgressState = {
+  step: 'homologate',
+  total: 0,
+  processed: 0,
+  purgedDuplicates: 0,
+  autoLinked: 0,
+  autoPendingNew: 0,
+  leftForReview: 0,
+  failed: 0,
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
 
 export type ScrappingSimilarityReviewModalProps = {
   open: boolean
@@ -49,95 +76,332 @@ export function ScrappingSimilarityReviewModal({
   const [total, setTotal] = useState(0)
   const [pageSize, setPageSize] = useState(100)
   const [gridBusy, setGridBusy] = useState(false)
-  const [candidatesByRow, setCandidatesByRow] = useState<Record<string, ScrappingSimilarityManualCandidate[]>>({})
-  const [candBusyByRow, setCandBusyByRow] = useState<Record<string, boolean>>({})
-  const [selectionByRow, setSelectionByRow] = useState<Record<string, string>>({})
-  const [rowActionBusy, setRowActionBusy] = useState<string | null>(null)
+  const [applyBusy, setApplyBusy] = useState(false)
+  const [phase, setPhase] = useState<ModalPhase>('bulk')
+  const [bulkProgress, setBulkProgress] = useState<SimilarityBulkProgressState>(EMPTY_BULK_PROGRESS)
+  const [bulkError, setBulkError] = useState<string | null>(null)
 
-  const loadPage = useCallback(async (pageIndex: number) => {
-    setGridBusy(true)
-    try {
-      const r = await listScrappingSimilarityReviewPageAction({ page: pageIndex })
-      if (!r.ok) {
-        toast.error(r.error)
-        setRows([])
-        setTotal(0)
-        return
-      }
-      setRows(r.rows)
-      setTotal(r.total)
-      setPageSize(r.pageSize)
-      setPage(pageIndex)
-      setCandidatesByRow({})
-      setCandBusyByRow({})
-      setSelectionByRow({})
-    } finally {
-      setGridBusy(false)
-    }
-  }, [])
+  const [candidatesCache, setCandidatesCache] = useState<Record<string, ScrappingSimilarityManualCandidate[]>>({})
+  const [candBusyByRow, setCandBusyByRow] = useState<Record<string, boolean>>({})
+  const [draftLinks, setDraftLinks] = useState<Record<string, string>>({})
+  const [pendingRejects, setPendingRejects] = useState<Record<string, true>>({})
+
+  const prefetchGenRef = useRef(0)
+  const sessionStartedRef = useRef(false)
+  const candidatesCacheRef = useRef(candidatesCache)
+  const pendingRejectsRef = useRef(pendingRejects)
+  const onAppliedRef = useRef(onApplied)
 
   useEffect(() => {
-    if (!open || homologacionBloqueada) return
-    void loadPage(0)
-  }, [open, homologacionBloqueada, loadPage])
+    onAppliedRef.current = onApplied
+  }, [onApplied])
 
-  const loadCandidatesForRow = useCallback(async (scrappingId: string) => {
-    setCandBusyByRow((m) => ({ ...m, [scrappingId]: true }))
-    try {
-      const r = await getScrappingSimilarityCandidatesAction({ scrappingId })
-      if (!r.ok) {
-        toast.error(r.error)
-        setCandidatesByRow((m) => ({ ...m, [scrappingId]: [] }))
-        return
-      }
-      setCandidatesByRow((m) => ({ ...m, [scrappingId]: r.candidates }))
-      if (r.candidates.length > 0) {
-        const first = r.candidates[0]!.catalogProductId
-        setSelectionByRow((m) => ({ ...m, [scrappingId]: m[scrappingId] ?? first }))
-      }
-    } finally {
-      setCandBusyByRow((m) => ({ ...m, [scrappingId]: false }))
+  useEffect(() => {
+    candidatesCacheRef.current = candidatesCache
+  }, [candidatesCache])
+
+  useEffect(() => {
+    pendingRejectsRef.current = pendingRejects
+  }, [pendingRejects])
+
+  const resetSession = useCallback(() => {
+    prefetchGenRef.current += 1
+    setPage(0)
+    setRows([])
+    setTotal(0)
+    setCandidatesCache({})
+    setCandBusyByRow({})
+    setDraftLinks({})
+    setPendingRejects({})
+    setBulkProgress(EMPTY_BULK_PROGRESS)
+    setBulkError(null)
+    setPhase('bulk')
+  }, [])
+
+  const prefetchCandidatesForRows = useCallback(async (loadedRows: ScrappingProductRow[], gen: number) => {
+    const cache = candidatesCacheRef.current
+    const toFetch = loadedRows.filter((row) => cache[row.id] === undefined)
+    if (toFetch.length === 0) return
+
+    setCandBusyByRow((m) => {
+      const next = { ...m }
+      for (const row of toFetch) next[row.id] = true
+      return next
+    })
+
+    let errorRows = 0
+    for (let i = 0; i < toFetch.length; i += CANDIDATE_PREFETCH_CONCURRENCY) {
+      if (gen !== prefetchGenRef.current) return
+      const slice = toFetch.slice(i, i + CANDIDATE_PREFETCH_CONCURRENCY)
+      await Promise.all(
+        slice.map(async (row) => {
+          try {
+            const cr = await getScrappingSimilarityCandidatesAction({ scrappingId: row.id })
+            if (gen !== prefetchGenRef.current) return
+            if (!cr.ok) {
+              errorRows++
+              setCandidatesCache((m) => ({ ...m, [row.id]: [] }))
+              return
+            }
+            if (cr.autoResolvedAsPendingNew) {
+              setRows((prev) => prev.filter((r) => r.id !== row.id))
+              setTotal((prev) => Math.max(0, prev - 1))
+              return
+            }
+            const list = cr.candidates
+            setCandidatesCache((m) => ({ ...m, [row.id]: list }))
+            if (list.length > 0 && !pendingRejectsRef.current[row.id]) {
+              setDraftLinks((m) => (m[row.id] ? m : { ...m, [row.id]: list[0]!.catalogProductId }))
+            }
+          } catch {
+            if (gen === prefetchGenRef.current) {
+              errorRows++
+              setCandidatesCache((m) => ({ ...m, [row.id]: [] }))
+            }
+          } finally {
+            if (gen === prefetchGenRef.current) {
+              setCandBusyByRow((m) => ({ ...m, [row.id]: false }))
+            }
+          }
+        }),
+      )
+    }
+
+    if (gen !== prefetchGenRef.current) return
+
+    if (errorRows > 0) {
+      toast.error(
+        `No se pudieron cargar candidatos en ${errorRows.toLocaleString('es-CL')} fila(s). Podés seguir revisando el resto.`,
+      )
     }
   }, [])
 
-  async function onConfirmLink(row: ScrappingProductRow) {
-    const cand = candidatesByRow[row.id] ?? []
-    const sel = selectionByRow[row.id] ?? cand[0]?.catalogProductId
-    if (!sel) {
-      toast.error('No hay maestro seleccionable. Cargá candidatos o usá «No / nuevo».')
+  const loadPage = useCallback(
+    async (pageIndex: number) => {
+      prefetchGenRef.current += 1
+      const gen = prefetchGenRef.current
+      setGridBusy(true)
+      let listOk: { rows: ScrappingProductRow[]; total: number; pageSize: number } | null = null
+      try {
+        const r = await listScrappingSimilarityReviewPageAction({ page: pageIndex })
+        if (!r.ok) {
+          toast.error(r.error)
+          setRows([])
+          setTotal(0)
+          return
+        }
+        listOk = { rows: r.rows, total: r.total, pageSize: r.pageSize }
+        setRows(r.rows)
+        setTotal(r.total)
+        setPageSize(r.pageSize)
+        setPage(pageIndex)
+      } finally {
+        setGridBusy(false)
+      }
+      if (gen === prefetchGenRef.current && listOk && listOk.rows.length > 0) {
+        await prefetchCandidatesForRows(listOk.rows, gen)
+      }
+    },
+    [prefetchCandidatesForRows],
+  )
+
+  const runBulkPrep = useCallback(async () => {
+    setPhase('bulk')
+    setBulkError(null)
+    setBulkProgress(EMPTY_BULK_PROGRESS)
+
+    const countR = await countScrappingSimilarityPendingAction()
+    if (!countR.ok) {
+      setBulkError(countR.error)
+      toast.error(countR.error)
+      setPhase('review')
+      await loadPage(0)
       return
     }
-    setRowActionBusy(row.id)
+
+    const total = countR.total
+    if (total === 0) {
+      setPhase('empty')
+      return
+    }
+
+    setBulkProgress((p) => ({ ...p, total }))
+
+    let afterId: string | null = null
+    const acc = { ...EMPTY_BULK_PROGRESS, total }
+
     try {
-      const r = await confirmScrappingSimilarityLinkAction({
-        scrappingId: row.id,
-        catalogProductId: sel,
-      })
-      if (!r.ok) {
-        toast.error(r.error)
+      for (;;) {
+        const r = await processScrappingSimilarityBulkBatchAction({ afterId })
+        if (!r.ok) {
+          setBulkError(r.error)
+          toast.error(r.error)
+          break
+        }
+        const s = r.stats
+        acc.processed += s.processed
+        acc.autoLinked += s.autoLinked
+        acc.autoPendingNew += s.autoPendingNew
+        acc.leftForReview += s.leftForReview
+        acc.failed += s.failed
+        setBulkProgress({ ...acc })
+
+        if (!s.hasMore || !s.lastId) break
+        afterId = s.lastId
+      }
+
+      await onAppliedRef.current()
+
+      if (acc.processed > 0) {
+        toast.success(
+          `Paso 2: ${acc.autoLinked.toLocaleString('es-CL')} vinculada(s), ${acc.autoPendingNew.toLocaleString('es-CL')} a producto nuevo, ${acc.leftForReview.toLocaleString('es-CL')} para tu revisión.`,
+        )
+      }
+
+      const reviewR = await countScrappingSimilarityPendingAction()
+      if (reviewR.ok && reviewR.total === 0) {
+        setPhase('empty')
         return
       }
-      toast.success('Vínculo guardado y fila quitada de scrapping.')
-      await loadPage(page)
-      await onApplied()
-    } finally {
-      setRowActionBusy(null)
+
+      setPhase('review')
+      await loadPage(0)
+    } catch {
+      setBulkError('No se pudo completar la homologación automática. Intentá nuevamente.')
+      setPhase('review')
+      await loadPage(0)
+    }
+  }, [loadPage])
+
+  useEffect(() => {
+    if (!open) {
+      sessionStartedRef.current = false
+      return
+    }
+    if (homologacionBloqueada) return
+    if (sessionStartedRef.current) return
+    sessionStartedRef.current = true
+    resetSession()
+    void runBulkPrep()
+  }, [open, homologacionBloqueada, resetSession, runBulkPrep])
+
+  function onSelectMaster(rowId: string, catalogProductId: string) {
+    setDraftLinks((m) => ({ ...m, [rowId]: catalogProductId }))
+    setPendingRejects((m) => {
+      if (!m[rowId]) return m
+      const next = { ...m }
+      delete next[rowId]
+      return next
+    })
+  }
+
+  function onMarkPendingNew(rowId: string) {
+    setPendingRejects((m) => ({ ...m, [rowId]: true }))
+    setDraftLinks((m) => {
+      if (!m[rowId]) return m
+      const next = { ...m }
+      delete next[rowId]
+      return next
+    })
+  }
+
+  function onUndoPendingNew(rowId: string) {
+    setPendingRejects((m) => {
+      if (!m[rowId]) return m
+      const next = { ...m }
+      delete next[rowId]
+      return next
+    })
+    const cand = candidatesCacheRef.current[rowId]
+    if (cand && cand.length > 0) {
+      setDraftLinks((m) => ({ ...m, [rowId]: cand[0]!.catalogProductId }))
     }
   }
 
-  async function onRejectNew(row: ScrappingProductRow) {
-    setRowActionBusy(row.id)
+  const pendingLinkCount = Object.keys(draftLinks).length
+  const pendingRejectCount = Object.keys(pendingRejects).length
+  const pendingTotal = pendingLinkCount + pendingRejectCount
+
+  async function onApplyAllPending() {
+    if (pendingTotal === 0) {
+      toast.error('No hay homologaciones en cola. Revisá filas o marcá «Producto nuevo».')
+      return
+    }
+
+    const linkEntries = Object.entries(draftLinks).map(([scrappingId, catalogProductId]) => ({
+      scrappingId,
+      catalogProductId,
+    }))
+    const rejectIds = Object.keys(pendingRejects)
+
+    setApplyBusy(true)
+    let linksApplied = 0
+    let rejectsApplied = 0
+    const linkFailedIds = new Set<string>()
+    const rejectFailedIds = new Set<string>()
+
     try {
-      const r = await rejectScrappingSimilarityToPendingNewAction({ scrappingId: row.id })
-      if (!r.ok) {
-        toast.error(r.error)
-        return
+      for (const batch of chunk(linkEntries, APPLY_BATCH_SIZE)) {
+        const r = await confirmScrappingSimilarityLinksBatchAction({ links: batch })
+        if (!r.ok) {
+          toast.error(r.error)
+          return
+        }
+        linksApplied += r.applied
+        for (const f of r.failed) linkFailedIds.add(f.scrappingId)
       }
-      toast.message('Marcado como producto nuevo (pendiente paso 3).')
-      await loadPage(page)
-      await onApplied()
+
+      for (const batch of chunk(rejectIds, APPLY_BATCH_SIZE)) {
+        const r = await rejectScrappingSimilarityToPendingNewBatchAction({ scrappingIds: batch })
+        if (!r.ok) {
+          toast.error(r.error)
+          return
+        }
+        rejectsApplied += r.applied
+        for (const f of r.failed) rejectFailedIds.add(f.scrappingId)
+      }
+
+      const okLinkIds = linkEntries.map((x) => x.scrappingId).filter((id) => !linkFailedIds.has(id))
+      const okRejectIds = rejectIds.filter((id) => !rejectFailedIds.has(id))
+      const clearedIds = new Set([...okLinkIds, ...okRejectIds])
+
+      setDraftLinks((m) => {
+        const next = { ...m }
+        for (const id of okLinkIds) delete next[id]
+        return next
+      })
+      setPendingRejects((m) => {
+        const next = { ...m }
+        for (const id of okRejectIds) delete next[id]
+        return next
+      })
+      setCandidatesCache((m) => {
+        const next = { ...m }
+        for (const id of clearedIds) delete next[id]
+        return next
+      })
+
+      if (linksApplied + rejectsApplied > 0) {
+        const parts: string[] = []
+        if (linksApplied > 0) parts.push(`${linksApplied.toLocaleString('es-CL')} vínculo(s)`)
+        if (rejectsApplied > 0) parts.push(`${rejectsApplied.toLocaleString('es-CL')} como producto nuevo`)
+        toast.success(`Se aplicaron ${parts.join(' y ')}.`)
+      }
+      const failedTotal = linkFailedIds.size + rejectFailedIds.size
+      if (failedTotal > 0) {
+        toast.warning(
+          `${failedTotal.toLocaleString('es-CL')} fila(s) no se pudieron. Revisá y volvé a intentar.`,
+        )
+      }
+
+      if (linksApplied + rejectsApplied > 0) {
+        await onApplied()
+      }
+      if (linksApplied + rejectsApplied > 0 || failedTotal > 0) {
+        await loadPage(page)
+      }
     } finally {
-      setRowActionBusy(null)
+      setApplyBusy(false)
     }
   }
 
@@ -147,19 +411,47 @@ export function ScrappingSimilarityReviewModal({
       <>
         {' '}
         · {total.toLocaleString('es-CL')} fila(s) <span className="font-mono">pending</span>
+        {pendingTotal > 0 ?
+          <>
+            {' '}
+            · cola: {pendingLinkCount.toLocaleString('es-CL')} vínculo(s),{' '}
+            {pendingRejectCount.toLocaleString('es-CL')} nuevo(s)
+          </>
+        : null}
       </>
     : null
 
+  const anyRowStillLoadingCandidates =
+    rows.length > 0 &&
+    rows.some((row) => candBusyByRow[row.id] === true && candidatesCache[row.id] === undefined)
+
+  const uiLocked = gridBusy || applyBusy || phase === 'bulk'
+
+  const pagingTrailing =
+    anyRowStillLoadingCandidates ?
+      <span className="flex items-center gap-1.5 text-amber-800 dark:text-amber-200">
+        <Loader2 className="size-3.5 animate-spin shrink-0" aria-hidden />
+        Cargando candidatos nuevos de esta página…
+      </span>
+    : null
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-5xl overflow-y-auto">
-        <DialogHeader>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && phase === 'bulk') return
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent
+        showCloseButton={phase !== 'bulk'}
+        className="flex max-h-[min(92vh,960px)] min-h-0 w-[min(98vw,1440px)] max-w-[min(98vw,1440px)] flex-col gap-4 overflow-hidden p-6 sm:max-w-[min(98vw,1440px)]"
+      >
+        <DialogHeader className="shrink-0">
           <DialogTitle>Paso 2 · Similitud (revisión manual)</DialogTitle>
           <DialogDescription>
-            Candidatos filtrados por marca coherente, nombre (sugerencias del catálogo) y precio de referencia del
-            maestro dentro de ±3000 CLP respecto al precio capturado (configurable con{' '}
-            <span className="font-mono">SCRAPPING_SIMILARITY_PRICE_BAND_CLP</span>). Si no hay candidatos, podés
-            marcar «No / nuevo». Abrí el combo para cargar candidatos.
+            Pasada automática de similitud sobre lo que quedó pending tras el paso 1 (ya sin duplicados del catálogo).
+            Revisá casos ambiguos y confirmá con «Aplicar cola». Los vínculos quedan por cadena + ref del retail.
           </DialogDescription>
         </DialogHeader>
 
@@ -167,161 +459,286 @@ export function ScrappingSimilarityReviewModal({
           <p className="text-sm text-muted-foreground">
             No se puede revisar mientras haya scrapping en curso o barrido activo en esta vista.
           </p>
+        : phase === 'bulk' ?
+          <ScrappingSimilarityBulkProgress progress={bulkProgress} />
+        : phase === 'empty' ?
+          <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
+            <p className="text-base font-medium text-foreground">No quedan filas para revisar en paso 2</p>
+            <p className="max-w-md text-sm text-muted-foreground">
+              La pasada automática resolvió todo el universo pending (vínculos seguros, producto nuevo o ya procesado).
+              {bulkProgress.autoLinked + bulkProgress.autoPendingNew > 0 ?
+                ` Se procesaron ${(bulkProgress.autoLinked + bulkProgress.autoPendingNew + bulkProgress.leftForReview).toLocaleString('es-CL')} fila(s) en total.`
+              : null}
+            </p>
+            {bulkError ?
+              <p className="text-sm text-amber-800 dark:text-amber-200">{bulkError}</p>
+            : null}
+          </div>
         : (
-          <>
-            <GridPagingRow
-              pageIndex={page}
-              pageSize={pageSize}
-              disablePrev={gridBusy || page <= 0}
-              disableNext={gridBusy || page + 1 >= totalPages}
-              onPrev={() => void loadPage(page - 1)}
-              onNext={() => void loadPage(page + 1)}
-              metaSuffix={metaSuffix}
-              className="mb-2 flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground"
-            />
-
-            <div className="overflow-x-auto rounded-md border border-border">
-              <table className="w-full min-w-[720px] border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground">
-                    <th className="px-2 py-2">Producto (scrapping)</th>
-                    <th className="px-2 py-2">Marca</th>
-                    <th className="px-2 py-2 tabular-nums">Precio</th>
-                    <th className="min-w-[280px] px-2 py-2">Maestro sugerido</th>
-                    <th className="px-2 py-2">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {gridBusy ?
-                    <tr>
-                      <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
-                        <Loader2 className="mx-auto mb-2 size-6 animate-spin" aria-hidden />
-                        Cargando…
-                      </td>
-                    </tr>
-                  : rows.length === 0 ?
-                    <tr>
-                      <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
-                        No hay filas pending para revisar en esta página.
-                      </td>
-                    </tr>
-                  : (
-                    rows.map((row) => {
-                      const price =
-                        typeof row.price === 'string' ? Number(row.price) : Number(row.price)
-                      const priceTxt = Number.isFinite(price) ? `$${Math.round(price).toLocaleString('es-CL')}` : '—'
-                      const cand = candidatesByRow[row.id]
-                      const candBusy = candBusyByRow[row.id]
-                      const effectiveSel = selectionByRow[row.id] ?? cand?.[0]?.catalogProductId
-                      const rowBusy = rowActionBusy === row.id
-                      const hasCand = cand !== undefined && cand.length > 0
-                      const noCandLoaded = cand !== undefined && cand.length === 0
-
-                      return (
-                        <tr key={row.id} className="border-b border-border last:border-b-0">
-                          <td className="max-w-[220px] px-2 py-2 align-top text-foreground">
-                            <span className="line-clamp-3">{row.product_name}</span>
-                          </td>
-                          <td className="px-2 py-2 align-top text-muted-foreground">{row.brand?.trim() || '—'}</td>
-                          <td className="px-2 py-2 align-top tabular-nums text-foreground">{priceTxt}</td>
-                          <td className="px-2 py-2 align-top">
-                            <Select
-                              value={
-                                hasCand && effectiveSel ? effectiveSel : undefined
-                              }
-                              onValueChange={(v) => {
-                                setSelectionByRow((m) => ({ ...m, [row.id]: v }))
-                              }}
-                              onOpenChange={(isOpen) => {
-                                if (isOpen && cand === undefined) void loadCandidatesForRow(row.id)
-                              }}
-                              disabled={rowBusy}
-                            >
-                              <SelectTrigger
-                                size="sm"
-                                className="h-9 w-full min-w-[240px] max-w-[420px] justify-between"
-                                aria-label="Elegir maestro del catálogo"
-                              >
-                                <SelectValue
-                                  placeholder={
-                                    candBusy ? 'Cargando…'
-                                    : noCandLoaded ? 'Sin candidatos en rango'
-                                    : 'Abrir para cargar candidatos'
-                                  }
-                                />
-                              </SelectTrigger>
-                              <SelectContent position="popper" className="max-w-[min(90vw,480px)]">
-                                {candBusy || cand === undefined ?
-                                  <SelectItem value="__loading__" disabled>
-                                    {candBusy ? 'Cargando…' : '…'}
-                                  </SelectItem>
-                                : cand.length === 0 ?
-                                  <SelectItem value="__empty__" disabled>
-                                    Sin candidatos (marca + nombre + ±3000 CLP)
-                                  </SelectItem>
-                                : (
-                                  cand.map((c) => (
-                                    <SelectItem key={c.catalogProductId} value={c.catalogProductId}>
-                                      <span className="line-clamp-2">{c.label}</span>
-                                    </SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
-                          </td>
-                          <td className="px-2 py-2 align-top">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                              <Button
-                                type="button"
-                                size="sm"
-                                className={ROW_ACTION_BTN}
-                                disabled={rowBusy || candBusy || !hasCand || !effectiveSel}
-                                onClick={() => void onConfirmLink(row)}
-                              >
-                                {rowBusy ?
-                                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                                : null}
-                                Vincular
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className={ROW_ACTION_BTN}
-                                disabled={rowBusy}
-                                onClick={() => void onRejectNew(row)}
-                              >
-                                No / nuevo
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            <GridPagingRow
-              pageIndex={page}
-              pageSize={pageSize}
-              disablePrev={gridBusy || page <= 0}
-              disableNext={gridBusy || page + 1 >= totalPages}
-              onPrev={() => void loadPage(page - 1)}
-              onNext={() => void loadPage(page + 1)}
-              metaSuffix={metaSuffix}
-              className="mt-3 flex flex-wrap items-center gap-3 text-[13px] text-muted-foreground"
-            />
-          </>
+          <SimilarityReviewGrid
+            page={page}
+            pageSize={pageSize}
+            totalPages={totalPages}
+            rows={rows}
+            gridBusy={gridBusy}
+            uiLocked={uiLocked}
+            metaSuffix={metaSuffix}
+            pagingTrailing={pagingTrailing}
+            candidatesCache={candidatesCache}
+            candBusyByRow={candBusyByRow}
+            draftLinks={draftLinks}
+            pendingRejects={pendingRejects}
+            onPrev={() => void loadPage(page - 1)}
+            onNext={() => void loadPage(page + 1)}
+            onSelectMaster={onSelectMaster}
+            onMarkPendingNew={onMarkPendingNew}
+            onUndoPendingNew={onUndoPendingNew}
+          />
         )}
 
         <DialogFooter className="gap-2 sm:justify-end">
-          <Button type="button" variant="secondary" className="h-9 min-w-[120px]" onClick={() => onOpenChange(false)}>
+          <Button
+            type="button"
+            variant="secondary"
+            className={FOOTER_ACTION_BTN}
+            disabled={applyBusy}
+            onClick={() => onOpenChange(false)}
+          >
             Cerrar
           </Button>
+          {!homologacionBloqueada && phase === 'review' ?
+            <Button
+              type="button"
+              className={`inline-flex items-center justify-center gap-2 ${FOOTER_ACTION_BTN}`}
+              disabled={uiLocked || pendingTotal === 0}
+              onClick={() => void onApplyAllPending()}
+            >
+              {applyBusy ?
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+              : null}
+              Aplicar cola ({pendingTotal.toLocaleString('es-CL')})
+            </Button>
+          : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+type ReviewGridProps = {
+  page: number
+  pageSize: number
+  totalPages: number
+  rows: ScrappingProductRow[]
+  gridBusy: boolean
+  uiLocked: boolean
+  metaSuffix: React.ReactNode
+  pagingTrailing: React.ReactNode
+  candidatesCache: Record<string, ScrappingSimilarityManualCandidate[]>
+  candBusyByRow: Record<string, boolean>
+  draftLinks: Record<string, string>
+  pendingRejects: Record<string, true>
+  onPrev: () => void
+  onNext: () => void
+  onSelectMaster: (rowId: string, catalogProductId: string) => void
+  onMarkPendingNew: (rowId: string) => void
+  onUndoPendingNew: (rowId: string) => void
+}
+
+function SimilarityReviewGrid(props: ReviewGridProps) {
+  const {
+    page,
+    pageSize,
+    totalPages,
+    rows,
+    gridBusy,
+    uiLocked,
+    metaSuffix,
+    pagingTrailing,
+    candidatesCache,
+    candBusyByRow,
+    draftLinks,
+    pendingRejects,
+    onPrev,
+    onNext,
+    onSelectMaster,
+    onMarkPendingNew,
+    onUndoPendingNew,
+  } = props
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <GridPagingRow
+        pageIndex={page}
+        pageSize={pageSize}
+        disablePrev={uiLocked || page <= 0}
+        disableNext={uiLocked || page + 1 >= totalPages}
+        onPrev={onPrev}
+        onNext={onNext}
+        metaSuffix={metaSuffix}
+        className="mb-0 flex shrink-0 flex-wrap items-center gap-3 text-[13px] text-muted-foreground"
+        trailing={pagingTrailing}
+      />
+
+      <div className="min-h-0 flex-1 overflow-x-auto overflow-y-auto rounded-md border border-border">
+        <table className="w-full min-w-[720px] border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground">
+              <th className="px-2 py-2">Producto (scrapping)</th>
+              <th className="px-2 py-2">Marca</th>
+              <th className="px-2 py-2 tabular-nums">Precio</th>
+              <th className="min-w-[280px] px-2 py-2">Maestro sugerido</th>
+              <th className="w-[140px] px-2 py-2">Cola</th>
+            </tr>
+          </thead>
+          <tbody>
+            {gridBusy ?
+              <tr>
+                <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <Loader2 className="mx-auto mb-2 size-6 animate-spin" aria-hidden />
+                  Cargando listado…
+                </td>
+              </tr>
+            : rows.length === 0 ?
+              <tr>
+                <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  No hay filas pending para revisar en esta página.
+                </td>
+              </tr>
+            : (
+              rows.map((row) => {
+                const price = typeof row.price === 'string' ? Number(row.price) : Number(row.price)
+                const priceTxt = Number.isFinite(price) ? `$${Math.round(price).toLocaleString('es-CL')}` : '—'
+                const cand = candidatesCache[row.id]
+                const candBusy = candBusyByRow[row.id] === true
+                const candLoading = candBusy && cand === undefined
+                const isReject = pendingRejects[row.id] === true
+                const draftSel = draftLinks[row.id]
+                const effectiveSel = isReject ? undefined : (draftSel ?? cand?.[0]?.catalogProductId)
+                const hasCand = cand !== undefined && cand.length > 0
+                const noCandLoaded = cand !== undefined && cand.length === 0
+                const inLinkQueue = !isReject && draftSel != null && hasCand
+
+                return (
+                  <tr
+                    key={row.id}
+                    className={
+                      isReject ?
+                        'border-b border-border bg-amber-500/5 last:border-b-0'
+                      : inLinkQueue ?
+                        'border-b border-border bg-emerald-500/5 last:border-b-0'
+                      : 'border-b border-border last:border-b-0'
+                    }
+                  >
+                    <td className="max-w-[min(28vw,380px)] px-2 py-2 align-top text-foreground">
+                      <span className="line-clamp-4">{row.product_name}</span>
+                    </td>
+                    <td className="px-2 py-2 align-top text-muted-foreground">{row.brand?.trim() || '—'}</td>
+                    <td className="px-2 py-2 align-top tabular-nums text-foreground">{priceTxt}</td>
+                    <td className="px-2 py-2 align-top">
+                      {candLoading ?
+                        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+                          Cargando candidatos…
+                        </p>
+                      : isReject ?
+                        <span className="text-xs text-muted-foreground">— (producto nuevo)</span>
+                      : cand === undefined ?
+                        <span className="text-xs text-muted-foreground">—</span>
+                      : (
+                        <Select
+                          value={hasCand && effectiveSel ? effectiveSel : undefined}
+                          onValueChange={(v) => onSelectMaster(row.id, v)}
+                          disabled={uiLocked}
+                        >
+                          <SelectTrigger
+                            size="sm"
+                            className="h-9 w-full min-w-[240px] max-w-[520px] justify-between"
+                            aria-label="Elegir maestro del catálogo"
+                          >
+                            <SelectValue
+                              placeholder={
+                                noCandLoaded ? 'Sin candidatos en rango' : 'Elegir maestro del catálogo'
+                              }
+                            />
+                          </SelectTrigger>
+                          <SelectContent position="popper" className="max-w-[min(90vw,560px)]">
+                            {cand.length === 0 ?
+                              <SelectItem value="__empty__" disabled>
+                                Sin candidatos (marca + nombre + ±3000 CLP)
+                              </SelectItem>
+                            : (
+                              cand.map((c) => (
+                                <SelectItem key={c.catalogProductId} value={c.catalogProductId}>
+                                  <span className="line-clamp-2">{c.label}</span>
+                                </SelectItem>
+                              ))
+                            )}
+                          </SelectContent>
+                        </Select>
+                      )}
+                    </td>
+                    <td className="px-2 py-2 align-top">
+                      {isReject ?
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs font-medium text-amber-800 dark:text-amber-200">Nuevo</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-9 min-w-[120px]"
+                            disabled={uiLocked}
+                            onClick={() => onUndoPendingNew(row.id)}
+                          >
+                            Deshacer
+                          </Button>
+                        </div>
+                      : inLinkQueue ?
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs font-medium text-emerald-800 dark:text-emerald-200">Vincular</span>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-9 min-w-[120px]"
+                            disabled={uiLocked || candLoading}
+                            onClick={() => onMarkPendingNew(row.id)}
+                          >
+                            Producto nuevo
+                          </Button>
+                        </div>
+                      : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-9 min-w-[120px]"
+                          disabled={uiLocked || candLoading || !hasCand}
+                          onClick={() => onMarkPendingNew(row.id)}
+                        >
+                          Producto nuevo
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <GridPagingRow
+        pageIndex={page}
+        pageSize={pageSize}
+        disablePrev={uiLocked || page <= 0}
+        disableNext={uiLocked || page + 1 >= totalPages}
+        onPrev={onPrev}
+        onNext={onNext}
+        metaSuffix={metaSuffix}
+        className="mt-0 flex shrink-0 flex-wrap items-center gap-3 text-[13px] text-muted-foreground"
+        trailing={pagingTrailing}
+      />
+    </div>
   )
 }
