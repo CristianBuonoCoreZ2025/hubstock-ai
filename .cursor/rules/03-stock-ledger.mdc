@@ -1,0 +1,106 @@
+---
+description: Reglas estrictas para stock_current, stock_movements, compras, consumo, ajustes e inventario.
+alwaysApply: true
+---
+
+# Stock Ledger Rules
+
+## Principio central
+
+stock_current nunca debe cambiar sin stock_movements.
+
+Cada alta, baja o ajuste de stock debe dejar trazabilidad.
+
+## Campos clave
+
+La tabla stock_movements usa esta lógica:
+
+1. profile_id
+2. product_id
+3. delta
+4. movement_type
+5. note
+6. reference_id
+7. created_by
+8. created_at
+
+## Tipos de movimiento
+
+Usar solo tipos existentes.
+
+Tipos conocidos:
+
+1. consumption
+2. purchase
+3. adjustment
+4. import
+5. inventory_count
+
+No inventar movement_type nuevos sin revisar la base.
+
+## Reglas obligatorias
+
+1. No actualizar stock_current directo desde UI.
+2. No cambiar stock_current sin insertar stock_movements.
+3. No borrar movimientos para corregir stock.
+4. No compactar historial.
+5. No ocultar errores de movimiento.
+6. No dejar stock positivo si el movimiento asociado falló.
+7. Si falla stock_movements, revertir producto o dejar stock en cero seguro.
+8. No crear lógica paralela de stock en componentes React.
+
+## Compras
+
+Una compra confirmada debe:
+
+1. Crear o asociar producto.
+2. Aumentar stock_current.
+3. Insertar stock_movements con movement_type purchase.
+4. Guardar referencia si existe compra, boleta o captura.
+
+## Consumo
+
+Un consumo confirmado debe:
+
+1. Validar producto del perfil.
+2. Reducir stock_current.
+3. Insertar stock_movements con movement_type consumption.
+4. Evitar stock negativo salvo regla explícita del proyecto.
+
+## Inventario inicial
+
+Un inventario inicial debe:
+
+1. Registrar stock real.
+2. Insertar stock_movements con movement_type inventory_count o import.
+3. No simular compras.
+4. No perder trazabilidad del origen.
+
+## Ajustes
+
+Un ajuste manual debe:
+
+1. Pedir motivo.
+2. Calcular delta.
+3. Insertar stock_movements con movement_type adjustment.
+4. Mantener historial.
+
+## Antes de tocar stock
+
+Revisar:
+
+1. src/app/actions/inventory.ts
+2. src/app/actions/capture.ts
+3. src/lib/domain.ts
+4. Tipos relacionados al producto.
+5. Uso actual de stock_current.
+6. Uso actual de stock_movements.
+
+## Validación mínima
+
+Al terminar una tarea de stock:
+
+1. Crear producto con stock.
+2. Editar stock.
+3. Confirmar que existe stock_movements.
+4. Confirmar que el build pasa.

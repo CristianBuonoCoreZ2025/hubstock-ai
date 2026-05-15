@@ -1,0 +1,116 @@
+---
+description: Reglas para respetar límites de Next.js, TypeScript, server actions, client components y estructura del proyecto.
+alwaysApply: true
+---
+
+# Next.js and TypeScript Boundaries
+
+## Stack
+
+Este proyecto usa:
+
+1. Next.js.
+2. React.
+3. TypeScript.
+4. Supabase.
+5. Tailwind.
+6. Server actions.
+7. Vercel.
+
+## Server y client
+
+Respetar límites:
+
+1. No usar código de servidor en componentes cliente.
+2. No usar claves privadas en componentes cliente.
+3. No llamar Supabase server client desde client components.
+4. No usar APIs del navegador en server actions.
+5. No mover lógica crítica al cliente.
+6. No convertir componentes a client sin razón.
+
+## use client
+
+Agregar use client solo cuando haga falta:
+
+1. Estado local.
+2. Eventos de usuario.
+3. Efectos.
+4. Hooks del navegador.
+5. Componentes interactivos.
+
+No poner use client en páginas completas si basta con aislar un componente.
+
+## Server actions
+
+Las server actions deben:
+
+1. Validar usuario.
+2. Validar perfil activo.
+3. Validar permisos.
+4. Validar payload.
+5. Usar tipos claros.
+6. Retornar resultado controlado.
+7. Revalidar rutas cuando aplique.
+
+## TypeScript
+
+No usar any salvo justificación clara.
+
+Preferir:
+
+1. Tipos existentes.
+2. Inferencia segura.
+3. Tipos de dominio.
+4. Result types.
+5. Validación con zod si el patrón ya existe.
+
+No tapar errores con casts agresivos.
+
+## Imports
+
+Usar alias existentes.
+
+No crear rutas nuevas si ya existe módulo.
+
+Antes de crear archivo, buscar si ya existe:
+
+1. Acción.
+2. Componente.
+3. Tipo.
+4. Helper.
+5. Cliente Supabase.
+6. Normalizador.
+7. Validador.
+
+## Componentes
+
+Un componente debe tener una responsabilidad clara.
+
+No mezclar en el mismo archivo:
+
+1. Fetching complejo.
+2. Mutaciones.
+3. UI grande.
+4. Normalización.
+5. Homologación.
+6. Reglas de negocio.
+
+Dividir solo cuando reduzca complejidad real.
+
+## Rutas
+
+No crear rutas nuevas sin revisar navegación actual.
+
+Mantener coherencia con:
+
+1. src/app/(app)
+2. layout principal
+3. menú lateral
+4. permisos
+5. nombres de módulos
+
+## Regla de build
+
+No cerrar tarea con errores TypeScript.
+
+Si el build falla por una zona tocada, corregir antes de terminar.

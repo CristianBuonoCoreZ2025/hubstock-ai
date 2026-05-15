@@ -1,0 +1,127 @@
+---
+description: Reglas para scraping, taxonomías externas, homologación con catálogo local y precios de cadenas.
+alwaysApply: true
+---
+
+# Precios Cadenas and Scraping Rules
+
+## Objetivo
+
+El módulo precios cadenas permite leer datos externos de supermercados y homologarlos contra la taxonomía interna.
+
+No debe destruir ni reemplazar el catálogo local.
+
+## Separación de datos
+
+Separar siempre:
+
+1. Taxonomía externa de la cadena.
+2. Taxonomía interna del catálogo.
+3. Productos externos scrapeados.
+4. Productos internos del catálogo.
+5. Relación de homologación.
+6. Resultado de revisión.
+
+## Regla central
+
+La homologación no debe eliminar lo que ya existe en el catálogo.
+
+Debe mostrar solo lo nuevo, lo dudoso o lo que requiere revisión.
+
+## Scraping
+
+El scraping debe:
+
+1. Registrar URL origen.
+2. Registrar cadena.
+3. Registrar sección externa.
+4. Registrar categoría externa.
+5. Registrar nombre de producto.
+6. Registrar precio si existe.
+7. Registrar fecha de captura.
+8. Registrar estado de captura.
+9. Registrar error técnico si falla.
+
+## Cuando no trae productos
+
+No asumir que no existen productos.
+
+Antes de cerrar como vacío, revisar:
+
+1. Si la URL carga en navegador.
+2. Si requiere JavaScript.
+3. Si hay paginación.
+4. Si hay lazy loading.
+5. Si cambió el selector.
+6. Si la cadena bloquea scraping.
+7. Si la categoría vive bajo otra ruta.
+8. Si el nombre visible no coincide con la ruta.
+
+Mostrar diagnóstico técnico claro.
+
+## Homologación
+
+La homologación debe:
+
+1. Normalizar nombres.
+2. Quitar acentos.
+3. Ignorar mayúsculas.
+4. Comparar por tokens.
+5. Revisar sinónimos si existen.
+6. Separar coincidencias exactas.
+7. Separar coincidencias dudosas.
+8. Separar nuevos candidatos.
+9. No crear productos automáticamente sin confirmación.
+
+## Taxonomías
+
+No borrar secciones o categorías internas.
+
+No reemplazar estructura local con estructura externa.
+
+La cadena externa tiene su propio árbol.
+
+El catálogo interno tiene su propio árbol.
+
+La homologación conecta ambos mundos.
+
+## Productos nuevos
+
+Un producto externo se ofrece como nuevo solo si:
+
+1. No existe en catálogo interno.
+2. No coincide por nombre normalizado.
+3. No coincide por alias.
+4. No coincide por marca y nombre.
+5. No fue descartado antes.
+6. No fue homologado antes.
+
+## Revisión
+
+La pantalla debe mostrar:
+
+1. Nuevos candidatos.
+2. Coincidencias encontradas.
+3. Coincidencias dudosas.
+4. Categorías externas nuevas.
+5. Categorías ya homologadas.
+6. Errores de scraping.
+7. Fecha de última captura.
+
+## Errores
+
+No usar mensajes vagos.
+
+Ejemplos correctos:
+
+1. No se detectaron productos en esta URL. La página carga contenido por JavaScript o cambió su estructura.
+2. Se detectó la categoría externa, pero no productos asociados.
+3. La categoría ya existe homologada con otra categoría interna.
+4. El producto externo ya existe en catálogo interno.
+5. La cadena bloqueó o cambió la respuesta.
+
+## Regla de seguridad
+
+Nunca borrar catálogo, secciones, categorías o productos internos como parte del scraping.
+
+Todo cambio interno debe requerir confirmación explícita.

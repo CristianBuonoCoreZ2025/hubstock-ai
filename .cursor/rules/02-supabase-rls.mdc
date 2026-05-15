@@ -1,0 +1,86 @@
+---
+description: Reglas de Supabase, RLS, perfiles, server actions y acceso seguro a datos.
+alwaysApply: true
+---
+
+# Supabase and RLS Rules
+
+## Base de datos
+
+La base Supabase existente manda.
+
+No cambiar:
+
+1. Tablas.
+2. Columnas.
+3. Tipos.
+4. Relaciones.
+5. Índices.
+6. Políticas RLS.
+7. Funciones SQL.
+8. Triggers.
+
+Sin autorización explícita del usuario.
+
+## RLS
+
+Las políticas RLS protegen datos por perfil y usuario.
+
+Reglas:
+
+1. No desactivar RLS.
+2. No crear políticas amplias para resolver errores rápidos.
+3. No usar service role en cliente.
+4. No exponer claves privadas.
+5. No saltarse assertProfileMembership.
+6. No consultar datos de un perfil sin validar membresía.
+7. No mover validaciones críticas al cliente.
+
+## Server actions
+
+Las acciones de servidor deben:
+
+1. Obtener activeProfileId desde getProfileContext.
+2. Validar perfil activo.
+3. Crear cliente Supabase del servidor.
+4. Validar membresía con assertProfileMembership cuando aplique.
+5. Validar permisos mínimos según la operación.
+6. Retornar errores claros al usuario.
+7. No filtrar datos solo desde UI.
+
+## Cliente Supabase
+
+Usar los clientes existentes del proyecto.
+
+No crear clientes Supabase nuevos si ya existe uno en:
+
+1. src/lib/supabase/server
+2. src/lib/supabase/client
+3. src/lib/profile/context
+4. src/lib/profile/membership
+
+## Errores
+
+Los errores técnicos deben traducirse a mensajes claros.
+
+No mostrar al usuario:
+
+1. Error crudo de Postgres.
+2. Error de índice duplicado sin explicación.
+3. Stack trace.
+4. Mensaje interno de Supabase.
+
+Usar getUserFriendlyErrorMessage cuando exista patrón.
+
+## Cambios SQL
+
+Antes de sugerir SQL:
+
+1. Revisar si la tabla ya existe.
+2. Revisar si la relación ya existe.
+3. Revisar si hay server action actual.
+4. Revisar si hay tipos TypeScript existentes.
+5. Revisar impacto en RLS.
+6. Revisar impacto en datos actuales.
+
+No crear migraciones por comodidad.

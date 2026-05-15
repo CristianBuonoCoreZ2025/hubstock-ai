@@ -1,0 +1,113 @@
+---
+description: Reglas de interfaz para mantener una UI profesional, consistente, rápida, modal y compatible con modo claro y oscuro.
+alwaysApply: true
+---
+
+# UI and UX Standards
+
+## Principio visual
+
+La interfaz debe verse profesional, limpia, rápida y consistente.
+
+No entregar pantallas crudas.
+
+No entregar botones improvisados.
+
+No romper estilos existentes.
+
+## Modales
+
+Crear y editar siempre en modal.
+
+Reglas:
+
+1. No crear formularios largos incrustados en la página principal.
+2. No sacar al usuario del flujo.
+3. El modal debe tener título claro.
+4. El modal debe tener botón cancelar.
+5. El modal debe tener botón guardar.
+6. El modal debe validar antes de enviar.
+7. El modal debe mostrar errores claros.
+
+## Grillas
+
+Toda grilla debe tener:
+
+1. Columnas claras.
+2. Acciones alineadas.
+3. Estado vacío claro.
+4. Carga visual razonable.
+5. Paginación si la lista es grande.
+6. Toggle para ver activos e inactivos cuando aplique.
+7. Búsqueda consistente.
+
+## Listas grandes
+
+Para listas grandes:
+
+1. No renderizar miles de filas sin paginación.
+2. Usar paginación, límite o carga segmentada.
+3. Mantener interacción fluida.
+4. Evitar filtros que congelen la UI.
+5. Evitar combos gigantes sin búsqueda.
+
+## Combos
+
+Los combos deben:
+
+1. Estar ordenados alfabéticamente.
+2. Permitir búsqueda cuando hay muchos elementos.
+3. Mostrar opción clara cuando no hay resultados.
+4. No ocultar el valor seleccionado.
+5. No usar valores técnicos como etiqueta principal.
+
+## Botones
+
+Los botones deben:
+
+1. Tener texto claro.
+2. Mantener estilo del proyecto.
+3. No mezclar tamaños sin razón.
+4. No usar colores aleatorios.
+5. No duplicar acciones.
+6. No crear botones de prueba visibles.
+
+## Modo claro y oscuro
+
+No romper:
+
+1. Tema claro.
+2. Tema oscuro.
+3. Menú lateral.
+4. Layout principal.
+5. Estados hover.
+6. Estados focus.
+7. Contraste mínimo.
+
+## Formularios
+
+Todo formulario debe:
+
+1. Validar requeridos.
+2. Mostrar errores cerca del campo.
+3. Deshabilitar guardar durante envío.
+4. Evitar doble submit.
+5. Mantener datos escritos si falla.
+6. Mostrar mensaje claro de éxito o error.
+
+## Textos
+
+El texto debe ser directo.
+
+Evitar:
+
+1. Mensajes técnicos crudos.
+2. Textos genéricos como error inesperado sin contexto.
+3. Traducciones mezcladas.
+4. Nombres internos de tabla si el usuario no los necesita.
+
+## Regla de no degradación
+
+Antes de tocar UI, revisar la página existente y copiar el patrón visual ya usado.
+
+No rediseñar una pantalla completa si la tarea pide corregir una parte.

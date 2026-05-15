@@ -5,34 +5,62 @@ alwaysApply: true
 
 # HUB-STOCK-AI Core Rules
 
-Este proyecto usa Next.js, TypeScript, Supabase, Tailwind y Vercel.
+Este proyecto usa Next.js, TypeScript, Supabase, Tailwind, React y Vercel.
+
+## Objetivo del proyecto
+
+HUB-STOCK-AI administra inventario doméstico por perfil.
+
+El sistema separa estas áreas:
+
+1. Dashboard
+2. Catálogo
+3. Inventario
+4. Consumo
+5. Chequeo de stock
+6. Compras
+7. Administración
+8. Configuración
+9. Precios cadenas
 
 ## Reglas obligatorias
 
 1. No cambiar schema Supabase sin autorización explícita del usuario.
 2. No cambiar políticas RLS sin autorización explícita del usuario.
-3. Todo cambio de stock debe registrar un movimiento en stock_movements.
-4. Si falla el registro en stock_movements, revertir el cambio o dejar stock en estado seguro.
-5. Mantener separados estos módulos: Dashboard, Catálogo, Inventario, Consumo, Chequeo de stock, Compras, Administración y Configuración.
-6. Crear y editar registros siempre en modal.
-7. Búsquedas sin acentos, sin sensibilidad a mayúsculas, multi palabra y con espacios normalizados.
-8. No crear toggles de prueba visibles para usuario final.
-9. No reemplazar la arquitectura existente sin revisar primero los archivos relacionados.
-10. Antes de tocar código, revisar acciones, tipos, componentes y consultas Supabase relacionadas.
-11. No crear abstracciones nuevas si el patrón ya existe.
-12. Ejecutar npm run build antes de cerrar tareas grandes.
-13. Mantener una UI profesional, limpia, rápida y consistente.
-14. No degradar los estilos existentes de menú, modo claro, modo oscuro o layout principal.
+3. No crear tablas nuevas sin autorización explícita.
+4. No crear columnas nuevas sin autorización explícita.
+5. No mezclar Catálogo con Inventario.
+6. No mezclar productos globales con productos del perfil.
+7. Todo cambio de stock debe registrar un movimiento en stock_movements.
+8. Si falla stock_movements, revertir el cambio o dejar stock en estado seguro.
+9. Crear y editar registros siempre en modal.
+10. Mantener búsqueda sin acentos, sin mayúsculas, multi palabra y con espacios normalizados.
+11. No crear toggles de prueba visibles al usuario final.
+12. No reemplazar arquitectura existente sin revisar archivos relacionados.
+13. No crear abstracciones nuevas si ya existe un patrón en el proyecto.
+14. Mantener UI profesional, limpia, rápida y consistente.
+15. No degradar menú, modo claro, modo oscuro, layout principal ni estilos existentes.
 
-## Forma de trabajo
+## Antes de modificar código
 
-Antes de modificar:
-1. Indicar objetivo.
-2. Indicar archivos que se tocarán.
-3. Indicar riesgo.
-4. Indicar validación.
+El agente debe indicar:
 
-Después de modificar:
-1. Resumir cambios.
-2. Indicar comandos ejecutados.
-3. Indicar pendientes reales.
+1. Objetivo.
+2. Archivos que va a revisar.
+3. Archivos que va a tocar.
+4. Riesgo.
+5. Validación.
+
+## Después de modificar código
+
+El agente debe indicar:
+
+1. Cambios aplicados.
+2. Archivos modificados.
+3. Comandos ejecutados.
+4. Resultado del build o validación.
+5. Pendientes reales.
+
+## Regla de oro
+
+Si una solicitud parece romper arquitectura, datos, RLS, stock o UI, detenerse y explicar el riesgo antes de editar.

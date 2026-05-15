@@ -1,0 +1,127 @@
+---
+description: Reglas de dominio para separar Catálogo, Inventario, Compras, Consumo, Chequeo de stock y productos globales.
+alwaysApply: true
+---
+
+# Catalog and Inventory Domain Rules
+
+## Separación central
+
+Catálogo no es Inventario.
+
+Inventario no es Catálogo.
+
+Compras alimenta Inventario.
+
+Consumo descuenta Inventario.
+
+Chequeo de stock valida existencia real.
+
+Precios cadenas entrega referencia externa.
+
+## Catálogo
+
+Catálogo representa productos base.
+
+Debe servir para:
+
+1. Buscar productos.
+2. Navegar por sección.
+3. Navegar por categoría.
+4. Revisar marcas.
+5. Crear productos base.
+6. Mantener datos referenciales.
+
+Catálogo no debe representar stock real.
+
+## Inventario
+
+Inventario representa productos existentes en un perfil.
+
+Debe servir para:
+
+1. Ver stock actual.
+2. Ajustar cantidades.
+3. Ver ubicación o zona.
+4. Ver vencimiento si existe.
+5. Ver trazabilidad.
+6. Preparar consumo o compra.
+
+Inventario no debe cambiar taxonomía global sin flujo explícito.
+
+## Compras
+
+Compras representa entrada de productos.
+
+Debe servir para:
+
+1. Capturar boleta.
+2. Revisar productos detectados.
+3. Asociar productos al catálogo.
+4. Crear productos faltantes.
+5. Confirmar ingreso al inventario.
+6. Registrar movimientos de stock.
+
+## Consumo
+
+Consumo representa salida de productos.
+
+Debe servir para:
+
+1. Seleccionar productos existentes.
+2. Registrar cantidad usada.
+3. Reducir stock.
+4. Registrar movimiento.
+5. Mantener historial.
+
+## Chequeo de stock
+
+Chequeo de stock representa revisión física.
+
+Debe servir para:
+
+1. Confirmar lo que existe.
+2. Detectar faltantes.
+3. Detectar exceso.
+4. Proponer ajustes.
+5. Registrar movimientos al confirmar.
+
+## Productos globales
+
+Productos globales son contexto compartido.
+
+Reglas:
+
+1. No convertir todo producto externo en producto del perfil.
+2. No duplicar productos globales por cada perfil.
+3. No borrar catálogo local por homologación externa.
+4. No mezclar productos scrapeados con inventario real.
+5. No asumir que una coincidencia de nombre es la misma entidad sin validación.
+
+## Búsqueda
+
+Toda búsqueda debe ser:
+
+1. Sin acentos.
+2. Sin sensibilidad a mayúsculas.
+3. Multi palabra.
+4. Con espacios normalizados.
+5. Independiente del orden cuando sea posible.
+6. Con soporte para alias o variantes si el proyecto ya tiene esa lógica.
+
+Usar normalizeSearchText y searchTermsFromQuery cuando existan.
+
+## Crear producto
+
+Antes de crear producto:
+
+1. Buscar si existe por nombre normalizado.
+2. Validar marca.
+3. Validar categoría.
+4. Evitar duplicados.
+5. Mostrar error claro si ya existe.
+6. No mostrar error técnico de índice.
+
+## Regla de seguridad
+
+Si una tarea pide cambiar Catálogo e Inventario a la vez, dividir el trabajo por etapas y validar cada una.

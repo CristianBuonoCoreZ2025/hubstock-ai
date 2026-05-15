@@ -1,0 +1,29 @@
+---
+description: Reglas de validación, build, lint, pruebas manuales y cierre de tareas.
+alwaysApply: true
+---
+
+# Validation and Build Rules
+
+## Antes de cerrar una tarea
+
+Ejecutar validación razonable.
+
+Para tareas grandes:
+
+1. npm run build
+
+Para tareas menores:
+
+1. Revisar TypeScript.
+2. Revisar imports.
+3. Revisar rutas.
+4. Revisar errores visibles.
+5. Indicar si no se ejecutó build.
+
+## Build
+
+Si se ejecuta:
+
+```bash
+npm run build
