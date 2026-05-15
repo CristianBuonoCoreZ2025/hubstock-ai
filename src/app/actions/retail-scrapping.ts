@@ -13,10 +13,23 @@ import {
 } from '@/lib/retail-listing-url-path'
 import { captureLiderRetailPage, partitionLiderCaptureForCleanInsert } from '@/server/retail/capture/lider-capture'
 import {
+  cancelSimilarityBulkJob,
+  createSimilarityBulkJob,
+  getSimilarityBulkJob,
+  type SimilarityBulkJobProgress,
+} from '@/server/retail/scrapping/scrapping-similarity-bulk-job-store'
+import { runScrappingSimilarityBulkJob } from '@/server/retail/scrapping/scrapping-similarity-bulk-runner'
+import {
   countScrappingSimilarityPending,
   processScrappingSimilarityBulkBatch,
+  processScrappingSimilarityBulkMultiBatch,
+  scrappingBulkSkipAutoOnModalOpen,
+  scrappingBulkUseBackgroundJob,
 } from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
-import type { SimilarityBulkBatchStats } from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
+import type {
+  SimilarityBulkBatchStats,
+  SimilarityBulkRunStats,
+} from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
 import {
   confirmManualScrappingSimilarityLink,
   fetchScrappingSimilarityManualCandidates,
@@ -1500,6 +1513,16 @@ export async function countScrappingSimilarityPendingAction(): Promise<
   }
 }
 
+function revalidateAfterSimilarityBulk(stats: {
+  autoLinked: number
+  autoPendingNew: number
+}): void {
+  if (stats.autoLinked > 0 || stats.autoPendingNew > 0) {
+    revalidatePath('/captura-cadenas-2')
+    revalidatePath('/catalogo')
+  }
+}
+
 /** Lote de homologación automática paso 2 (servidor). */
 export async function processScrappingSimilarityBulkBatchAction(input: {
   afterId?: string | null
@@ -1514,14 +1537,91 @@ export async function processScrappingSimilarityBulkBatchAction(input: {
       afterId: input.afterId ?? null,
     })
     if (!r.ok) return r
-    if (r.stats.autoLinked > 0 || r.stats.autoPendingNew > 0) {
-      revalidatePath('/captura-cadenas-2')
-      revalidatePath('/catalogo')
-    }
+    revalidateAfterSimilarityBulk(r.stats)
     return r
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }
+}
+
+/** Varios lotes por request (Etapa A: menos viajes HTTP, misma lógica de decisión). */
+export async function processScrappingSimilarityBulkMultiBatchAction(input: {
+  afterId?: string | null
+  maxBatches?: number
+}): Promise<
+  | { ok: true; stats: SimilarityBulkRunStats; lastId: string | null; hasMore: boolean }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  try {
+    const r = await processScrappingSimilarityBulkMultiBatch(gate.admin, {
+      afterId: input.afterId ?? null,
+      maxBatches: input.maxBatches,
+    })
+    if (!r.ok) return r
+    revalidateAfterSimilarityBulk(r.stats)
+    return r
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Configuración paso 2 (Etapa E). */
+export async function getScrappingSimilarityBulkConfigAction(): Promise<{
+  ok: true
+  useBackgroundJob: boolean
+  skipAutoOnOpen: boolean
+}> {
+  return {
+    ok: true,
+    useBackgroundJob: scrappingBulkUseBackgroundJob(),
+    skipAutoOnOpen: scrappingBulkSkipAutoOnModalOpen(),
+  }
+}
+
+/** Inicia job en segundo plano (progreso vía polling). */
+export async function startScrappingSimilarityBulkJobAction(): Promise<
+  | { ok: true; jobId: string; total: number }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  try {
+    const total = await countScrappingSimilarityPending(gate.admin)
+    if (total === 0) {
+      return { ok: false, error: 'No hay filas pending para homologar.' }
+    }
+    const job = createSimilarityBulkJob(total)
+    void runScrappingSimilarityBulkJob(gate.admin, job.jobId, total)
+    return { ok: true, jobId: job.jobId, total }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+export async function getScrappingSimilarityBulkJobProgressAction(input: {
+  jobId: string
+}): Promise<
+  | { ok: true; job: SimilarityBulkJobProgress }
+  | { ok: false; error: string }
+> {
+  const jobId = input.jobId?.trim()
+  if (!jobId) return { ok: false, error: 'Falta el identificador del proceso.' }
+  const job = getSimilarityBulkJob(jobId)
+  if (!job) {
+    return { ok: false, error: 'No se encontró el proceso de homologación. Vuelve a abrir el paso 2.' }
+  }
+  return { ok: true, job }
+}
+
+export async function cancelScrappingSimilarityBulkJobAction(input: {
+  jobId: string
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const jobId = input.jobId?.trim()
+  if (!jobId) return { ok: false, error: 'Falta el identificador del proceso.' }
+  cancelSimilarityBulkJob(jobId)
+  return { ok: true }
 }
 
 /** Grilla paso 2: filas globales `pending` para revisión manual de similitud. */

@@ -633,6 +633,20 @@ async function collectScrappingIdsWithExistingRetailLink(
 export async function purgeScrappingRowsThatAlreadyHaveRetailLink(
   admin: SupabaseClient,
 ): Promise<{ deleted: number; error: unknown | null }> {
+  const { data: rpcData, error: rpcErr } = await admin.rpc('scrapping_purge_rows_with_retail_link')
+  if (!rpcErr && rpcData != null && typeof rpcData === 'object') {
+    const deleted = Number((rpcData as { deleted?: unknown }).deleted ?? 0)
+    if (Number.isFinite(deleted) && deleted >= 0) {
+      return { deleted: Math.floor(deleted), error: null }
+    }
+  }
+  if (rpcErr) {
+    console.warn(
+      '[scrapping] purge RPC scrapping_purge_rows_with_retail_link no disponible; respaldo por lotes.',
+      rpcErr,
+    )
+  }
+
   let deletedTotal = 0
   let lastId: string | null = null
   const batchN = 350

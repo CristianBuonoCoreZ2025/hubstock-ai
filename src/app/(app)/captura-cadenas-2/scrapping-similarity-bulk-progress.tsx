@@ -1,6 +1,8 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 
 export type SimilarityBulkProgressState = {
   /** purge = limpiar scrapping ya homologado; homologate = pasada de similitud */
@@ -9,6 +11,7 @@ export type SimilarityBulkProgressState = {
   processed: number
   purgedDuplicates: number
   autoLinked: number
+  autoLinkedByIa?: number
   autoPendingNew: number
   leftForReview: number
   failed: number
@@ -16,14 +19,61 @@ export type SimilarityBulkProgressState = {
 
 export type ScrappingSimilarityBulkProgressProps = {
   progress: SimilarityBulkProgressState
+  /** Epoch ms cuando empezó esta pasada (cliente); muestra tiempo transcurrido */
+  bulkSessionStartedAtMs?: number | null
+  onSkipToReview?: () => void
 }
 
-export function ScrappingSimilarityBulkProgress({ progress }: ScrappingSimilarityBulkProgressProps) {
-  const { step, total, processed, purgedDuplicates, autoLinked, autoPendingNew, leftForReview, failed } =
-    progress
+function formatElapsedDuration(ms: number): string {
+  const sec = Math.floor(ms / 1000)
+  const h = Math.floor(sec / 3600)
+  const m = Math.floor((sec % 3600) / 60)
+  const s = sec % 60
+  if (h > 0) return `${h} h ${m} min ${s} s`
+  if (m > 0) return `${m} min ${s} s`
+  return `${s} s`
+}
+
+export function ScrappingSimilarityBulkProgress({
+  progress,
+  bulkSessionStartedAtMs,
+  onSkipToReview,
+}: ScrappingSimilarityBulkProgressProps) {
+  const {
+    step,
+    total,
+    processed,
+    purgedDuplicates,
+    autoLinked,
+    autoLinkedByIa = 0,
+    autoPendingNew,
+    leftForReview,
+    failed,
+  } = progress
+
+  const [elapsedLabel, setElapsedLabel] = useState<string | null>(() =>
+    bulkSessionStartedAtMs != null ? formatElapsedDuration(0) : null,
+  )
+
+  useEffect(() => {
+    if (bulkSessionStartedAtMs == null) {
+      setElapsedLabel(null)
+      return
+    }
+    const tick = (): void => {
+      setElapsedLabel(formatElapsedDuration(Date.now() - bulkSessionStartedAtMs))
+    }
+    tick()
+    const id = window.setInterval(tick, 1000)
+    return (): void => window.clearInterval(id)
+  }, [bulkSessionStartedAtMs])
   const isPurge = step === 'purge'
   const denom = total > 0 ? total : Math.max(processed, 1)
-  const pct = isPurge ? (processed > 0 ? 50 : 8) : Math.min(100, Math.round((processed / denom) * 100))
+  const waitingFirstBatch = !isPurge && total > 0 && processed === 0
+  const pct =
+    isPurge ? (processed > 0 ? 50 : 8)
+    : waitingFirstBatch ? 4
+    : Math.min(100, Math.round((processed / denom) * 100))
   const remaining = Math.max(0, total - processed)
 
   return (
@@ -44,13 +94,13 @@ export function ScrappingSimilarityBulkProgress({ progress }: ScrappingSimilarit
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {isPurge ?
               'Quitando filas de scrapping que ya tienen vínculo en el catálogo (misma cadena + referencia). No se tocan maestros ni vínculos.'
-            : 'Analizando y homologando el resto de filas pending. Al terminar verás solo lo que requiere tu revisión.'}
+            : 'Procesando en el servidor; la barra se actualiza cada pocos segundos. Si ya corriste esta pasada, podés ir directo a la grilla.'}
           </p>
         </div>
       </div>
 
       <div className="w-full max-w-xl space-y-2">
-        <div className="flex items-center justify-between text-sm tabular-nums">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm tabular-nums">
           <span className="font-medium text-foreground">
             {isPurge ?
               purgedDuplicates > 0 ?
@@ -58,9 +108,19 @@ export function ScrappingSimilarityBulkProgress({ progress }: ScrappingSimilarit
               : 'Revisando scrapping…'
             : `${processed.toLocaleString('es-CL')} de ${total.toLocaleString('es-CL')}`}
           </span>
-          {!isPurge ?
-            <span className="text-muted-foreground">{pct}%</span>
-          : null}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            {!isPurge && elapsedLabel != null ?
+              <span
+                className="text-muted-foreground"
+                aria-label={`Tiempo transcurrido: ${elapsedLabel}`}
+              >
+                Transcurrido: <span className="font-medium text-foreground">{elapsedLabel}</span>
+              </span>
+            : null}
+            {!isPurge ?
+              <span className="text-muted-foreground">{pct}%</span>
+            : null}
+          </div>
         </div>
         <div className="h-3 overflow-hidden rounded-full bg-muted">
           <div
@@ -71,19 +131,32 @@ export function ScrappingSimilarityBulkProgress({ progress }: ScrappingSimilarit
         <p className="text-center text-xs text-muted-foreground">
           {isPurge ?
             'Paso 1 de 2 · limpieza automática'
+          : waitingFirstBatch ?
+            'Procesando el primer lote en el servidor…'
           : remaining > 0 ?
             `Faltan aprox. ${remaining.toLocaleString('es-CL')} fila(s) por analizar`
           : 'Finalizando pasada…'}
         </p>
       </div>
 
+      {onSkipToReview && !isPurge ?
+        <Button type="button" variant="outline" onClick={onSkipToReview}>
+          Ir a revisión manual (omitir pasada automática)
+        </Button>
+      : null}
+
       {isPurge ?
         <div className="grid w-full max-w-xl grid-cols-1 gap-3">
           <StatCard label="Quitadas de scrapping" value={purgedDuplicates} tone="muted" />
         </div>
       : (
-        <div className="grid w-full max-w-xl grid-cols-2 gap-3 sm:grid-cols-4">
+        <div
+          className={`grid w-full max-w-xl gap-3 ${autoLinkedByIa > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
+        >
           <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
+          {autoLinkedByIa > 0 ?
+            <StatCard label="Vía IA" value={autoLinkedByIa} tone="emerald" />
+          : null}
           <StatCard label="Producto nuevo" value={autoPendingNew} tone="amber" />
           <StatCard label="Para revisar" value={leftForReview} tone="sky" />
           <StatCard label="Errores" value={failed} tone="muted" />

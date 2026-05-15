@@ -4,12 +4,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
+  cancelScrappingSimilarityBulkJobAction,
   confirmScrappingSimilarityLinksBatchAction,
   countScrappingSimilarityPendingAction,
+  getScrappingSimilarityBulkConfigAction,
+  getScrappingSimilarityBulkJobProgressAction,
   getScrappingSimilarityCandidatesAction,
   listScrappingSimilarityReviewPageAction,
   processScrappingSimilarityBulkBatchAction,
   rejectScrappingSimilarityToPendingNewBatchAction,
+  startScrappingSimilarityBulkJobAction,
 } from '@/app/actions/retail-scrapping'
 import {
   ScrappingSimilarityBulkProgress,
@@ -41,12 +45,15 @@ const APPLY_BATCH_SIZE = 120
 
 type ModalPhase = 'bulk' | 'review' | 'empty'
 
+const BULK_POLL_MS = 2000
+
 const EMPTY_BULK_PROGRESS: SimilarityBulkProgressState = {
   step: 'homologate',
   total: 0,
   processed: 0,
   purgedDuplicates: 0,
   autoLinked: 0,
+  autoLinkedByIa: 0,
   autoPendingNew: 0,
   leftForReview: 0,
   failed: 0,
@@ -80,6 +87,7 @@ export function ScrappingSimilarityReviewModal({
   const [phase, setPhase] = useState<ModalPhase>('bulk')
   const [bulkProgress, setBulkProgress] = useState<SimilarityBulkProgressState>(EMPTY_BULK_PROGRESS)
   const [bulkError, setBulkError] = useState<string | null>(null)
+  const [bulkSessionStartedAtMs, setBulkSessionStartedAtMs] = useState<number | null>(null)
 
   const [candidatesCache, setCandidatesCache] = useState<Record<string, ScrappingSimilarityManualCandidate[]>>({})
   const [candBusyByRow, setCandBusyByRow] = useState<Record<string, boolean>>({})
@@ -87,6 +95,8 @@ export function ScrappingSimilarityReviewModal({
   const [pendingRejects, setPendingRejects] = useState<Record<string, true>>({})
 
   const prefetchGenRef = useRef(0)
+  const bulkAbortRef = useRef(false)
+  const bulkJobIdRef = useRef<string | null>(null)
   const sessionStartedRef = useRef(false)
   const candidatesCacheRef = useRef(candidatesCache)
   const pendingRejectsRef = useRef(pendingRejects)
@@ -116,6 +126,9 @@ export function ScrappingSimilarityReviewModal({
     setBulkProgress(EMPTY_BULK_PROGRESS)
     setBulkError(null)
     setPhase('bulk')
+    bulkAbortRef.current = false
+    bulkJobIdRef.current = null
+    setBulkSessionStartedAtMs(null)
   }, [])
 
   const prefetchCandidatesForRows = useCallback(async (loadedRows: ScrappingProductRow[], gen: number) => {
@@ -205,10 +218,55 @@ export function ScrappingSimilarityReviewModal({
     [prefetchCandidatesForRows],
   )
 
-  const runBulkPrep = useCallback(async () => {
+  const finishBulkSession = useCallback(
+    async (acc: SimilarityBulkProgressState) => {
+      if (bulkAbortRef.current) {
+        toast.message('Pasada automática omitida. Revisá y confirmá en la grilla.')
+        setPhase('review')
+        await loadPage(0)
+        return
+      }
+
+      await onAppliedRef.current()
+
+      if (acc.processed > 0) {
+        const iaPart =
+          (acc.autoLinkedByIa ?? 0) > 0 ?
+            ` (${(acc.autoLinkedByIa ?? 0).toLocaleString('es-CL')} vía IA)`
+          : ''
+        toast.success(
+          `Paso 2: ${acc.autoLinked.toLocaleString('es-CL')} vinculada(s)${iaPart}, ${acc.autoPendingNew.toLocaleString('es-CL')} a producto nuevo, ${acc.leftForReview.toLocaleString('es-CL')} para tu revisión.`,
+        )
+      }
+
+      const reviewR = await countScrappingSimilarityPendingAction()
+      if (reviewR.ok && reviewR.total === 0) {
+        setPhase('empty')
+        return
+      }
+
+      setPhase('review')
+      await loadPage(0)
+    },
+    [loadPage],
+  )
+
+  const skipBulkToReview = useCallback(async () => {
+    bulkAbortRef.current = true
+    const jobId = bulkJobIdRef.current
+    if (jobId) {
+      await cancelScrappingSimilarityBulkJobAction({ jobId })
+      bulkJobIdRef.current = null
+    }
+    setPhase('review')
+    await loadPage(0)
+  }, [loadPage])
+
+  const runBulkPrepLegacy = useCallback(async () => {
     setPhase('bulk')
     setBulkError(null)
     setBulkProgress(EMPTY_BULK_PROGRESS)
+    setBulkSessionStartedAtMs(Date.now())
 
     const countR = await countScrappingSimilarityPendingAction()
     if (!countR.ok) {
@@ -225,13 +283,15 @@ export function ScrappingSimilarityReviewModal({
       return
     }
 
-    setBulkProgress((p) => ({ ...p, total }))
+    setBulkProgress((p) => ({ ...p, total, processed: 0 }))
 
     let afterId: string | null = null
-    const acc = { ...EMPTY_BULK_PROGRESS, total }
+    const acc: SimilarityBulkProgressState = { ...EMPTY_BULK_PROGRESS, total }
 
     try {
       for (;;) {
+        if (bulkAbortRef.current) break
+
         const r = await processScrappingSimilarityBulkBatchAction({ afterId })
         if (!r.ok) {
           setBulkError(r.error)
@@ -241,37 +301,108 @@ export function ScrappingSimilarityReviewModal({
         const s = r.stats
         acc.processed += s.processed
         acc.autoLinked += s.autoLinked
+        acc.autoLinkedByIa = (acc.autoLinkedByIa ?? 0) + s.autoLinkedByIa
         acc.autoPendingNew += s.autoPendingNew
         acc.leftForReview += s.leftForReview
         acc.failed += s.failed
-        setBulkProgress({ ...acc })
+        setBulkProgress({ ...acc, step: 'homologate', total })
 
         if (!s.hasMore || !s.lastId) break
         afterId = s.lastId
       }
 
-      await onAppliedRef.current()
-
-      if (acc.processed > 0) {
-        toast.success(
-          `Paso 2: ${acc.autoLinked.toLocaleString('es-CL')} vinculada(s), ${acc.autoPendingNew.toLocaleString('es-CL')} a producto nuevo, ${acc.leftForReview.toLocaleString('es-CL')} para tu revisión.`,
-        )
-      }
-
-      const reviewR = await countScrappingSimilarityPendingAction()
-      if (reviewR.ok && reviewR.total === 0) {
-        setPhase('empty')
-        return
-      }
-
-      setPhase('review')
-      await loadPage(0)
+      await finishBulkSession(acc)
     } catch {
-      setBulkError('No se pudo completar la homologación automática. Intentá nuevamente.')
+      setBulkError('No se pudo completar la homologación automática. Intenta nuevamente.')
       setPhase('review')
       await loadPage(0)
     }
-  }, [loadPage])
+  }, [finishBulkSession, loadPage])
+
+  const runBulkPrepBackground = useCallback(async () => {
+    setPhase('bulk')
+    setBulkError(null)
+    setBulkProgress(EMPTY_BULK_PROGRESS)
+    setBulkSessionStartedAtMs(Date.now())
+
+    const startR = await startScrappingSimilarityBulkJobAction()
+    if (!startR.ok) {
+      if (startR.error.includes('No hay filas pending')) {
+        setPhase('empty')
+        return
+      }
+      setBulkError(startR.error)
+      toast.error(startR.error)
+      setPhase('review')
+      await loadPage(0)
+      return
+    }
+
+    bulkJobIdRef.current = startR.jobId
+    const acc: SimilarityBulkProgressState = {
+      ...EMPTY_BULK_PROGRESS,
+      total: startR.total,
+    }
+    setBulkProgress(acc)
+
+    const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+    try {
+      for (;;) {
+        if (bulkAbortRef.current) break
+
+        const pr = await getScrappingSimilarityBulkJobProgressAction({ jobId: startR.jobId })
+        if (!pr.ok) {
+          setBulkError(pr.error)
+          toast.error(pr.error)
+          break
+        }
+
+        const job = pr.job
+        acc.processed = job.processed
+        acc.autoLinked = job.autoLinked
+        acc.autoLinkedByIa = job.autoLinkedByIa
+        acc.autoPendingNew = job.autoPendingNew
+        acc.leftForReview = job.leftForReview
+        acc.failed = job.failed
+        acc.total = job.total
+        setBulkProgress({ ...acc, step: 'homologate' })
+
+        if (job.status === 'done') break
+        if (job.status === 'cancelled') break
+        if (job.status === 'error') {
+          const msg = job.error ?? 'No se pudo completar la homologación automática.'
+          setBulkError(msg)
+          toast.error(msg)
+          break
+        }
+
+        await sleep(BULK_POLL_MS)
+      }
+
+      bulkJobIdRef.current = null
+      await finishBulkSession(acc)
+    } catch {
+      bulkJobIdRef.current = null
+      setBulkError('No se pudo completar la homologación automática. Intenta nuevamente.')
+      setPhase('review')
+      await loadPage(0)
+    }
+  }, [finishBulkSession, loadPage])
+
+  const runBulkPrep = useCallback(async () => {
+    const cfg = await getScrappingSimilarityBulkConfigAction()
+    if (cfg.skipAutoOnOpen) {
+      setPhase('review')
+      await loadPage(0)
+      return
+    }
+    if (cfg.useBackgroundJob) {
+      await runBulkPrepBackground()
+    } else {
+      await runBulkPrepLegacy()
+    }
+  }, [loadPage, runBulkPrepBackground, runBulkPrepLegacy])
 
   useEffect(() => {
     if (!open) {
@@ -450,8 +581,8 @@ export function ScrappingSimilarityReviewModal({
         <DialogHeader className="shrink-0">
           <DialogTitle>Paso 2 · Similitud (revisión manual)</DialogTitle>
           <DialogDescription>
-            Pasada automática de similitud sobre lo que quedó pending tras el paso 1 (ya sin duplicados del catálogo).
-            Revisá casos ambiguos y confirmá con «Aplicar cola». Los vínculos quedan por cadena + ref del retail.
+            Pasada automática sobre filas pending tras el paso 1. Si ya corriste esta pasada, usá «Ir a revisión manual»
+            para saltar el análisis masivo e ir directo al combo por fila. Los vínculos quedan por cadena + ref del retail.
           </DialogDescription>
         </DialogHeader>
 
@@ -460,7 +591,11 @@ export function ScrappingSimilarityReviewModal({
             No se puede revisar mientras haya scrapping en curso o barrido activo en esta vista.
           </p>
         : phase === 'bulk' ?
-          <ScrappingSimilarityBulkProgress progress={bulkProgress} />
+          <ScrappingSimilarityBulkProgress
+            progress={bulkProgress}
+            bulkSessionStartedAtMs={bulkSessionStartedAtMs}
+            onSkipToReview={() => void skipBulkToReview()}
+          />
         : phase === 'empty' ?
           <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
             <p className="text-base font-medium text-foreground">No quedan filas para revisar en paso 2</p>
@@ -497,6 +632,16 @@ export function ScrappingSimilarityReviewModal({
         )}
 
         <DialogFooter className="gap-2 sm:justify-end">
+          {!homologacionBloqueada && phase === 'bulk' ?
+            <Button
+              type="button"
+              variant="secondary"
+              className={FOOTER_ACTION_BTN}
+              onClick={() => void skipBulkToReview()}
+            >
+              Ir a revisión manual
+            </Button>
+          : null}
           <Button
             type="button"
             variant="secondary"

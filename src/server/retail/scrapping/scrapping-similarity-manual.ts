@@ -12,6 +12,11 @@ import {
 } from '@/lib/retail-association'
 import { normalizeSearchText } from '@/lib/search'
 import { getUserFriendlyErrorMessage, isUniqueViolation } from '@/lib/user-friendly-errors'
+import {
+  scrappingCategoryMismatchPenalty,
+  scrappingRetailerLinkScoreBoost,
+} from '@/server/retail/scrapping/scrapping-similarity-config'
+import { resolveCatalogCategoryIdForScrappingRow } from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
 
 const DEFAULT_PRICE_BAND_CLP = 3000
 
@@ -27,6 +32,7 @@ export type ScrappingSimilarityManualCandidate = {
   label: string
   defaultReferencePrice: number | null
   matchScore: number
+  categoryId: string | null
 }
 
 type ScrappingRowForSimilarity = {
@@ -94,8 +100,54 @@ function labelForMaster(name: string, brand: string | null, ref: number | null):
   return `${name.slice(0, 120)} · ${b} · ${refTxt}`
 }
 
+async function boostCandidatesByRetailerLinkHistory(
+  admin: SupabaseClient,
+  retailer: string,
+  candidates: ScrappingSimilarityManualCandidate[],
+): Promise<ScrappingSimilarityManualCandidate[]> {
+  if (candidates.length === 0) return candidates
+  const boost = scrappingRetailerLinkScoreBoost()
+  if (boost <= 0) return candidates
+
+  const ids = candidates.map((c) => c.catalogProductId)
+  const { data: links } = await admin
+    .from('catalog_retail_links')
+    .select('catalog_product_id')
+    .eq('retailer', retailer)
+    .in('catalog_product_id', ids)
+
+  const linked = new Set(
+    (links ?? []).map((r) => String((r as { catalog_product_id: string }).catalog_product_id)),
+  )
+  if (linked.size === 0) return candidates
+
+  return candidates
+    .map((c) =>
+      linked.has(c.catalogProductId) ?
+        { ...c, matchScore: Math.min(1, c.matchScore + boost) }
+      : c,
+    )
+    .sort((a, b) => b.matchScore - a.matchScore)
+}
+
+function applyCategoryContextToScores(
+  candidates: ScrappingSimilarityManualCandidate[],
+  catalogCategoryId: string | null,
+): ScrappingSimilarityManualCandidate[] {
+  if (!catalogCategoryId) return candidates
+  const penalty = scrappingCategoryMismatchPenalty()
+  if (penalty <= 0) return candidates
+
+  return candidates
+    .map((c) => {
+      if (!c.categoryId || c.categoryId === catalogCategoryId) return c
+      return { ...c, matchScore: Math.max(0, c.matchScore - penalty) }
+    })
+    .sort((a, b) => b.matchScore - a.matchScore)
+}
+
 /**
- * Candidatos para combo: RPC por nombre/precio, luego filtro marca y precio ±band.
+ * Candidatos para combo: RPC por nombre/precio/categoría, luego filtro marca y precio ±band.
  */
 export async function fetchScrappingSimilarityManualCandidates(
   admin: SupabaseClient,
@@ -109,10 +161,16 @@ export async function fetchScrappingSimilarityManualCandidates(
     const scrapPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
     const band = similarityPriceBandClp()
 
+    const catalogCategoryId = await resolveCatalogCategoryIdForScrappingRow(admin, {
+      retailer: row.retailer,
+      sections: row.sections,
+      categories: row.categories,
+    })
+
     const { data: candRaw, error: cErr } = await admin.rpc('catalog_retail_match_candidates', {
       p_search_title: searchTitle,
       p_price: scrapPrice,
-      p_category_id: null,
+      p_category_id: catalogCategoryId,
       p_limit: 40,
     } as never)
     if (cErr) {
@@ -130,7 +188,7 @@ export async function fetchScrappingSimilarityManualCandidates(
 
     const { data: masters, error: mErr } = await admin
       .from('catalog_products')
-      .select('id, name, brand, default_reference_price')
+      .select('id, name, brand, default_reference_price, category_id')
       .in('id', ids)
       .eq('active', true)
 
@@ -141,11 +199,17 @@ export async function fetchScrappingSimilarityManualCandidates(
     const byId = new Map(
       (masters ?? []).map((m) => [
         String((m as { id: string }).id),
-        m as { id: string; name: string; brand: string | null; default_reference_price: number | null },
+        m as {
+          id: string
+          name: string
+          brand: string | null
+          default_reference_price: number | null
+          category_id: string | null
+        },
       ]),
     )
 
-    const filtered: ScrappingSimilarityManualCandidate[] = []
+    let filtered: ScrappingSimilarityManualCandidate[] = []
     for (const c of enriched) {
       const m = byId.get(c.catalog_product_id)
       if (!m) continue
@@ -156,8 +220,12 @@ export async function fetchScrappingSimilarityManualCandidates(
         label: labelForMaster(m.name, m.brand, m.default_reference_price),
         defaultReferencePrice: m.default_reference_price,
         matchScore: Number(c.match_score ?? 0),
+        categoryId: m.category_id ? String(m.category_id) : null,
       })
     }
+
+    filtered = applyCategoryContextToScores(filtered, catalogCategoryId)
+    filtered = await boostCandidatesByRetailerLinkHistory(admin, row.retailer, filtered)
 
     const scrapP = scrapPrice ?? 0
     filtered.sort((a, b) => {
@@ -240,10 +308,16 @@ async function bumpMasterReferencePriceIfHigher(
     .eq('id', catalogProductId)
 }
 
+export type ConfirmScrappingSimilarityLinkOptions = {
+  /** Paso 2 bulk: candidatos ya validados en la misma pasada (evita 2.ª RPC). */
+  skipCandidateRevalidation?: boolean
+}
+
 export async function confirmManualScrappingSimilarityLink(
   admin: SupabaseClient,
   scrappingId: string,
   catalogProductId: string,
+  options?: ConfirmScrappingSimilarityLinkOptions,
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const { data: row, error: rErr } = await admin
     .from('scrapping')
@@ -263,13 +337,15 @@ export async function confirmManualScrappingSimilarityLink(
   const priceNum = typeof r.price === 'string' ? Number(r.price) : r.price
   const scrapPrice = Number.isFinite(priceNum) ? priceNum : null
 
-  const cand = await fetchScrappingSimilarityManualCandidates(admin, r as ScrappingRowForSimilarity)
-  if (!cand.ok) return { ok: false, error: cand.error }
-  const allowed = new Set(cand.candidates.map((c) => c.catalogProductId))
-  if (!allowed.has(catalogProductId)) {
-    return {
-      ok: false,
-      error: 'El maestro elegido no está entre los candidatos válidos para esta fila. Volvé a cargar la lista.',
+  if (!options?.skipCandidateRevalidation) {
+    const cand = await fetchScrappingSimilarityManualCandidates(admin, r as ScrappingRowForSimilarity)
+    if (!cand.ok) return { ok: false, error: cand.error }
+    const allowed = new Set(cand.candidates.map((c) => c.catalogProductId))
+    if (!allowed.has(catalogProductId)) {
+      return {
+        ok: false,
+        error: 'El maestro elegido no está entre los candidatos válidos para esta fila. Volvé a cargar la lista.',
+      }
     }
   }
 

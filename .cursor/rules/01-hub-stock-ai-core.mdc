@@ -1,0 +1,38 @@
+---
+description: Reglas centrales del proyecto HUB-STOCK-AI. Mantiene arquitectura, Supabase, stock ledger, UX y decisiones de dominio.
+alwaysApply: true
+---
+
+# HUB-STOCK-AI Core Rules
+
+Este proyecto usa Next.js, TypeScript, Supabase, Tailwind y Vercel.
+
+## Reglas obligatorias
+
+1. No cambiar schema Supabase sin autorización explícita del usuario.
+2. No cambiar políticas RLS sin autorización explícita del usuario.
+3. Todo cambio de stock debe registrar un movimiento en stock_movements.
+4. Si falla el registro en stock_movements, revertir el cambio o dejar stock en estado seguro.
+5. Mantener separados estos módulos: Dashboard, Catálogo, Inventario, Consumo, Chequeo de stock, Compras, Administración y Configuración.
+6. Crear y editar registros siempre en modal.
+7. Búsquedas sin acentos, sin sensibilidad a mayúsculas, multi palabra y con espacios normalizados.
+8. No crear toggles de prueba visibles para usuario final.
+9. No reemplazar la arquitectura existente sin revisar primero los archivos relacionados.
+10. Antes de tocar código, revisar acciones, tipos, componentes y consultas Supabase relacionadas.
+11. No crear abstracciones nuevas si el patrón ya existe.
+12. Ejecutar npm run build antes de cerrar tareas grandes.
+13. Mantener una UI profesional, limpia, rápida y consistente.
+14. No degradar los estilos existentes de menú, modo claro, modo oscuro o layout principal.
+
+## Forma de trabajo
+
+Antes de modificar:
+1. Indicar objetivo.
+2. Indicar archivos que se tocarán.
+3. Indicar riesgo.
+4. Indicar validación.
+
+Después de modificar:
+1. Resumir cambios.
+2. Indicar comandos ejecutados.
+3. Indicar pendientes reales.

@@ -22,7 +22,9 @@ export async function getProfileContext(): Promise<{
   )
   if (
     inviteRpcError &&
-    !/function .* does not exist|schema cache/i.test(inviteRpcError.message ?? '')
+    !/function .* does not exist|schema cache|expires_at does not exist/i.test(
+      inviteRpcError.message ?? '',
+    )
   ) {
     console.warn('accept_pending_invitations_for_current_user:', inviteRpcError.message)
   }
