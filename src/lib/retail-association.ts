@@ -132,7 +132,7 @@ export type DecideRetailMasterParams = {
 }
 
 /** Si el mejor candidato parece el mismo producto que el maestro pero no damos link automático → revisión (anti-duplicado). */
-function shouldForceAmbiguousDuplicateRisk(
+export function shouldForceAmbiguousDuplicateRisk(
   candidates: MatchCandidate[],
   retailTitle: string | null | undefined,
   retailPrice: number | null | undefined,

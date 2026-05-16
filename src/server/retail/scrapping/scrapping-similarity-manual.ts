@@ -35,7 +35,7 @@ export type ScrappingSimilarityManualCandidate = {
   categoryId: string | null
 }
 
-type ScrappingRowForSimilarity = {
+export type ScrappingRowForSimilarity = {
   id: string
   retailer: string
   external_ref: string
@@ -144,6 +144,95 @@ function applyCategoryContextToScores(
       return { ...c, matchScore: Math.max(0, c.matchScore - penalty) }
     })
     .sort((a, b) => b.matchScore - a.matchScore)
+}
+
+function applyRetailerLinkBoostInMemory(
+  candidates: ScrappingSimilarityManualCandidate[],
+  linkedCatalogProductIds: Set<string>,
+): ScrappingSimilarityManualCandidate[] {
+  if (candidates.length === 0) return candidates
+  const boost = scrappingRetailerLinkScoreBoost()
+  if (boost <= 0) return candidates
+  return candidates
+    .map((c) =>
+      linkedCatalogProductIds.has(c.catalogProductId) ?
+        { ...c, matchScore: Math.min(1, c.matchScore + boost) }
+      : c,
+    )
+    .sort((a, b) => b.matchScore - a.matchScore)
+}
+
+/**
+ * Construye la misma lista de candidatos que `fetchScrappingSimilarityManualCandidates`,
+ * pero a partir del JSON devuelto por `scrapping_similarity_prep_candidates_for_ids` (sin 2.ª RPC por fila).
+ */
+export async function buildManualCandidatesFromPrepSlice(
+  admin: SupabaseClient,
+  row: ScrappingRowForSimilarity,
+  rpcCandidatesJson: unknown,
+  linkedCatalogProductIds: Set<string>,
+): Promise<{ ok: true; candidates: ScrappingSimilarityManualCandidate[] } | { ok: false; error: string }> {
+  try {
+    const title = row.product_name?.trim() || ''
+    const priceNum = typeof row.price === 'string' ? Number(row.price) : row.price
+    const scrapPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
+    const band = similarityPriceBandClp()
+
+    const catalogCategoryId = await resolveCatalogCategoryIdForScrappingRow(admin, {
+      retailer: row.retailer,
+      sections: row.sections,
+      categories: row.categories,
+    })
+
+    const rawList = Array.isArray(rpcCandidatesJson) ? rpcCandidatesJson : []
+    const brandByProductId = new Map<string, string | null>()
+    for (const x of rawList) {
+      if (!x || typeof x !== 'object') continue
+      const o = x as { catalog_product_id?: unknown; catalog_brand?: unknown }
+      const pid = o.catalog_product_id != null ? String(o.catalog_product_id) : ''
+      if (!pid) continue
+      brandByProductId.set(pid, o.catalog_brand != null ? String(o.catalog_brand) : null)
+    }
+
+    const matchCandidates = matchCandidatesFromRpc(rawList)
+
+    const enriched = enrichRetailCandidatesCompositeScore(matchCandidates, title, scrapPrice)
+
+    let filtered: ScrappingSimilarityManualCandidate[] = []
+    for (const c of enriched) {
+      const catalogBrand = brandByProductId.get(c.catalog_product_id) ?? null
+      if (!scrapBrandMatchesCatalog(row.brand, catalogBrand, c.product_name)) continue
+      if (!withinPriceBandClp(scrapPrice, c.default_reference_price, band)) continue
+      filtered.push({
+        catalogProductId: c.catalog_product_id,
+        label: labelForMaster(c.product_name, catalogBrand, c.default_reference_price),
+        defaultReferencePrice: c.default_reference_price,
+        matchScore: Number(c.match_score ?? 0),
+        categoryId: c.category_id ? String(c.category_id) : null,
+      })
+    }
+
+    filtered = applyCategoryContextToScores(filtered, catalogCategoryId)
+    filtered = applyRetailerLinkBoostInMemory(filtered, linkedCatalogProductIds)
+
+    const scrapP = scrapPrice ?? 0
+    filtered.sort((a, b) => {
+      const da =
+        a.defaultReferencePrice != null && scrapP > 0 ?
+          Math.abs(a.defaultReferencePrice - scrapP)
+        : 999999999
+      const db =
+        b.defaultReferencePrice != null && scrapP > 0 ?
+          Math.abs(b.defaultReferencePrice - scrapP)
+        : 999999999
+      if (da !== db) return da - db
+      return b.matchScore - a.matchScore
+    })
+
+    return { ok: true, candidates: filtered.slice(0, 24) }
+  } catch (e) {
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
 }
 
 /**
@@ -313,6 +402,70 @@ export type ConfirmScrappingSimilarityLinkOptions = {
   skipCandidateRevalidation?: boolean
 }
 
+export type PersistedScrappingIaHint = {
+  ai_hint: string
+  candidate_suggested: string | null
+  ai_score: number | null
+  reason: string
+  stored_at: string
+  /** Motor base (composite/RPC enriquecido) antes de IA */
+  base_best_catalog_product_id?: string | null
+  base_best_score?: number | null
+  base_second_score?: number | null
+  base_gap?: number | null
+  /** La IA considera el mismo producto físico (presentación / volumen / variante). */
+  same_product?: boolean | null
+  /** IA marcó que no es el mismo ítem pese a score base alto */
+  ia_rejected_pair?: boolean
+  /** ambiguous_review | autolink_validation */
+  ia_context?: string | null
+}
+
+/** Persiste sugerencia IA (no vincula). Requiere columna similarity_ia_hint en scrapping (migración). */
+export async function persistScrappingSimilarityIaHint(
+  admin: SupabaseClient,
+  scrappingId: string,
+  payload: Omit<PersistedScrappingIaHint, 'stored_at'> & { stored_at?: string },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const stored_at = payload.stored_at ?? new Date().toISOString()
+  const blob: PersistedScrappingIaHint = {
+    ai_hint: payload.ai_hint.slice(0, 2000),
+    candidate_suggested: payload.candidate_suggested,
+    ai_score:
+      payload.ai_score != null && Number.isFinite(payload.ai_score) ? payload.ai_score
+      : null,
+    reason: payload.reason.slice(0, 500),
+    stored_at,
+    base_best_catalog_product_id: payload.base_best_catalog_product_id ?? null,
+    base_best_score:
+      payload.base_best_score != null && Number.isFinite(payload.base_best_score) ?
+        payload.base_best_score
+      : null,
+    base_second_score:
+      payload.base_second_score != null && Number.isFinite(payload.base_second_score) ?
+        payload.base_second_score
+      : null,
+    base_gap: payload.base_gap != null && Number.isFinite(payload.base_gap) ? payload.base_gap : null,
+    same_product:
+      payload.same_product === true ? true
+      : payload.same_product === false ? false
+      : null,
+    ia_rejected_pair: payload.ia_rejected_pair === true,
+    ia_context: payload.ia_context?.trim().slice(0, 48) || null,
+  }
+
+  const { error } = await admin
+    .from('scrapping')
+    .update({
+      similarity_ia_hint: blob as unknown as Record<string, unknown>,
+    } as never)
+    .eq('id', scrappingId)
+    .eq('catalog_match_status', 'pending')
+
+  if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  return { ok: true }
+}
+
 export async function confirmManualScrappingSimilarityLink(
   admin: SupabaseClient,
   scrappingId: string,
@@ -391,6 +544,10 @@ export async function markScrappingRowPendingNew(
       catalog_match_status: 'pending_new',
       matched_catalog_product_id: null,
       catalog_matched_at: null,
+      similarity_ia_hint: null,
+      homolog_final_status: 'PENDING_NEW',
+      homolog_user_decision: null,
+      homolog_reviewed_at: null,
     } as never)
     .eq('id', scrappingId)
     .eq('catalog_match_status', 'pending')

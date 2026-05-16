@@ -10,9 +10,18 @@ import { confirmManualScrappingSimilarityLink } from '@/server/retail/scrapping/
 
 export type SimilarityRowResolveOutcome =
   | { outcome: 'auto_linked' }
-  | { outcome: 'auto_linked_ia' }
   | { outcome: 'auto_pending_new' }
-  | { outcome: 'needs_review' }
+  | {
+      outcome: 'needs_review'
+      iaHintApplied?: boolean
+      iaHint?: string | null
+      candidateSuggested?: string | null
+      aiScore?: number | null
+      aiReason?: string | null
+      sameProduct?: boolean | null
+      /** La IA vetó un autovínculo que el motor base había aprobado */
+      iaBlockedAutolink?: boolean
+    }
   | { outcome: 'error' }
 
 export type ScrappingRowForSimilarityFastPath = {

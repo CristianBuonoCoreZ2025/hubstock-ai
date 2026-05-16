@@ -4,13 +4,23 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { decideRetailMaster, type MatchCandidate } from '@/lib/retail-association'
-import { scrappingSimilarityDecisionThresholds } from '@/server/retail/scrapping/scrapping-similarity-config'
-import { clearScrappingTaxonomyCache } from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
+import {
+  scrappingSimilarityDecisionThresholds,
+  scrappingSimilarityIaInvokeMinBaseScore,
+  scrappingSimilarityIaValidateBeforeAutolink,
+} from '@/server/retail/scrapping/scrapping-similarity-config'
+import {
+  clearScrappingTaxonomyCache,
+  resolveCatalogCategoryIdForScrappingRow,
+} from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import {
+  buildManualCandidatesFromPrepSlice,
   confirmManualScrappingSimilarityLink,
   fetchScrappingSimilarityManualCandidates,
   markScrappingRowPendingNew,
+  type ScrappingRowForSimilarity,
+  type ScrappingSimilarityManualCandidate,
 } from '@/server/retail/scrapping/scrapping-similarity-manual'
 import {
   tryScrappingSimilarityFastPaths,
@@ -20,6 +30,7 @@ import {
   createScrappingIaBudget,
   tryResolveScrappingSimilarityWithIa,
   type ScrappingIaBudget,
+  type ScrappingSimilarityBaseRanking,
 } from '@/server/retail/scrapping/scrapping-similarity-ia-resolve'
 import {
   logScrappingBulk,
@@ -27,6 +38,10 @@ import {
   scrappingBulkSlowRowMs,
 } from '@/server/retail/scrapping/scrapping-similarity-bulk-log'
 import { patchSimilarityBulkJob } from '@/server/retail/scrapping/scrapping-similarity-bulk-job-store'
+import {
+  decideScrappingSimilarityEngineVnext,
+  scrappingSimilarityUseEngineVnext,
+} from '@/server/retail/homologation/engine-vnext/decide-scrapping-similarity-vnext'
 
 const BULK_BATCH_DEFAULT = 50
 const BULK_BATCH_MAX = 80
@@ -34,26 +49,25 @@ const BULK_CONCURRENCY_DEFAULT = 8
 const BULK_MULTI_BATCH_DEFAULT = 5
 const BULK_MULTI_BATCH_MAX = 20
 
-type ScrappingRowForSimilarity = {
-  id: string
-  retailer: string
-  external_ref: string
-  product_name: string
-  brand: string | null
-  price: number | string
-  sections: string | null
-  categories: string | null
-}
+export type { ScrappingRowForSimilarity }
 
 export type SimilarityBulkBatchStats = {
   processed: number
   autoLinked: number
-  autoLinkedByIa: number
+  /** Contador de filas que quedaron en revisión tras guardar hint IA (sin autovínculo). */
+  iaHintsStored: number
   autoPendingNew: number
   leftForReview: number
   failed: number
   lastId: string | null
   hasMore: boolean
+}
+
+/** Una sola RPC Postgres por lote (`scrapping_similarity_prep_candidates_for_ids`). Desactivar: SCRAPPING_BULK_USE_PREP_SLICE_RPC=0 */
+export function scrappingBulkUsePrepSliceRpc(): boolean {
+  const v = process.env.SCRAPPING_BULK_USE_PREP_SLICE_RPC?.trim().toLowerCase()
+  if (v === '0' || v === 'false' || v === 'no') return false
+  return true
 }
 
 export type SimilarityBulkRunStats = Omit<SimilarityBulkBatchStats, 'lastId' | 'hasMore'> & {
@@ -149,17 +163,103 @@ function masterNameFromCandidateLabel(label: string): string {
   return idx > 0 ? label.slice(0, idx) : label
 }
 
-export async function resolveScrappingSimilarityRowAutomatic(
+export function computeMatchRanking(candidates: MatchCandidate[]): ScrappingSimilarityBaseRanking {
+  const sorted = [...candidates].sort((a, b) => (b.match_score ?? 0) - (a.match_score ?? 0))
+  const top = sorted[0]
+  const second = sorted[1]
+  const topScore = top?.match_score ?? 0
+  const secondScore = second?.match_score ?? null
+  const gap = secondScore != null ? topScore - secondScore : topScore
+  return {
+    topCatalogProductId: top?.catalog_product_id ?? null,
+    topScore,
+    secondScore,
+    gap,
+  }
+}
+
+export type PrepSliceRpcRow = {
+  scrapping_id: string
+  retailer: string
+  external_ref: string
+  product_name: string
+  brand: string | null
+  price: number | string
+  sections: string | null
+  categories: string | null
+  rpc_candidates: unknown
+}
+
+export async function callPrepCandidatesForIds(
+  admin: SupabaseClient,
+  ids: string[],
+): Promise<Map<string, PrepSliceRpcRow>> {
+  if (ids.length === 0) return new Map()
+  const { data, error } = await admin.rpc('scrapping_similarity_prep_candidates_for_ids' as never, {
+    p_ids: ids,
+  } as never)
+  if (error) {
+    throw new Error(getUserFriendlyErrorMessage(error, 'generic'))
+  }
+  const map = new Map<string, PrepSliceRpcRow>()
+  for (const row of (data ?? []) as PrepSliceRpcRow[]) {
+    map.set(String(row.scrapping_id), row)
+  }
+  return map
+}
+
+export async function fetchLinkedCatalogIdsForPrepBatch(
+  admin: SupabaseClient,
+  remaining: ScrappingRowForSimilarity[],
+  prepMap: Map<string, PrepSliceRpcRow>,
+): Promise<Map<string, Set<string>>> {
+  const retailerToIds = new Map<string, Set<string>>()
+  for (const row of remaining) {
+    const pr = prepMap.get(row.id)
+    if (!pr) continue
+    const rkey = row.retailer?.trim() || ''
+    if (!retailerToIds.has(rkey)) retailerToIds.set(rkey, new Set())
+    const acc = retailerToIds.get(rkey)!
+    const arr = Array.isArray(pr.rpc_candidates) ? pr.rpc_candidates : []
+    for (const el of arr) {
+      if (!el || typeof el !== 'object') continue
+      const pid = (el as { catalog_product_id?: unknown }).catalog_product_id
+      if (pid != null) acc.add(String(pid))
+    }
+  }
+
+  const linkMap = new Map<string, Set<string>>()
+  for (const [retailer, idSet] of retailerToIds) {
+    if (idSet.size === 0) {
+      linkMap.set(retailer, new Set())
+      continue
+    }
+    const idList = [...idSet]
+    const { data, error } = await admin
+      .from('catalog_retail_links')
+      .select('catalog_product_id')
+      .eq('retailer', retailer)
+      .in('catalog_product_id', idList)
+    if (error) {
+      throw new Error(getUserFriendlyErrorMessage(error, 'generic'))
+    }
+    linkMap.set(
+      retailer,
+      new Set(
+        (data ?? []).map((r: { catalog_product_id: string }) => String(r.catalog_product_id)),
+      ),
+    )
+  }
+  return linkMap
+}
+
+/** Decisión + IA + vínculo a partir de candidatos ya resueltos (RPC clásico o prep por lote). */
+async function finalizeSimilarityRowFromManualCandidates(
   admin: SupabaseClient,
   row: ScrappingRowForSimilarity,
+  cand: { ok: true; candidates: ScrappingSimilarityManualCandidate[] },
   iaBudget?: ScrappingIaBudget | null,
 ): Promise<SimilarityRowResolveOutcome> {
-  const fast = await tryScrappingSimilarityFastPaths(admin, row)
-  if (fast) return fast
-
-  const cand = await fetchScrappingSimilarityManualCandidates(admin, row)
-  if (!cand.ok) return { outcome: 'error' }
-
   const priceNum = typeof row.price === 'string' ? Number(row.price) : row.price
   const scrapPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
 
@@ -178,20 +278,64 @@ export async function resolveScrappingSimilarityRowAutomatic(
 
   const hints = [row.sections?.trim(), row.categories?.trim()].filter(Boolean).join(' · ')
   const thresholds = scrappingSimilarityDecisionThresholds()
-  const decision = decideRetailMaster({
-    candidates: matchCandidates,
-    brandHint: row.brand,
-    descriptionHint: hints || null,
-    retailTitle: row.product_name,
-    retailPrice: scrapPrice,
-    ...thresholds,
-  })
+  const scrapedCategoryId =
+    scrappingSimilarityUseEngineVnext() ?
+      await resolveCatalogCategoryIdForScrappingRow(admin, {
+        retailer: row.retailer,
+        sections: row.sections,
+        categories: row.categories,
+      })
+    : null
+
+  const decision = scrappingSimilarityUseEngineVnext() ?
+    decideScrappingSimilarityEngineVnext({
+      candidates: matchCandidates,
+      brandHint: row.brand,
+      descriptionHint: hints || null,
+      retailTitle: row.product_name,
+      retailPrice: scrapPrice,
+      scrapedCategoryId,
+      ...thresholds,
+    })
+  : decideRetailMaster({
+      candidates: matchCandidates,
+      brandHint: row.brand,
+      descriptionHint: hints || null,
+      retailTitle: row.product_name,
+      retailPrice: scrapPrice,
+      ...thresholds,
+    })
+
+  const baseRanking = computeMatchRanking(matchCandidates)
+  const iaFloorScore = scrappingSimilarityIaInvokeMinBaseScore(thresholds.ambiguousMin)
 
   if (decision.action === 'link' && decision.catalogProductId) {
     const allowed = new Set(cand.candidates.map((c) => c.catalogProductId))
     if (!allowed.has(decision.catalogProductId)) {
       return { outcome: 'needs_review' }
     }
+
+    if (scrappingSimilarityIaValidateBeforeAutolink()) {
+      const iaBlocked = await tryResolveScrappingSimilarityWithIa(
+        admin,
+        {
+          scrappingId: row.id,
+          productName: row.product_name,
+          brand: row.brand,
+          price: scrapPrice,
+          descriptionHint: hints || null,
+          matchCandidates,
+          allowedCatalogIds: allowed,
+          purpose: 'validate_autolink',
+          proposedCatalogProductId: decision.catalogProductId,
+          baseRanking,
+          minBaseScoreToInvokeIa: iaFloorScore,
+        },
+        iaBudget ?? null,
+      )
+      if (iaBlocked) return iaBlocked
+    }
+
     const link = await confirmManualScrappingSimilarityLink(admin, row.id, decision.catalogProductId, {
       skipCandidateRevalidation: true,
     })
@@ -213,6 +357,9 @@ export async function resolveScrappingSimilarityRowAutomatic(
       descriptionHint: hints || null,
       matchCandidates,
       allowedCatalogIds: new Set(cand.candidates.map((c) => c.catalogProductId)),
+      purpose: 'ambiguous_hint',
+      baseRanking,
+      minBaseScoreToInvokeIa: iaFloorScore,
     },
     iaBudget ?? null,
   )
@@ -221,11 +368,25 @@ export async function resolveScrappingSimilarityRowAutomatic(
   return { outcome: 'needs_review' }
 }
 
+export async function resolveScrappingSimilarityRowAutomatic(
+  admin: SupabaseClient,
+  row: ScrappingRowForSimilarity,
+  iaBudget?: ScrappingIaBudget | null,
+): Promise<SimilarityRowResolveOutcome> {
+  const fast = await tryScrappingSimilarityFastPaths(admin, row)
+  if (fast) return fast
+
+  const cand = await fetchScrappingSimilarityManualCandidates(admin, row)
+  if (!cand.ok) return { outcome: 'error' }
+
+  return finalizeSimilarityRowFromManualCandidates(admin, row, cand, iaBudget)
+}
+
 function emptyBatchStats(afterId: string | null): SimilarityBulkBatchStats {
   return {
     processed: 0,
     autoLinked: 0,
-    autoLinkedByIa: 0,
+    iaHintsStored: 0,
     autoPendingNew: 0,
     leftForReview: 0,
     failed: 0,
@@ -240,7 +401,7 @@ function accumulateBatchStats(
 ): void {
   acc.processed += batch.processed
   acc.autoLinked += batch.autoLinked
-  acc.autoLinkedByIa += batch.autoLinkedByIa
+  acc.iaHintsStored += batch.iaHintsStored
   acc.autoPendingNew += batch.autoPendingNew
   acc.leftForReview += batch.leftForReview
   acc.failed += batch.failed
@@ -303,42 +464,144 @@ export async function processScrappingSimilarityBulkBatch(
   const iaBudget = createScrappingIaBudget()
   let rowsDoneInBatch = 0
   let progressChain: Promise<void> = Promise.resolve()
-  const outcomes = await mapWithConcurrency(list, concurrency, async (row) => {
-    const tRow = Date.now()
-    const outcome = await resolveScrappingSimilarityRowAutomatic(admin, row, iaBudget)
-    const rowMs = Date.now() - tRow
-    if (rowMs >= slowRowMs) {
-      logScrappingBulkRowSlow({
-        jobId,
-        batchNumber,
-        scrappingId: row.id,
-        ms: rowMs,
-        outcome: outcome.outcome,
-        productName: row.product_name.slice(0, 80),
-      })
-    }
+
+  const bumpProgress = (): void => {
     progressChain = progressChain.then(() => {
       rowsDoneInBatch += 1
       if (jobId && rowsDoneInBatch % PROGRESS_PATCH_EVERY_ROWS === 0) {
         patchSimilarityBulkJob(jobId, { processed: processedBase + rowsDoneInBatch })
       }
     })
-    return outcome
+  }
+
+  const outcomes: SimilarityRowResolveOutcome[] = new Array(list.length)
+
+  const fastResults = await mapWithConcurrency(list, concurrency, async (row) => {
+    const tRow = Date.now()
+    const fast = await tryScrappingSimilarityFastPaths(admin, row)
+    const rowMs = Date.now() - tRow
+    if (rowMs >= slowRowMs && fast) {
+      logScrappingBulkRowSlow({
+        jobId,
+        batchNumber,
+        scrappingId: row.id,
+        ms: rowMs,
+        outcome: fast.outcome,
+        productName: row.product_name.slice(0, 80),
+      })
+    }
+    bumpProgress()
+    return fast
   })
   await progressChain
 
+  const remaining: ScrappingRowForSimilarity[] = []
+  const remainingIndex: number[] = []
+  for (let i = 0; i < list.length; i++) {
+    const fr = fastResults[i]!
+    if (fr) outcomes[i] = fr
+    else {
+      remaining.push(list[i]!)
+      remainingIndex.push(i)
+    }
+  }
+
+  if (remaining.length > 0) {
+    let secondPhase: SimilarityRowResolveOutcome[]
+    if (scrappingBulkUsePrepSliceRpc()) {
+      try {
+        const prepMap = await callPrepCandidatesForIds(admin, remaining.map((r) => r.id))
+        const linkMap = await fetchLinkedCatalogIdsForPrepBatch(admin, remaining, prepMap)
+        logScrappingBulk('prep_slice_rpc', { rows: remaining.length })
+        secondPhase = await mapWithConcurrency(remaining, concurrency, async (row) => {
+          const tRow = Date.now()
+          const pr = prepMap.get(row.id)
+          let outcome: SimilarityRowResolveOutcome
+          if (!pr) {
+            outcome = await resolveScrappingSimilarityRowAutomatic(admin, row, iaBudget)
+          } else {
+            const cand = await buildManualCandidatesFromPrepSlice(
+              admin,
+              row,
+              pr.rpc_candidates,
+              linkMap.get(row.retailer?.trim() || '') ?? new Set(),
+            )
+            outcome =
+              !cand.ok ? { outcome: 'error' }
+              : await finalizeSimilarityRowFromManualCandidates(admin, row, cand, iaBudget)
+          }
+          const rowMs = Date.now() - tRow
+          if (rowMs >= slowRowMs) {
+            logScrappingBulkRowSlow({
+              jobId,
+              batchNumber,
+              scrappingId: row.id,
+              ms: rowMs,
+              outcome: outcome.outcome,
+              productName: row.product_name.slice(0, 80),
+            })
+          }
+          bumpProgress()
+          return outcome
+        })
+      } catch (e) {
+        logScrappingBulk('prep_slice_fallback', { error: getUserFriendlyErrorMessage(e, 'generic') })
+        secondPhase = await mapWithConcurrency(remaining, concurrency, async (row) => {
+          const tRow = Date.now()
+          const outcome = await resolveScrappingSimilarityRowAutomatic(admin, row, iaBudget)
+          const rowMs = Date.now() - tRow
+          if (rowMs >= slowRowMs) {
+            logScrappingBulkRowSlow({
+              jobId,
+              batchNumber,
+              scrappingId: row.id,
+              ms: rowMs,
+              outcome: outcome.outcome,
+              productName: row.product_name.slice(0, 80),
+            })
+          }
+          bumpProgress()
+          return outcome
+        })
+      }
+    } else {
+      secondPhase = await mapWithConcurrency(remaining, concurrency, async (row) => {
+        const tRow = Date.now()
+        const outcome = await resolveScrappingSimilarityRowAutomatic(admin, row, iaBudget)
+        const rowMs = Date.now() - tRow
+        if (rowMs >= slowRowMs) {
+          logScrappingBulkRowSlow({
+            jobId,
+            batchNumber,
+            scrappingId: row.id,
+            ms: rowMs,
+            outcome: outcome.outcome,
+            productName: row.product_name.slice(0, 80),
+          })
+        }
+        bumpProgress()
+        return outcome
+      })
+    }
+    await progressChain
+    for (let k = 0; k < remaining.length; k++) {
+      outcomes[remainingIndex[k]!] = secondPhase[k]!
+    }
+  }
+
   let autoLinked = 0
-  let autoLinkedByIa = 0
+  let iaHintsStored = 0
   let autoPendingNew = 0
   let leftForReview = 0
   let failed = 0
   for (const r of outcomes) {
-    if (r.outcome === 'auto_linked' || r.outcome === 'auto_linked_ia') {
+    if (r.outcome === 'auto_linked') {
       autoLinked++
-      if (r.outcome === 'auto_linked_ia') autoLinkedByIa++
     } else if (r.outcome === 'auto_pending_new') autoPendingNew++
-    else if (r.outcome === 'needs_review') leftForReview++
-    else failed++
+    else if (r.outcome === 'needs_review') {
+      leftForReview++
+      if (r.iaHintApplied) iaHintsStored++
+    } else failed++
   }
 
   const lastId = list[list.length - 1]!.id
@@ -351,7 +614,7 @@ export async function processScrappingSimilarityBulkBatch(
     ms: batchMs,
     msPerRow: list.length > 0 ? Math.round(batchMs / list.length) : 0,
     autoLinked,
-    autoLinkedByIa,
+    iaHintsStored,
     autoPendingNew,
     leftForReview,
     failed,
@@ -365,7 +628,7 @@ export async function processScrappingSimilarityBulkBatch(
     stats: {
       processed: list.length,
       autoLinked,
-      autoLinkedByIa,
+      iaHintsStored,
       autoPendingNew,
       leftForReview,
       failed,
@@ -390,7 +653,7 @@ export async function processScrappingSimilarityBulkMultiBatch(
   const acc: SimilarityBulkRunStats = {
     processed: 0,
     autoLinked: 0,
-    autoLinkedByIa: 0,
+    iaHintsStored: 0,
     autoPendingNew: 0,
     leftForReview: 0,
     failed: 0,

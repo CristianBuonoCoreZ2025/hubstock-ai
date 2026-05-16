@@ -21,6 +21,9 @@ import {
   applyScrappingExactCatalogMatchesAction,
   forceFinalizeScrappingRunForRetailAction,
   getScrappingHomologacionPendingCountAction,
+  getScrappingHomologationDashboardAction,
+  runScrappingHomologationGrayIaAction,
+  runScrappingHomologationStep2DbMotorAction,
   type ScrappingExactCatalogMatchStats,
 } from '@/app/actions/retail-scrapping'
 import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
@@ -255,6 +258,13 @@ export function CapturaCadenas2Client() {
   const [exactMatchLast, setExactMatchLast] = useState<ScrappingExactCatalogMatchStats | null>(null)
   const [scrappingSimilarityModalOpen, setScrappingSimilarityModalOpen] = useState(false)
   const [scrappingPendingHomologacion, setScrappingPendingHomologacion] = useState<number | null>(null)
+  const [homologDash, setHomologDash] = useState<{
+    pendingAny: number
+    grayIaQueued: number
+    userReview: number
+  } | null>(null)
+  const [homologDbBusy, setHomologDbBusy] = useState(false)
+  const [homologIaBusy, setHomologIaBusy] = useState(false)
   const [forceFinalizeBusy, setForceFinalizeBusy] = useState(false)
 
   const canStopScrapping = useMemo(() => {
@@ -268,9 +278,53 @@ export function CapturaCadenas2Client() {
 
   const refreshScrappingPendingHomologacion = useCallback(async () => {
     const r = await getScrappingHomologacionPendingCountAction()
-    if (!r.ok) return
-    setScrappingPendingHomologacion(r.pendingCount)
+    if (r.ok) setScrappingPendingHomologacion(r.pendingCount)
+    const d = await getScrappingHomologationDashboardAction()
+    if (d.ok) {
+      setHomologDash({
+        pendingAny: d.pendingAny,
+        grayIaQueued: d.grayIaQueued,
+        userReview: d.userReview,
+      })
+    }
   }, [])
+
+  const onRunHomologDbMotor = useCallback(async () => {
+    if (homologacionBloqueada) return
+    setHomologDbBusy(true)
+    try {
+      const out = await runScrappingHomologationStep2DbMotorAction()
+      if (!out.ok) {
+        toast.error(out.error)
+        return
+      }
+      toast.success(
+        `Motor DB: ${out.summary.processed.toLocaleString('es-CL')} fila(s) · tentativo base ${out.summary.auto_tentative_base.toLocaleString('es-CL')} · zona gris ${out.summary.gray_ia_queued.toLocaleString('es-CL')} · nuevo ${out.summary.pending_new.toLocaleString('es-CL')}`,
+      )
+      await refreshScrappingPendingHomologacion()
+    } finally {
+      setHomologDbBusy(false)
+    }
+  }, [homologacionBloqueada, refreshScrappingPendingHomologacion])
+
+  const onRunHomologGrayIa = useCallback(async () => {
+    if (homologacionBloqueada) return
+    setHomologIaBusy(true)
+    try {
+      const out = await runScrappingHomologationGrayIaAction()
+      if (!out.ok) {
+        toast.error(out.error)
+        return
+      }
+      const s = out.summary
+      toast.success(
+        `IA gris: ${s.processed.toLocaleString('es-CL')} procesada(s) · revisión ${s.userReview.toLocaleString('es-CL')} · tentativo IA ${s.tentativeAi.toLocaleString('es-CL')} · rechazo ${s.rejected.toLocaleString('es-CL')}${s.errors ? ` · errores ${s.errors.toLocaleString('es-CL')}` : ''}`,
+      )
+      await refreshScrappingPendingHomologacion()
+    } finally {
+      setHomologIaBusy(false)
+    }
+  }, [homologacionBloqueada, refreshScrappingPendingHomologacion])
 
   /** Hay filas `pending` en scrapping: el paso 2 (similitud) puede actuar sobre ellas. */
   const paso2Destacado = useMemo(() => {
@@ -1568,6 +1622,57 @@ export function CapturaCadenas2Client() {
               <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
               Revisar similitud
             </Button>
+            <div className="mt-2 flex flex-col gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-9 w-full shrink-0"
+                disabled={
+                  homologacionBloqueada ||
+                  exactMatchBusy ||
+                  fullSweepBusy ||
+                  runsBusy ||
+                  scrappingPendingHomologacion === null ||
+                  scrappingPendingHomologacion === 0 ||
+                  homologDbBusy
+                }
+                title="Calcula scores y bandas en Postgres (todas las filas pending)"
+                onClick={() => void onRunHomologDbMotor()}
+              >
+                {homologDbBusy ?
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                : null}
+                Motor DB (scores)
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-9 w-full shrink-0"
+                disabled={
+                  homologacionBloqueada ||
+                  exactMatchBusy ||
+                  fullSweepBusy ||
+                  runsBusy ||
+                  homologDash === null ||
+                  homologDash.grayIaQueued === 0 ||
+                  homologIaBusy
+                }
+                title="Solo filas en zona gris con IA configurada"
+                onClick={() => void onRunHomologGrayIa()}
+              >
+                {homologIaBusy ?
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                : null}
+                IA zona gris
+              </Button>
+            </div>
+            {homologDash ?
+              <p className="mt-2 text-center text-[10px] leading-snug text-muted-foreground tabular-nums">
+                Pending total {homologDash.pendingAny.toLocaleString('es-CL')} · Gris IA{' '}
+                {homologDash.grayIaQueued.toLocaleString('es-CL')} · Revisión{' '}
+                {homologDash.userReview.toLocaleString('es-CL')}
+              </p>
+            : null}
             {paso2Destacado ?
               <p className="mt-2 text-center text-[10px] text-muted-foreground">
                 Paginación dentro del modal (100 filas por página).

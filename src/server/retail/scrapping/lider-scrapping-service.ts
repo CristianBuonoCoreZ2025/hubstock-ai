@@ -34,6 +34,30 @@ export type ScrappingProductRow = {
   catalog_match_status?: string | null
   matched_catalog_product_id?: string | null
   catalog_matched_at?: string | null
+  /** Hint IA desde pasada masiva (JSON); no autoriza vínculo. */
+  similarity_ia_hint?: {
+    ai_hint: string
+    candidate_suggested?: string | null
+    ai_score?: number | null
+    reason?: string
+    stored_at?: string
+    base_best_catalog_product_id?: string | null
+    base_best_score?: number | null
+    base_second_score?: number | null
+    base_gap?: number | null
+    same_product?: boolean | null
+    ia_rejected_pair?: boolean
+    ia_context?: string | null
+  } | null
+  /** Motor DB paso 2 (columnas en `scrapping`). */
+  base_score?: number | string | null
+  base_gap?: number | string | null
+  base_decision?: string | null
+  ai_score?: number | string | null
+  ai_decision?: string | null
+  homolog_final_status?: string | null
+  base_result?: Record<string, unknown> | null
+  ai_result?: Record<string, unknown> | null
 }
 
 /** UUID ficticio para `delete` masivo vía PostgREST (requiere filtro). */

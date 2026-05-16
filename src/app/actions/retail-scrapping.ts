@@ -20,12 +20,25 @@ import {
 } from '@/server/retail/scrapping/scrapping-similarity-bulk-job-store'
 import { runScrappingSimilarityBulkJob } from '@/server/retail/scrapping/scrapping-similarity-bulk-runner'
 import {
+  computeScrappingSimilarityPrepSummary,
+  type ScrappingSimilarityPrepSummary,
+} from '@/server/retail/scrapping/scrapping-similarity-bulk-summary'
+import {
   countScrappingSimilarityPending,
   processScrappingSimilarityBulkBatch,
   processScrappingSimilarityBulkMultiBatch,
   scrappingBulkSkipAutoOnModalOpen,
   scrappingBulkUseBackgroundJob,
 } from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
+import {
+  processHomologationGrayIaQueue,
+  type HomologGrayIaSummary,
+} from '@/server/retail/scrapping/scrapping-homologation-ia-gray'
+import {
+  recordHomologationUserFeedbackRpc,
+  runHomologationStep2ComputeAllPending,
+  type HomologationStep2RpcSummary,
+} from '@/server/retail/scrapping/scrapping-homologation-db'
 import type {
   SimilarityBulkBatchStats,
   SimilarityBulkRunStats,
@@ -1499,6 +1512,17 @@ async function assertNoRunningScrappingForHomologation(): Promise<
   return { ok: true, admin: editor.admin }
 }
 
+export type { ScrappingSimilarityPrepSummary }
+
+/** Desglose estimado (motor base + alcance IA) antes de la pasada masiva paso 2. */
+export async function getScrappingSimilarityPrepSummaryAction(): Promise<
+  { ok: true; summary: ScrappingSimilarityPrepSummary } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  return computeScrappingSimilarityPrepSummary(gate.admin)
+}
+
 /** Total de filas `pending` antes de la pasada masiva paso 2. */
 export async function countScrappingSimilarityPendingAction(): Promise<
   { ok: true; total: number } | { ok: false; error: string }
@@ -1510,6 +1534,71 @@ export async function countScrappingSimilarityPendingAction(): Promise<
     return { ok: true, total }
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Paso 2 · motor determinístico en Postgres (scores + bandas). Un solo RPC para todas las filas pending. */
+export async function runScrappingHomologationStep2DbMotorAction(): Promise<
+  { ok: true; summary: HomologationStep2RpcSummary } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const r = await runHomologationStep2ComputeAllPending(gate.admin)
+  if (!r.ok) return r
+  revalidatePath('/captura-cadenas-2')
+  revalidatePath('/catalogo')
+  return r
+}
+
+/** Paso 2 · cola IA solo para filas con `homolog_final_status = GRAY_IA_QUEUED` y `ai_required`. */
+export async function runScrappingHomologationGrayIaAction(): Promise<
+  { ok: true; summary: HomologGrayIaSummary } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const r = await processHomologationGrayIaQueue(gate.admin)
+  if (!r.ok) return r
+  revalidatePath('/captura-cadenas-2')
+  revalidatePath('/catalogo')
+  return r
+}
+
+/** Feedback usuario (penalty_delta negativo penaliza casos similares en corridas futuras del motor DB). */
+export async function recordHomologationUserFeedbackAction(input: {
+  scrappingId: string
+  reasonCode: string
+  penaltyDelta: number
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+  return recordHomologationUserFeedbackRpc(editor.admin, input)
+}
+
+/** Totales para UI: pending global, cola IA gris, revisión humana USER_REVIEW. */
+export async function getScrappingHomologationDashboardAction(): Promise<
+  | { ok: true; pendingAny: number; grayIaQueued: number; userReview: number }
+  | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const a = gate.admin
+  const [p1, p2, p3] = await Promise.all([
+    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('catalog_match_status', 'pending'),
+    a
+      .from('scrapping')
+      .select('id', { count: 'exact', head: true })
+      .eq('homolog_final_status', 'GRAY_IA_QUEUED')
+      .eq('ai_required', true),
+    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('homolog_final_status', 'USER_REVIEW'),
+  ])
+  if (p1.error || p2.error || p3.error) {
+    return { ok: false, error: 'No se pudo leer el estado de homologación.' }
+  }
+  return {
+    ok: true,
+    pendingAny: p1.count ?? 0,
+    grayIaQueued: p2.count ?? 0,
+    userReview: p3.count ?? 0,
   }
 }
 
@@ -1624,7 +1713,7 @@ export async function cancelScrappingSimilarityBulkJobAction(input: {
   return { ok: true }
 }
 
-/** Grilla paso 2: filas globales `pending` para revisión manual de similitud. */
+/** Grilla paso 2: solo filas `homolog_final_status = USER_REVIEW` (filtro humano final). */
 export async function listScrappingSimilarityReviewPageAction(input: {
   page: number
 }): Promise<
@@ -1643,7 +1732,7 @@ export async function listScrappingSimilarityReviewPageAction(input: {
     const { data, error, count } = await editor.admin
       .from('scrapping')
       .select('*', { count: 'exact' })
-      .eq('catalog_match_status', 'pending')
+      .eq('homolog_final_status', 'USER_REVIEW')
       .order('id', { ascending: true })
       .range(from, to)
 

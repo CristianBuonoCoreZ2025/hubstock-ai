@@ -1,5 +1,8 @@
 /**
- * Etapa C: umbrales configurables para homologación scrapping (paso 2).
+ * Umbrales configurables para homologación scrapping (paso 2).
+ *
+ * Motor alternativo (weights S_global, GAP, penalizaciones): definir `SCRAPPING_USE_ENGINE_VNEXT=1`
+ * y revisar `engine-vnext/decide-scrapping-similarity-vnext.ts`.
  */
 
 import { RETAIL_COMPOSITE_THRESHOLDS } from '@/lib/retail-association'
@@ -53,4 +56,27 @@ export function scrappingSimilarityDecisionThresholds(): {
       0.25,
     ),
   }
+}
+
+/**
+ * Si está activo, un candidato que el motor base marcaría como `link` pasa primero por IA;
+ * si la IA responde `same_product: false`, no se vincula y la fila queda en revisión con puntajes guardados.
+ * Variable: SCRAPPING_SIMILARITY_IA_VALIDATE_AUTOLINK
+ */
+export function scrappingSimilarityIaValidateBeforeAutolink(): boolean {
+  const v = process.env.SCRAPPING_SIMILARITY_IA_VALIDATE_AUTOLINK?.trim().toLowerCase()
+  return v === '1' || v === 'true' || v === 'yes'
+}
+
+/**
+ * No llamar a la IA si el mejor puntaje base está por debajo de este umbral (el caso ya va a producto nuevo).
+ * Por defecto = ambiguousMin del proyecto (misma fuente que SCRAPPING_SIMILARITY_AMBIGUOUS_MIN).
+ */
+export function scrappingSimilarityIaInvokeMinBaseScore(ambiguousMinFallback: number): number {
+  return envFloat(
+    'SCRAPPING_SIMILARITY_IA_MIN_BASE_SCORE_TO_CALL',
+    ambiguousMinFallback,
+    0.05,
+    0.95,
+  )
 }

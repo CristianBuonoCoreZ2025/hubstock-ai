@@ -10,7 +10,7 @@ export type SimilarityBulkJobProgress = {
   total: number
   processed: number
   autoLinked: number
-  autoLinkedByIa: number
+  iaHintsStored: number
   autoPendingNew: number
   leftForReview: number
   failed: number
@@ -42,7 +42,7 @@ export function createSimilarityBulkJob(total: number): SimilarityBulkJobProgres
     total,
     processed: 0,
     autoLinked: 0,
-    autoLinkedByIa: 0,
+    iaHintsStored: 0,
     autoPendingNew: 0,
     leftForReview: 0,
     failed: 0,
@@ -65,7 +65,7 @@ export function patchSimilarityBulkJob(
       SimilarityBulkJobProgress,
       | 'processed'
       | 'autoLinked'
-      | 'autoLinkedByIa'
+      | 'iaHintsStored'
       | 'autoPendingNew'
       | 'leftForReview'
       | 'failed'

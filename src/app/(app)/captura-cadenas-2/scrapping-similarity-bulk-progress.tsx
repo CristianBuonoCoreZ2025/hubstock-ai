@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import type { ScrappingSimilarityPrepSummary } from '@/app/actions/retail-scrapping'
 
 export type SimilarityBulkProgressState = {
   /** purge = limpiar scrapping ya homologado; homologate = pasada de similitud */
@@ -11,7 +12,8 @@ export type SimilarityBulkProgressState = {
   processed: number
   purgedDuplicates: number
   autoLinked: number
-  autoLinkedByIa?: number
+  /** Filas donde se guardó hint IA sin autovínculo */
+  iaHintsStored?: number
   autoPendingNew: number
   leftForReview: number
   failed: number
@@ -22,6 +24,9 @@ export type ScrappingSimilarityBulkProgressProps = {
   /** Epoch ms cuando empezó esta pasada (cliente); muestra tiempo transcurrido */
   bulkSessionStartedAtMs?: number | null
   onSkipToReview?: () => void
+  /** Resumen motor base (antes de aplicar vínculos); null si no se cargó */
+  prepSummary?: ScrappingSimilarityPrepSummary | null
+  prepSummaryLoading?: boolean
 }
 
 function formatElapsedDuration(ms: number): string {
@@ -38,6 +43,8 @@ export function ScrappingSimilarityBulkProgress({
   progress,
   bulkSessionStartedAtMs,
   onSkipToReview,
+  prepSummary = null,
+  prepSummaryLoading = false,
 }: ScrappingSimilarityBulkProgressProps) {
   const {
     step,
@@ -45,7 +52,7 @@ export function ScrappingSimilarityBulkProgress({
     processed,
     purgedDuplicates,
     autoLinked,
-    autoLinkedByIa = 0,
+    iaHintsStored = 0,
     autoPendingNew,
     leftForReview,
     failed,
@@ -94,10 +101,88 @@ export function ScrappingSimilarityBulkProgress({
           <p className="mt-1 max-w-lg text-sm text-muted-foreground">
             {isPurge ?
               'Quitando filas de scrapping que ya tienen vínculo en el catálogo (misma cadena + referencia). No se tocan maestros ni vínculos.'
-            : 'Procesando en el servidor; la barra se actualiza cada pocos segundos. Si ya corriste esta pasada, podés ir directo a la grilla.'}
+            : 'Procesando en el servidor; la barra se actualiza cada pocos segundos. Si ya corriste esta pasada, puedes ir directo a la grilla.'}
           </p>
         </div>
       </div>
+
+      {!isPurge ?
+        <div className="w-full max-w-xl rounded-lg border border-border bg-background/90 px-4 py-3 text-left text-sm shadow-sm">
+          <p className="font-semibold text-foreground">Vista previa · motor base (sin aplicar aún)</p>
+          {prepSummaryLoading ?
+            <p className="mt-2 flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+              Consultando la base y estimando desglose…
+            </p>
+          : prepSummary ?
+            <>
+              <p className="mt-2 tabular-nums text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {prepSummary.totalPending.toLocaleString('es-CL')}
+                </span>{' '}
+                fila(s){' '}
+                <span className="text-muted-foreground">
+                  pending
+                  {prepSummary.rowsAnalyzed > 0 && prepSummary.rowsAnalyzed !== prepSummary.totalPending ?
+                    ` · analizadas para estimación: ${prepSummary.rowsAnalyzed.toLocaleString('es-CL')}`
+                  : null}
+                </span>
+              </p>
+              {prepSummary.prepSliceError ?
+                <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{prepSummary.prepSliceError}</p>
+              : (
+                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs tabular-nums sm:grid-cols-3">
+                  <li>
+                    Autovínculo estimado:{' '}
+                    <span className="font-medium text-foreground">
+                      {prepSummary.estimatedAutoLink.toLocaleString('es-CL')}
+                    </span>
+                  </li>
+                  <li>
+                    Producto nuevo estimado:{' '}
+                    <span className="font-medium text-foreground">
+                      {prepSummary.estimatedAutoPendingNew.toLocaleString('es-CL')}
+                    </span>
+                  </li>
+                  <li>
+                    Revisión estimada:{' '}
+                    <span className="font-medium text-foreground">
+                      {prepSummary.estimatedNeedsReview.toLocaleString('es-CL')}
+                    </span>
+                  </li>
+                  {prepSummary.iaEnabled ?
+                    <li className="col-span-2 sm:col-span-3">
+                      Alcance IA (si la pasada sigue activa): hasta{' '}
+                      <span className="font-medium text-foreground">
+                        {prepSummary.estimatedIaInvocations.toLocaleString('es-CL')}
+                      </span>{' '}
+                      fila(s) podrían llamar al modelo · tope por corrida:{' '}
+                      {prepSummary.iaMaxPerRun.toLocaleString('es-CL')}
+                    </li>
+                  : (
+                    <li className="col-span-2 text-muted-foreground sm:col-span-3">IA desactivada o sin API key.</li>
+                  )}
+                  {prepSummary.fastBaseRpc ?
+                    <li className="col-span-2 text-muted-foreground sm:col-span-3">
+                      Corte en base (máx. score RPC):{' '}
+                      <span className="font-medium text-foreground">
+                        {prepSummary.fastBaseRpc.conservativeNoIaByCompositeCeil.toLocaleString('es-CL')}
+                      </span>{' '}
+                      fila(s) quedan por debajo del piso IA incluso con la cota 0.42×RPC+0.58 · máx. RPC{' '}
+                      {prepSummary.fastBaseRpc.maxTopRpc.toFixed(3)} · mín. RPC{' '}
+                      {prepSummary.fastBaseRpc.minTopRpc.toFixed(3)} · filas puntuadas:{' '}
+                      {prepSummary.fastBaseRpc.rowsScored.toLocaleString('es-CL')}
+                    </li>
+                  : null}
+                </ul>
+              )}
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{prepSummary.disclaimer}</p>
+            </>
+          : (
+            <p className="mt-2 text-xs text-muted-foreground">No hay resumen cargado.</p>
+          )}
+        </div>
+      : null}
 
       <div className="w-full max-w-xl space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm tabular-nums">
@@ -151,11 +236,11 @@ export function ScrappingSimilarityBulkProgress({
         </div>
       : (
         <div
-          className={`grid w-full max-w-xl gap-3 ${autoLinkedByIa > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
+          className={`grid w-full max-w-xl gap-3 ${iaHintsStored > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
         >
           <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
-          {autoLinkedByIa > 0 ?
-            <StatCard label="Vía IA" value={autoLinkedByIa} tone="emerald" />
+          {iaHintsStored > 0 ?
+            <StatCard label="Sugerencias IA guardadas" value={iaHintsStored} tone="sky" />
           : null}
           <StatCard label="Producto nuevo" value={autoPendingNew} tone="amber" />
           <StatCard label="Para revisar" value={leftForReview} tone="sky" />

@@ -10,10 +10,13 @@ import {
   getScrappingSimilarityBulkConfigAction,
   getScrappingSimilarityBulkJobProgressAction,
   getScrappingSimilarityCandidatesAction,
+  getScrappingSimilarityPrepSummaryAction,
   listScrappingSimilarityReviewPageAction,
   processScrappingSimilarityBulkBatchAction,
+  recordHomologationUserFeedbackAction,
   rejectScrappingSimilarityToPendingNewBatchAction,
   startScrappingSimilarityBulkJobAction,
+  type ScrappingSimilarityPrepSummary,
 } from '@/app/actions/retail-scrapping'
 import {
   ScrappingSimilarityBulkProgress,
@@ -43,6 +46,23 @@ const FOOTER_ACTION_BTN = 'h-9 min-w-[280px] shrink-0'
 const CANDIDATE_PREFETCH_CONCURRENCY = 6
 const APPLY_BATCH_SIZE = 120
 
+function formatSimilarityScore(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  return value.toFixed(4)
+}
+
+function shortUuid(id: string | null | undefined): string {
+  const s = id?.trim()
+  if (!s) return '—'
+  return `${s.slice(0, 8)}…`
+}
+
+function sameProductLabel(v: boolean | null | undefined): string {
+  if (v === true) return 'Sí'
+  if (v === false) return 'No'
+  return 'Sin declarar'
+}
+
 type ModalPhase = 'bulk' | 'review' | 'empty'
 
 const BULK_POLL_MS = 2000
@@ -53,7 +73,7 @@ const EMPTY_BULK_PROGRESS: SimilarityBulkProgressState = {
   processed: 0,
   purgedDuplicates: 0,
   autoLinked: 0,
-  autoLinkedByIa: 0,
+  iaHintsStored: 0,
   autoPendingNew: 0,
   leftForReview: 0,
   failed: 0,
@@ -88,6 +108,8 @@ export function ScrappingSimilarityReviewModal({
   const [bulkProgress, setBulkProgress] = useState<SimilarityBulkProgressState>(EMPTY_BULK_PROGRESS)
   const [bulkError, setBulkError] = useState<string | null>(null)
   const [bulkSessionStartedAtMs, setBulkSessionStartedAtMs] = useState<number | null>(null)
+  const [prepSummary, setPrepSummary] = useState<ScrappingSimilarityPrepSummary | null>(null)
+  const [prepSummaryLoading, setPrepSummaryLoading] = useState(false)
 
   const [candidatesCache, setCandidatesCache] = useState<Record<string, ScrappingSimilarityManualCandidate[]>>({})
   const [candBusyByRow, setCandBusyByRow] = useState<Record<string, boolean>>({})
@@ -125,6 +147,8 @@ export function ScrappingSimilarityReviewModal({
     setPendingRejects({})
     setBulkProgress(EMPTY_BULK_PROGRESS)
     setBulkError(null)
+    setPrepSummary(null)
+    setPrepSummaryLoading(false)
     setPhase('bulk')
     bulkAbortRef.current = false
     bulkJobIdRef.current = null
@@ -231,8 +255,8 @@ export function ScrappingSimilarityReviewModal({
 
       if (acc.processed > 0) {
         const iaPart =
-          (acc.autoLinkedByIa ?? 0) > 0 ?
-            ` (${(acc.autoLinkedByIa ?? 0).toLocaleString('es-CL')} vía IA)`
+          (acc.iaHintsStored ?? 0) > 0 ?
+            ` (${(acc.iaHintsStored ?? 0).toLocaleString('es-CL')} con sugerencia IA para revisión)`
           : ''
         toast.success(
           `Paso 2: ${acc.autoLinked.toLocaleString('es-CL')} vinculada(s)${iaPart}, ${acc.autoPendingNew.toLocaleString('es-CL')} a producto nuevo, ${acc.leftForReview.toLocaleString('es-CL')} para tu revisión.`,
@@ -267,17 +291,27 @@ export function ScrappingSimilarityReviewModal({
     setBulkError(null)
     setBulkProgress(EMPTY_BULK_PROGRESS)
     setBulkSessionStartedAtMs(Date.now())
+    setPrepSummary(null)
+    setPrepSummaryLoading(true)
 
-    const countR = await countScrappingSimilarityPendingAction()
-    if (!countR.ok) {
-      setBulkError(countR.error)
-      toast.error(countR.error)
+    const summaryR = await getScrappingSimilarityPrepSummaryAction()
+    setPrepSummaryLoading(false)
+    if (summaryR.ok) {
+      setPrepSummary(summaryR.summary)
+    } else {
+      setPrepSummary(null)
+      setBulkError(summaryR.error)
+      toast.error(summaryR.error)
       setPhase('review')
       await loadPage(0)
       return
     }
 
-    const total = countR.total
+    const countR = await countScrappingSimilarityPendingAction()
+    const total = countR.ok ? countR.total : summaryR.summary.totalPending
+    if (!countR.ok) {
+      toast.message('No se pudo refrescar el total exacto; se usa el valor del resumen en base.')
+    }
     if (total === 0) {
       setPhase('empty')
       return
@@ -301,7 +335,7 @@ export function ScrappingSimilarityReviewModal({
         const s = r.stats
         acc.processed += s.processed
         acc.autoLinked += s.autoLinked
-        acc.autoLinkedByIa = (acc.autoLinkedByIa ?? 0) + s.autoLinkedByIa
+        acc.iaHintsStored = (acc.iaHintsStored ?? 0) + s.iaHintsStored
         acc.autoPendingNew += s.autoPendingNew
         acc.leftForReview += s.leftForReview
         acc.failed += s.failed
@@ -324,6 +358,21 @@ export function ScrappingSimilarityReviewModal({
     setBulkError(null)
     setBulkProgress(EMPTY_BULK_PROGRESS)
     setBulkSessionStartedAtMs(Date.now())
+    setPrepSummary(null)
+    setPrepSummaryLoading(true)
+
+    const summaryR = await getScrappingSimilarityPrepSummaryAction()
+    setPrepSummaryLoading(false)
+    if (summaryR.ok) {
+      setPrepSummary(summaryR.summary)
+    } else {
+      setPrepSummary(null)
+      setBulkError(summaryR.error)
+      toast.error(summaryR.error)
+      setPhase('review')
+      await loadPage(0)
+      return
+    }
 
     const startR = await startScrappingSimilarityBulkJobAction()
     if (!startR.ok) {
@@ -361,7 +410,7 @@ export function ScrappingSimilarityReviewModal({
         const job = pr.job
         acc.processed = job.processed
         acc.autoLinked = job.autoLinked
-        acc.autoLinkedByIa = job.autoLinkedByIa
+        acc.iaHintsStored = job.iaHintsStored
         acc.autoPendingNew = job.autoPendingNew
         acc.leftForReview = job.leftForReview
         acc.failed = job.failed
@@ -490,6 +539,16 @@ export function ScrappingSimilarityReviewModal({
         }
         rejectsApplied += r.applied
         for (const f of r.failed) rejectFailedIds.add(f.scrappingId)
+        const okInBatch = batch.filter((id) => !(r.failed ?? []).some((f) => f.scrappingId === id))
+        await Promise.all(
+          okInBatch.map((id) =>
+            recordHomologationUserFeedbackAction({
+              scrappingId: id,
+              reasonCode: 'USER_MARK_PENDING_NEW',
+              penaltyDelta: -0.06,
+            }),
+          ),
+        )
       }
 
       const okLinkIds = linkEntries.map((x) => x.scrappingId).filter((id) => !linkFailedIds.has(id))
@@ -541,7 +600,8 @@ export function ScrappingSimilarityReviewModal({
     total > 0 ?
       <>
         {' '}
-        · {total.toLocaleString('es-CL')} fila(s) <span className="font-mono">pending</span>
+        · {total.toLocaleString('es-CL')} fila(s) en revisión humana{' '}
+        <span className="font-mono">USER_REVIEW</span>
         {pendingTotal > 0 ?
           <>
             {' '}
@@ -581,8 +641,9 @@ export function ScrappingSimilarityReviewModal({
         <DialogHeader className="shrink-0">
           <DialogTitle>Paso 2 · Similitud (revisión manual)</DialogTitle>
           <DialogDescription>
-            Pasada automática sobre filas pending tras el paso 1. Si ya corriste esta pasada, usá «Ir a revisión manual»
-            para saltar el análisis masivo e ir directo al combo por fila. Los vínculos quedan por cadena + ref del retail.
+            Primero ejecutá el motor DB y la cola IA desde la pantalla principal (Captura cadenas 2). Esta grilla
+            lista solo filas <span className="font-mono">USER_REVIEW</span>: homologá candidato, elegí otro maestro o
+            marcá producto nuevo; la pasada masiva legacy sigue disponible en la barra de progreso si la usás.
           </DialogDescription>
         </DialogHeader>
 
@@ -595,6 +656,8 @@ export function ScrappingSimilarityReviewModal({
             progress={bulkProgress}
             bulkSessionStartedAtMs={bulkSessionStartedAtMs}
             onSkipToReview={() => void skipBulkToReview()}
+            prepSummary={prepSummary}
+            prepSummaryLoading={prepSummaryLoading}
           />
         : phase === 'empty' ?
           <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
@@ -732,22 +795,26 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
               <th className="px-2 py-2">Producto (scrapping)</th>
               <th className="px-2 py-2">Marca</th>
               <th className="px-2 py-2 tabular-nums">Precio</th>
-              <th className="min-w-[280px] px-2 py-2">Maestro sugerido</th>
+              <th className="px-2 py-2 tabular-nums">Score base</th>
+              <th className="px-2 py-2 tabular-nums">GAP</th>
+              <th className="px-2 py-2 tabular-nums">Score IA</th>
+              <th className="px-2 py-2">Estado</th>
+              <th className="min-w-[240px] px-2 py-2">Maestro sugerido</th>
               <th className="w-[140px] px-2 py-2">Cola</th>
             </tr>
           </thead>
           <tbody>
             {gridBusy ?
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
                   <Loader2 className="mx-auto mb-2 size-6 animate-spin" aria-hidden />
                   Cargando listado…
                 </td>
               </tr>
             : rows.length === 0 ?
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
-                  No hay filas pending para revisar en esta página.
+                <td colSpan={9} className="px-3 py-8 text-center text-muted-foreground">
+                  No hay filas en revisión humana (<span className="font-mono">USER_REVIEW</span>) en esta página.
                 </td>
               </tr>
             : (
@@ -763,6 +830,19 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
                 const hasCand = cand !== undefined && cand.length > 0
                 const noCandLoaded = cand !== undefined && cand.length === 0
                 const inLinkQueue = !isReject && draftSel != null && hasCand
+                const hint = row.similarity_ia_hint
+                const showHintPanel =
+                  (hint &&
+                    (hint.base_best_score != null ||
+                      Boolean(hint.base_best_catalog_product_id?.trim()) ||
+                      Boolean(hint.ai_hint?.trim()) ||
+                      hint.ai_score != null ||
+                      hint.same_product != null ||
+                      Boolean(hint.reason?.trim()))) ||
+                  row.base_score != null ||
+                  row.ai_score != null
+                const blockedAutolink =
+                  hint?.ia_rejected_pair === true && hint?.ia_context === 'autolink_validation'
 
                 return (
                   <tr
@@ -777,9 +857,109 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
                   >
                     <td className="max-w-[min(28vw,380px)] px-2 py-2 align-top text-foreground">
                       <span className="line-clamp-4">{row.product_name}</span>
+                      {showHintPanel ?
+                        <div className="mt-1.5 space-y-1 rounded border border-sky-500/30 bg-sky-500/10 px-2 py-1.5 text-[11px] leading-snug text-sky-900 dark:text-sky-100">
+                          {(row.base_score != null || row.base_gap != null || row.base_decision) ?
+                            <p className="tabular-nums">
+                              <span className="font-semibold">Motor DB (columnas): </span>
+                              score {formatSimilarityScore(
+                                row.base_score != null ? Number(row.base_score) : null,
+                              )}
+                              {' · '}
+                              GAP {formatSimilarityScore(row.base_gap != null ? Number(row.base_gap) : null)}
+                              {row.base_decision ?
+                                <>
+                                  {' · '}
+                                  {row.base_decision}
+                                </>
+                              : null}
+                            </p>
+                          : null}
+                          {(row.ai_score != null || row.ai_decision) ?
+                            <p className="tabular-nums">
+                              <span className="font-semibold">IA (columnas): </span>
+                              score {formatSimilarityScore(
+                                row.ai_score != null ? Number(row.ai_score) : null,
+                              )}
+                              {row.ai_decision ?
+                                <>
+                                  {' · '}
+                                  {row.ai_decision}
+                                </>
+                              : null}
+                            </p>
+                          : null}
+                          {hint ?
+                            <>
+                              {(hint.base_best_score != null ||
+                                hint.base_second_score != null ||
+                                hint.base_gap != null ||
+                                hint.base_best_catalog_product_id) ?
+                                <p className="tabular-nums">
+                                  <span className="font-semibold">Motor base (hint): </span>
+                                  mejor {formatSimilarityScore(hint.base_best_score)}
+                                  {' · '}
+                                  2.º {formatSimilarityScore(hint.base_second_score)}
+                                  {' · '}
+                                  brecha {formatSimilarityScore(hint.base_gap)}
+                                  {' · '}
+                                  maestro top {shortUuid(hint.base_best_catalog_product_id ?? undefined)}
+                                </p>
+                              : null}
+                              {(hint.ai_score != null || hint.same_product != null || hint.reason?.trim()) ?
+                                <p className="tabular-nums">
+                                  <span className="font-semibold">IA (hint): </span>
+                                  score {formatSimilarityScore(hint.ai_score)}
+                                  {' · '}
+                                  mismo producto {sameProductLabel(hint.same_product)}
+                                  {hint.reason?.trim() ?
+                                    <>
+                                      {' · '}
+                                      <span className="text-foreground/90">{hint.reason.trim()}</span>
+                                    </>
+                                  : null}
+                                </p>
+                              : null}
+                              {blockedAutolink ?
+                                <p className="font-medium text-amber-900 dark:text-amber-200">
+                                  El motor base habilitaba autovínculo; la IA lo frenó para revisión humana.
+                                </p>
+                              : null}
+                              {hint.ai_hint?.trim() ?
+                                <p>
+                                  <span className="font-semibold">Nota IA: </span>
+                                  {hint.ai_hint.trim()}
+                                </p>
+                              : null}
+                            </>
+                          : null}
+                        </div>
+                      : null}
                     </td>
                     <td className="px-2 py-2 align-top text-muted-foreground">{row.brand?.trim() || '—'}</td>
                     <td className="px-2 py-2 align-top tabular-nums text-foreground">{priceTxt}</td>
+                    <td className="px-2 py-2 align-top tabular-nums text-xs text-muted-foreground">
+                      {formatSimilarityScore(
+                        row.base_score != null && row.base_score !== '' ?
+                          Number(row.base_score)
+                        : null,
+                      )}
+                    </td>
+                    <td className="px-2 py-2 align-top tabular-nums text-xs text-muted-foreground">
+                      {formatSimilarityScore(
+                        row.base_gap != null && row.base_gap !== '' ? Number(row.base_gap) : null,
+                      )}
+                    </td>
+                    <td className="px-2 py-2 align-top tabular-nums text-xs text-muted-foreground">
+                      {formatSimilarityScore(
+                        row.ai_score != null && row.ai_score !== '' ? Number(row.ai_score) : null,
+                      )}
+                    </td>
+                    <td className="max-w-[140px] px-2 py-2 align-top text-[11px] leading-tight text-muted-foreground">
+                      <span className="font-mono text-[10px] text-foreground/90">
+                        {row.homolog_final_status?.trim() || '—'}
+                      </span>
+                    </td>
                     <td className="px-2 py-2 align-top">
                       {candLoading ?
                         <p className="flex items-center gap-2 text-xs text-muted-foreground">
