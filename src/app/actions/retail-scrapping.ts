@@ -1512,8 +1512,6 @@ async function assertNoRunningScrappingForHomologation(): Promise<
   return { ok: true, admin: editor.admin }
 }
 
-export type { ScrappingSimilarityPrepSummary }
-
 /** Desglose estimado (motor base + alcance IA) antes de la pasada masiva paso 2. */
 export async function getScrappingSimilarityPrepSummaryAction(): Promise<
   { ok: true; summary: ScrappingSimilarityPrepSummary } | { ok: false; error: string }

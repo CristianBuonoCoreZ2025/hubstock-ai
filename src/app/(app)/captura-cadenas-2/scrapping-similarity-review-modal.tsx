@@ -16,8 +16,8 @@ import {
   recordHomologationUserFeedbackAction,
   rejectScrappingSimilarityToPendingNewBatchAction,
   startScrappingSimilarityBulkJobAction,
-  type ScrappingSimilarityPrepSummary,
 } from '@/app/actions/retail-scrapping'
+import type { ScrappingSimilarityPrepSummary } from '@/server/retail/scrapping/scrapping-similarity-bulk-summary'
 import {
   ScrappingSimilarityBulkProgress,
   type SimilarityBulkProgressState,

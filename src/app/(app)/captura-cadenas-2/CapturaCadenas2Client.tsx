@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2 } from 'lucide-react'
+import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Sparkles, Square, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   barridoApiBarridoContext,
@@ -1593,14 +1593,15 @@ export function CapturaCadenas2Client() {
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {paso2Destacado ? 'Paso 2 · Disponible' : 'Paso 2 · Sin cola'}
             </p>
-            <p className="mt-1 text-sm font-medium text-foreground">Similitud inteligente</p>
+            <p className="mt-1 text-sm font-medium text-foreground">Homologación inteligente</p>
             <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Solo sobre lo que quedó pending tras el paso 1. Pasada automática con progreso; después revisás casos
-              ambiguos y aplicás la cola.
+              Calcula scores base, evalúa zona gris con IA y revisa casos ambiguos.
             </p>
+
+            {/* Botón 1: Calcular scores base */}
             <Button
               type="button"
-              variant="outline"
+              variant="default"
               className="mt-4 h-9 w-full"
               disabled={
                 homologacionBloqueada ||
@@ -1608,75 +1609,72 @@ export function CapturaCadenas2Client() {
                 fullSweepBusy ||
                 runsBusy ||
                 scrappingPendingHomologacion === null ||
-                scrappingPendingHomologacion === 0
+                scrappingPendingHomologacion === 0 ||
+                homologDbBusy
               }
-              title={
-                homologacionBloqueada ?
-                  'Finalizá el scrapping (ninguna corrida en curso) antes de homologar.'
-                : scrappingPendingHomologacion === 0 ?
-                  'No hay filas pending en scrapping.'
-                : 'Abrir grilla de revisión por similitud'
-              }
-              onClick={() => setScrappingSimilarityModalOpen(true)}
+              onClick={() => void onRunHomologDbMotor()}
             >
-              <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
-              Revisar similitud
+              {homologDbBusy ?
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              : <Play className="mr-2 h-4 w-4" aria-hidden />}
+              1. Calcular scores base
             </Button>
-            <div className="mt-2 flex flex-col gap-2">
+
+            {/* Botón 2: IA zona gris (solo si hay casos en zona gris) */}
+            {homologDash && homologDash.grayIaQueued > 0 ?
               <Button
                 type="button"
                 variant="secondary"
-                className="h-9 w-full shrink-0"
+                className="mt-2 h-9 w-full shrink-0"
                 disabled={
                   homologacionBloqueada ||
                   exactMatchBusy ||
                   fullSweepBusy ||
                   runsBusy ||
-                  scrappingPendingHomologacion === null ||
-                  scrappingPendingHomologacion === 0 ||
-                  homologDbBusy
-                }
-                title="Calcula scores y bandas en Postgres (todas las filas pending)"
-                onClick={() => void onRunHomologDbMotor()}
-              >
-                {homologDbBusy ?
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                : null}
-                Motor DB (scores)
-              </Button>
-              <Button
-                type="button"
-                variant="secondary"
-                className="h-9 w-full shrink-0"
-                disabled={
-                  homologacionBloqueada ||
-                  exactMatchBusy ||
-                  fullSweepBusy ||
-                  runsBusy ||
-                  homologDash === null ||
-                  homologDash.grayIaQueued === 0 ||
                   homologIaBusy
                 }
-                title="Solo filas en zona gris con IA configurada"
                 onClick={() => void onRunHomologGrayIa()}
               >
                 {homologIaBusy ?
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                : null}
-                IA zona gris
+                : <Sparkles className="mr-2 h-4 w-4" aria-hidden />}
+                2. Evaluar zona gris con IA ({homologDash.grayIaQueued.toLocaleString('es-CL')})
               </Button>
-            </div>
-            {homologDash ?
-              <p className="mt-2 text-center text-[10px] leading-snug text-muted-foreground tabular-nums">
-                Pending total {homologDash.pendingAny.toLocaleString('es-CL')} · Gris IA{' '}
-                {homologDash.grayIaQueued.toLocaleString('es-CL')} · Revisión{' '}
-                {homologDash.userReview.toLocaleString('es-CL')}
+            : null}
+
+            {/* Botón 3: Revisar casos (solo si hay casos para revisión) */}
+            {homologDash && homologDash.userReview > 0 ?
+              <Button
+                type="button"
+                variant="outline"
+                className="mt-2 h-9 w-full shrink-0"
+                disabled={
+                  homologacionBloqueada ||
+                  exactMatchBusy ||
+                  fullSweepBusy ||
+                  runsBusy
+                }
+                onClick={() => setScrappingSimilarityModalOpen(true)}
+              >
+                <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
+                3. Revisar casos ({homologDash.userReview.toLocaleString('es-CL')})
+              </Button>
+            : null}
+
+            {/* Estado cuando no hay nada pendiente */}
+            {homologDash && homologDash.pendingAny === 0 ?
+              <p className="mt-3 text-center text-xs text-muted-foreground">
+                No hay productos pendientes de homologación.
               </p>
             : null}
-            {paso2Destacado ?
-              <p className="mt-2 text-center text-[10px] text-muted-foreground">
-                Paginación dentro del modal (100 filas por página).
-              </p>
+
+            {/* Contadores */}
+            {homologDash ?
+              <div className="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[10px] leading-snug text-muted-foreground tabular-nums">
+                <span>Total: {homologDash.pendingAny.toLocaleString('es-CL')}</span>
+                <span>· Gris: {homologDash.grayIaQueued.toLocaleString('es-CL')}</span>
+                <span>· Revisar: {homologDash.userReview.toLocaleString('es-CL')}</span>
+              </div>
             : null}
           </div>
 

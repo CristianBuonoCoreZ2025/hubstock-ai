@@ -76,9 +76,9 @@ on conflict (component_code) do nothing;
 
 insert into public.homologation_score_bands (band_code, min_score, max_score, base_decision, ai_required, user_required, active)
 values
-  ('AUTO_HIGH', 0.90, 1.0000001, 'AUTO_TENTATIVE', false, false, true),
-  ('GRAY_IA', 0.70, 0.8999999, 'GRAY', true, false, true),
-  ('NEW_LOW', 0.0, 0.6999999, 'PENDING_NEW', false, false, true)
+  ('AUTO_HIGH', 0.90, 1.00, 'AUTO_TENTATIVE', false, false, true),
+  ('GRAY_IA', 0.70, 0.89, 'GRAY', true, false, true),
+  ('NEW_LOW', 0.0, 0.69, 'PENDING_NEW', false, false, true)
 on conflict (band_code) do nothing;
 
 insert into public.homologation_penalty_rules (rule_code, penalty, hard_conflict, description, active)
@@ -389,7 +389,7 @@ begin
 
     v_score1 := greatest(0::numeric, least(1::numeric, v_score1));
     v_score2 := greatest(0::numeric, least(1::numeric, v_score2));
-    v_gap := v_score1 - v_score2;
+    v_gap := greatest(0::numeric, v_score1 - v_score2);
     v_base := v_score1;
     v_best := c1.catalog_product_id;
     v_second := c2.catalog_product_id;

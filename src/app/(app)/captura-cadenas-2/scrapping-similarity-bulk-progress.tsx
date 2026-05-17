@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import type { ScrappingSimilarityPrepSummary } from '@/app/actions/retail-scrapping'
+import type { ScrappingSimilarityPrepSummary } from '@/server/retail/scrapping/scrapping-similarity-bulk-summary'
 
 export type SimilarityBulkProgressState = {
   /** purge = limpiar scrapping ya homologado; homologate = pasada de similitud */
