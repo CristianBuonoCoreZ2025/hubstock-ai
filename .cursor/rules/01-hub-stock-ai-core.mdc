@@ -41,6 +41,29 @@ El sistema separa estas áreas:
 14. Mantener UI profesional, limpia, rápida y consistente.
 15. No degradar menú, modo claro, modo oscuro, layout principal ni estilos existentes.
 
+## Principio de Trazabilidad
+
+La base de datos es el sistema de verdad para TODO: datos, errores y cambios.
+
+### app_logs — Errores técnicos
+- Todo error del servidor se guarda en `app_logs` con contexto (rowId, code, stack)
+- Permite medir: cuántos errores, dónde, con qué frecuencia
+- Datos para decidir: ¿vale la pena IA vs programador tradicional?
+
+### app_changelog — Cambios de código
+- Todo cambio arquitectónico se registra en `app_changelog`
+- Versión, módulo, descripción, archivos afectados, commit hash
+- Permite auditar qué se tocó, cuándo y por qué
+
+### Métricas que se obtienen
+```sql
+-- Errores por módulo esta semana
+SELECT module, COUNT(*) FROM app_logs WHERE level = 'error' AND created_at > now() - interval '7 days' GROUP BY module;
+
+-- Cambios por módulo
+SELECT module, COUNT(*) FROM app_changelog GROUP BY module ORDER BY 2 DESC;
+```
+
 ## Regla BEVECOHO / Base Primero
 
 **B**elleza | **E**ficiencia | **V**elocidad | **E**xactitud | **C**onsistencia | **O**rganización | **H**omogeneidad
