@@ -20,11 +20,8 @@ import {
 import {
   applyScrappingExactCatalogMatchesAction,
   forceFinalizeScrappingRunForRetailAction,
-  getCatalogSectionsWithCategoriesAction,
   getScrappingHomologacionPendingCountAction,
   getScrappingHomologationDashboardAction,
-  runScrappingHomologationCreateNewBatchAction,
-  type CatalogSectionWithCategories,
   type ScrappingExactCatalogMatchStats,
 } from '@/app/actions/retail-scrapping'
 import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
@@ -558,60 +555,6 @@ export function CapturaCadenas2Client() {
     }
   }
 
-  async function loadCatalogSections() {
-    if (catalogSections.length > 0) return
-    const r = await getCatalogSectionsWithCategoriesAction()
-    if (r.ok) setCatalogSections(r.sections)
-  }
-
-  async function handleCreateNewBatch() {
-    if (createNewBusy || homologacionBloqueada) return
-    setCreateNewBusy(true)
-    setCreateNewResult(null)
-    try {
-      let afterId: string | null = null
-      let totalCreated = 0
-      let totalProcessed = 0
-      let totalSkipped = 0
-      let hasMore = true
-      const batchSize = 10
-      const fallbackCategoryId = createNewFallbackCatId.trim() && createNewFallbackCatId !== '__auto__' ? createNewFallbackCatId.trim() : null
-
-      while (hasMore) {
-        const r = await runScrappingHomologationCreateNewBatchAction({ afterId, batchSize, fallbackCategoryId })
-        if (!r.ok) {
-          toast.error(r.error)
-          return
-        }
-        totalCreated += r.result.stats.created
-        totalProcessed += r.result.stats.processed
-        totalSkipped += r.result.stats.skipped
-        hasMore = r.result.hasMore
-        afterId = r.result.lastId
-
-        if (hasMore) {
-          setCreateNewResult(
-            `Procesados ${totalProcessed.toLocaleString('es-CL')} · Creados ${totalCreated.toLocaleString('es-CL')}...`,
-          )
-        }
-      }
-
-      const skippedNote = totalSkipped > 0 ? ` (${totalSkipped.toLocaleString('es-CL')} sin categoría)` : ''
-      const msg =
-        totalCreated > 0 ?
-          `${totalCreated.toLocaleString('es-CL')} producto(s) nuevo(s) creado(s)${skippedNote}.`
-        : totalProcessed > 0 ?
-          `Ninguno creado. ${totalProcessed.toLocaleString('es-CL')} procesados${skippedNote}. Elegí una categoría de respaldo y reintentá.`
-        : 'No había productos pendientes para crear.'
-
-      if (totalCreated > 0) toast.success(msg)
-      else toast.warning(msg)
-      setCreateNewResult(msg)
-      await refreshScrappingPendingHomologacion()
-    } finally {
-      setCreateNewBusy(false)
-    }
-  }
 
   async function startBarridoFreshFromModal() {
     if (!selectedRetailId) return
@@ -971,7 +914,7 @@ export function CapturaCadenas2Client() {
           }
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Plan del barrido</DialogTitle>
             {selectedRetailName ?
@@ -1038,7 +981,7 @@ export function CapturaCadenas2Client() {
                 {barridoPlanCtx.runningForRetail ?
                   <Button
                     type="button"
-                    className={TOOLBAR_BTN}
+                    className={`btn-run ${TOOLBAR_BTN}`}
                     disabled={barridoPlanActionBusy || fullSweepBusy}
                     onClick={() => {
                       const r = barridoPlanCtx.runningForRetail
@@ -1057,8 +1000,7 @@ export function CapturaCadenas2Client() {
                 {barridoPlanCtx.latestRun && barridoPlanCtx.latestRun.failedPages > 0 ?
                   <Button
                     type="button"
-                    variant="secondary"
-                    className={TOOLBAR_BTN}
+                    className={`btn-warn ${TOOLBAR_BTN}`}
                     disabled={
                       barridoPlanActionBusy ||
                       fullSweepBusy ||
@@ -1078,8 +1020,9 @@ export function CapturaCadenas2Client() {
 
                 <Button
                   type="button"
-                  variant={barridoPlanCtx.runningForRetail ? 'outline' : 'default'}
-                  className={TOOLBAR_BTN}
+                  className={`${
+                    barridoPlanCtx.runningForRetail ? 'btn-warn' : 'btn-run'
+                  } ${TOOLBAR_BTN}`}
                   disabled={
                     barridoPlanActionBusy ||
                     fullSweepBusy ||
@@ -1102,8 +1045,7 @@ export function CapturaCadenas2Client() {
 
                 <Button
                   type="button"
-                  variant="outline"
-                  className={TOOLBAR_BTN}
+                  className={`btn-danger ${TOOLBAR_BTN}`}
                   disabled={
                     purgeIdleBusy ||
                     barridoPlanActionBusy ||
@@ -1132,8 +1074,7 @@ export function CapturaCadenas2Client() {
                   </p>
                   <Button
                     type="button"
-                    variant="outline"
-                    className={TOOLBAR_BTN}
+                    className={`btn-amber ${TOOLBAR_BTN}`}
                     disabled={
                       forceFinalizeBusy ||
                       fullSweepBusy ||
@@ -1167,8 +1108,7 @@ export function CapturaCadenas2Client() {
           <DialogFooter className="sm:justify-start">
             <Button
               type="button"
-              variant="ghost"
-              className={TOOLBAR_BTN}
+              className={`btn-close ${TOOLBAR_BTN}`}
               disabled={barridoPlanActionBusy || forceFinalizeBusy}
               onClick={() => {
                 setBarridoPlanOpen(false)
@@ -1417,8 +1357,7 @@ export function CapturaCadenas2Client() {
           {runsBusy ? <p className="text-sm text-muted-foreground">Cargando corridas…</p> : null}
           <Button
             type="button"
-            variant="secondary"
-            className={TOOLBAR_BTN}
+            className={`btn-danger ${TOOLBAR_BTN}`}
             onClick={() => void onDetenerScrapping()}
             disabled={!canStopScrapping || stopBusy || runsBusy}
             title="Cancela corridas en estado «running» y marca la cola pendiente o en proceso como fallida"
@@ -1433,7 +1372,7 @@ export function CapturaCadenas2Client() {
           </Button>
           <Button
             type="button"
-            className={TOOLBAR_BTN}
+            className={`btn-run ${TOOLBAR_BTN}`}
             onClick={() => void openBarridoPlanModal()}
             disabled={
               fullSweepBusy || barridoPlanActionBusy || runsBusy || retailsBusy || !selectedRetailId
@@ -1564,9 +1503,9 @@ export function CapturaCadenas2Client() {
           </p>
         : null}
 
-        <div className="mt-4 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid items-stretch gap-4 md:grid-cols-3">
           {/* ━━━ PASO 1: Coincidencias exactas ━━━ */}
-          <div className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+          <div className="group relative flex h-full flex-col overflow-hidden rounded-xl border border-sky-500/20 bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
             <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 to-blue-500" />
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 shadow-md shadow-sky-500/20">
@@ -1582,8 +1521,8 @@ export function CapturaCadenas2Client() {
             </p>
             <Button
               type="button"
-              variant="secondary"
-              className="mt-4 h-9 w-full shrink-0 gap-2"
+              variant="default"
+              className="btn-sky mt-auto h-9 w-full shrink-0 gap-2"
               onClick={() => void onApplyExactCatalogMatches()}
               disabled={homologacionBloqueada || exactMatchBusy}
               title={
@@ -1601,17 +1540,17 @@ export function CapturaCadenas2Client() {
 
           {/* ━━━ PASO 2: Homologación inteligente ━━━ */}
           <div
-            className={`group relative flex flex-col overflow-hidden rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${
+            className={`group relative flex h-full flex-col overflow-hidden rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${
               paso2Destacado
                 ? 'border-primary/30 bg-card shadow-primary/5'
                 : 'border-dashed border-border bg-card opacity-90'
             }`}
           >
-            <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary to-violet-500 ${paso2Destacado ? 'opacity-100' : 'opacity-30'}`} />
+            <div className={`absolute inset-x-0 top-0 h-1 bg-linear-to-r from-primary to-violet-500 ${paso2Destacado ? 'opacity-100' : 'opacity-30'}`} />
             <div className="flex items-center gap-3">
               <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
                 paso2Destacado
-                  ? 'bg-gradient-to-br from-primary to-violet-600 shadow-primary/25'
+                  ? 'bg-linear-to-br from-primary to-violet-600 shadow-primary/25'
                   : 'bg-muted shadow-none'
               }`}>
                 <Sparkles className={`h-4.5 w-4.5 ${paso2Destacado ? 'text-white' : 'text-muted-foreground'}`} />
@@ -1623,58 +1562,12 @@ export function CapturaCadenas2Client() {
                 <p className="text-sm font-bold tracking-tight text-foreground">Homologación inteligente</p>
               </div>
             </div>
-            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
               Clasificación automática de productos con asistencia de IA y revisión de casos dudosos.
             </p>
 
-            <Button
-              type="button"
-              variant="default"
-              className="mt-4 h-9 w-full gap-2 bg-gradient-to-r from-primary to-violet-600 shadow-md shadow-primary/20 transition-shadow hover:shadow-lg hover:shadow-primary/30"
-              disabled={
-                homologacionBloqueada ||
-                exactMatchBusy ||
-                fullSweepBusy ||
-                runsBusy ||
-                scrappingPendingHomologacion === null ||
-                scrappingPendingHomologacion === 0
-              }
-              onClick={() => setHomologWizardOpen(true)}
-            >
-              <Zap className="h-4 w-4" aria-hidden />
-              Iniciar homologación
-            </Button>
-
-            {homologDash && homologDash.userReview > 0 ?
-              <Button
-                type="button"
-                variant="outline"
-                className="mt-2 h-9 w-full shrink-0 gap-2"
-                disabled={homologacionBloqueada}
-                onClick={() => setScrappingSimilarityModalOpen(true)}
-              >
-                <LayoutGrid className="h-4 w-4" aria-hidden />
-                Revisar casos ({homologDash.userReview.toLocaleString('es-CL')})
-              </Button>
-            : null}
-
-            {homologDash && homologDash.pendingAny === 0 && homologDash.userReview === 0 && homologDash.pendingNew === 0 ?
-              <p className="mt-3 text-center text-xs text-muted-foreground">
-                Todos los productos están procesados.
-              </p>
-            : homologDash && homologDash.pendingAny === 0 && (homologDash.userReview > 0 || homologDash.pendingNew > 0) ?
-              <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-                {homologDash.userReview > 0 && homologDash.pendingNew > 0 ?
-                  `Hay ${homologDash.userReview} para revisar manualmente y ${homologDash.pendingNew} para crear como nuevos.`
-                : homologDash.userReview > 0 ?
-                  `Hay ${homologDash.userReview} producto(s) esperando revisión manual. Usá «Revisar casos» para clasificarlos.`
-                : `Hay ${homologDash.pendingNew} producto(s) listos para crear en catálogo. Usá el Paso 3.`
-                }
-              </p>
-            : null}
-
             {homologDash ?
-              <div className="mt-3 flex flex-wrap justify-center gap-2">
+              <div className="mb-2 mt-3 flex flex-1 flex-wrap content-start gap-2">
                 <span className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-primary/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-primary">
                   {homologDash.pendingAny.toLocaleString('es-CL')} <span className="font-normal opacity-70">pending</span>
                 </span>
@@ -1683,8 +1576,8 @@ export function CapturaCadenas2Client() {
                 </span>
                 <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
                   homologDash.userReview > 0
-                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                    : 'border-sky-500/15 bg-sky-500/5 text-sky-700'
+                    ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                    : 'border-violet-500/15 bg-violet-500/5 text-violet-700'
                 }`}>
                   {homologDash.userReview.toLocaleString('es-CL')} <span className="font-normal opacity-70">revisar</span>
                 </span>
@@ -1696,22 +1589,53 @@ export function CapturaCadenas2Client() {
                   {homologDash.pendingNew.toLocaleString('es-CL')} <span className="font-normal opacity-70">nuevos</span>
                 </span>
               </div>
-            : null}
+            : <div className="flex-1" />}
+
+            {homologDash && homologDash.userReview > 0 ?
+              <Button
+                type="button"
+                variant="default"
+                className="btn-violet-alt mt-auto h-9 w-full shrink-0 gap-2"
+                disabled={homologacionBloqueada}
+                onClick={() => setScrappingSimilarityModalOpen(true)}
+              >
+                <LayoutGrid className="h-4 w-4" aria-hidden />
+                Revisar {homologDash.userReview.toLocaleString('es-CL')} caso(s)
+              </Button>
+            :
+              <Button
+                type="button"
+                variant="default"
+                className="btn-violet mt-auto h-9 w-full gap-2"
+                disabled={
+                  homologacionBloqueada ||
+                  exactMatchBusy ||
+                  fullSweepBusy ||
+                  runsBusy ||
+                  scrappingPendingHomologacion === null ||
+                  scrappingPendingHomologacion === 0
+                }
+                onClick={() => setHomologWizardOpen(true)}
+              >
+                <Zap className="h-4 w-4" aria-hidden />
+                Iniciar homologación
+              </Button>
+            }
           </div>
 
           {/* ━━━ PASO 3: Nuevos en catálogo ━━━ */}
-          <div className={`group relative flex flex-col overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all ${
+          <div className={`group relative flex h-full flex-col overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all ${
             (homologDash?.pendingNew ?? 0) > 0
               ? 'border-emerald-500/30 opacity-100'
               : 'border-dashed border-border opacity-90'
           }`}>
-            <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 to-teal-500 ${
+            <div className={`absolute inset-x-0 top-0 h-1 bg-linear-to-r from-emerald-400 to-teal-500 ${
               (homologDash?.pendingNew ?? 0) > 0 ? 'opacity-100' : 'opacity-30'
             }`} />
             <div className="flex items-center gap-3">
               <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
                 (homologDash?.pendingNew ?? 0) > 0
-                  ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/25'
+                  ? 'bg-linear-to-br from-emerald-500 to-teal-600 shadow-emerald-500/25'
                   : 'bg-muted shadow-none'
               }`}>
                 <PackagePlus className={`h-4.5 w-4.5 ${
@@ -1725,80 +1649,41 @@ export function CapturaCadenas2Client() {
                 <p className="text-sm font-bold tracking-tight text-foreground">Nuevos en catálogo</p>
               </div>
             </div>
-            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Productos sin homólogo: alta en maestro con sección y categoría. Taxonomía reutilizable.
+            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+              Productos sin homólogo: alta en maestro con sección y categoría, imagen y taxonomía automática.
             </p>
 
-            {homologDash?.pendingNew !== undefined && homologDash.pendingNew > 0 ?
-              <p className="mt-2 text-xs tabular-nums text-emerald-700 dark:text-emerald-300">
-                {homologDash.pendingNew.toLocaleString('es-CL')} pendiente(s)
-              </p>
-            : homologDash?.pendingNew !== undefined ?
-              <p className="mt-2 text-xs tabular-nums text-muted-foreground">Sin productos pendientes</p>
-            : null}
-
-            {/* Selector de categoría fallback — visible cuando hay pendingNew */}
-            {(homologDash?.pendingNew ?? 0) > 0 ?
-              <div className="mt-3 space-y-1">
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Categoría de respaldo (opcional)
-                </p>
-                <p className="text-[11px] leading-relaxed text-muted-foreground">
-                  Si la taxonomía del retailer no resuelve automáticamente, los productos se crearán bajo esta categoría.
-                </p>
-                <Select
-                  value={createNewFallbackCatId}
-                  onValueChange={setCreateNewFallbackCatId}
-                  onOpenChange={(open) => { if (open) void loadCatalogSections() }}
-                >
-                  <SelectTrigger className="h-8 w-full text-xs">
-                    <SelectValue placeholder="Auto (recomendado)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__auto__" className="text-xs text-muted-foreground">Auto (recomendado)</SelectItem>
-                    {catalogSections.map((sec) => (
-                      <div key={sec.sectionId}>
-                        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          {sec.sectionName}
-                        </div>
-                        {sec.categories.map((cat) => (
-                          <SelectItem key={cat.id} value={cat.id} className="pl-4 text-xs">
-                            {cat.name}
-                          </SelectItem>
-                        ))}
-                      </div>
-                    ))}
-                  </SelectContent>
-                </Select>
+            {homologDash ?
+              <div className="mt-3 mb-2 flex flex-1 flex-wrap content-start gap-2">
+                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                  homologDash.pendingNew > 0
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700'
+                }`}>
+                  {homologDash.pendingNew.toLocaleString('es-CL')} <span className="font-normal opacity-70">nuevos</span>
+                </span>
+                {createNewResult &&
+                  <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-normal tabular-nums text-muted-foreground">
+                    {createNewResult}
+                  </span>
+                }
               </div>
-            : null}
-
-            {createNewResult ?
-              <p className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">{createNewResult}</p>
-            : null}
+            : <div className="flex-1" />}
 
             <Button
               type="button"
               variant="default"
-              className={`mt-4 h-9 w-full gap-2 ${
-                (homologDash?.pendingNew ?? 0) > 0
-                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 shadow-md shadow-emerald-500/20 transition-shadow hover:shadow-lg hover:shadow-emerald-500/30'
-                  : ''
-              }`}
+              className="btn-emerald mt-auto h-9 w-full gap-2"
               disabled={
                 createNewBusy ||
                 homologacionBloqueada ||
                 homologDash === null ||
                 (homologDash?.pendingNew ?? 0) === 0
               }
-              onClick={() => void handleCreateNewBatch()}
+              onClick={() => setCreateNewModalOpen(true)}
             >
-              {createNewBusy ?
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
-              : <PackagePlus className="h-4 w-4" aria-hidden />}
-              {createNewBusy ?
-                'Creando productos...'
-              : (homologDash?.pendingNew ?? 0) > 0 ?
+              <PackagePlus className="h-4 w-4" aria-hidden />
+              {(homologDash?.pendingNew ?? 0) > 0 ?
                 `Crear ${homologDash!.pendingNew.toLocaleString('es-CL')} producto(s) nuevos`
               : 'Sin pendientes'}
             </Button>
@@ -1840,6 +1725,16 @@ export function CapturaCadenas2Client() {
         onApplied={async () => {
           await refreshScrappingPendingHomologacion()
           await reloadRuns()
+        }}
+      />
+
+      <CreateNewProductsModal
+        open={createNewModalOpen}
+        onOpenChange={setCreateNewModalOpen}
+        pendingNew={homologDash?.pendingNew ?? 0}
+        onFinished={async () => {
+          setCreateNewResult(null)
+          await refreshScrappingPendingHomologacion()
         }}
       />
     </div>

@@ -285,7 +285,7 @@ export function ProductDialog({
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
-      <DialogContent>
+      <DialogContent className="modal-lg">
         <DialogHeader>
           <DialogTitle>
             {isEditing ? 'Editar en inventario' : 'Agregar al inventario (catálogo)'}

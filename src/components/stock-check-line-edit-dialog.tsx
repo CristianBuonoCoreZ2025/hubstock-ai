@@ -319,7 +319,7 @@ export function StockCheckLineEditDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[min(90vh,calc(100vh-2rem))] max-w-lg overflow-y-auto gap-4"
+        className="modal-lg"
         showCloseButton
       >
         <DialogHeader>

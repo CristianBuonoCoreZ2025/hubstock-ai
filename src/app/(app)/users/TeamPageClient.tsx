@@ -371,7 +371,7 @@ export function TeamPageClient({
       </div>
 
       <Dialog open={manageOpen} onOpenChange={setManageOpen}>
-        <DialogContent className="sm:max-w-md" showCloseButton>
+        <DialogContent className="modal-lg" showCloseButton>
           <DialogHeader>
             <DialogTitle>Hogares enlazados a la invitación</DialogTitle>
             <DialogDescription>

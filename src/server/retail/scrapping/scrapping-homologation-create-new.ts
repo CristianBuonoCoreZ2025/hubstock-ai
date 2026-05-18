@@ -16,16 +16,19 @@ import { normalizeRetailCapturedInput } from '@/server/retail/normalize/normaliz
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { resolveCatalogCategoryIdForScrappingRow } from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
+import logger from '@/lib/logger'
 
 /* ── Tipos ── */
 
 export type CreateNewProductsSummary = {
   processed: number
   created: number
+  recovered: number
   skipped: number
   mediaOk: number
   mediaFailed: number
   errors: number
+  lastError?: string | null
 }
 
 export type CreateNewProductsBatchResult = {
@@ -48,11 +51,15 @@ async function downloadAndUploadProductImage(
   sourceUrl: string,
 ): Promise<{ ok: true; publicUrl: string } | { ok: false }> {
   try {
+    logger.debug({ catalogProductId, sourceUrl }, '[create-new] descargando imagen')
     const resp = await fetch(sourceUrl, {
       signal: AbortSignal.timeout(15_000),
       headers: { 'User-Agent': 'HubStockAI/1.0' },
     })
-    if (!resp.ok) return { ok: false }
+    if (!resp.ok) {
+      logger.warn({ catalogProductId, sourceUrl, status: resp.status }, '[create-new] imagen no disponible')
+      return { ok: false }
+    }
 
     const contentType = resp.headers.get('content-type') ?? 'image/jpeg'
     const buffer = Buffer.from(await resp.arrayBuffer())
@@ -68,7 +75,10 @@ async function downloadAndUploadProductImage(
     const { error: upErr } = await admin.storage
       .from(bucket)
       .upload(path, buffer, { contentType, upsert: true })
-    if (upErr) return { ok: false }
+    if (upErr) {
+      logger.error({ catalogProductId, path, err: upErr.message }, '[create-new] error subiendo imagen al storage')
+      return { ok: false }
+    }
 
     const { data: urlData } = admin.storage.from(bucket).getPublicUrl(path)
     const publicUrl = urlData?.publicUrl
@@ -85,7 +95,8 @@ async function downloadAndUploadProductImage(
     if (mediaErr && !isUniqueViolation(mediaErr)) return { ok: false }
 
     return { ok: true, publicUrl }
-  } catch {
+  } catch (e) {
+    logger.error({ catalogProductId, err: e instanceof Error ? e.message : String(e) }, '[create-new] excepción en descarga/subida de imagen')
     return { ok: false }
   }
 }
@@ -129,7 +140,10 @@ export async function processHomologationCreateNewBatch(
   }
 
   const { data: rows, error } = await q
-  if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  if (error) {
+    logger.error({ err: error.message, code: error.code }, '[create-new] error consultando scrapping pending_new')
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  }
 
   const list = (rows ?? []) as Array<{
     id: string
@@ -144,84 +158,130 @@ export async function processHomologationCreateNewBatch(
     image_url: string | null
   }>
 
-  const stats: CreateNewProductsSummary = {
-    processed: 0, created: 0, skipped: 0, mediaOk: 0, mediaFailed: 0, errors: 0,
+  logger.info({ total: totalRemaining, batchSize: list.length, afterId: input.afterId ?? null }, '[create-new] iniciando lote')
+
+  /* ── Pre-caché: taxonomía y fallback resueltos una sola vez fuera del loop ── */
+
+  // Fallback category/section (una query, compartida por todas las filas del lote)
+  type CatSection = { id: string; section_id: string }
+  let fallbackCat: CatSection | null = null
+  const overrideCatId = input.fallbackCategoryId?.trim() || null
+  {
+    const fbQ = overrideCatId ?
+      admin.from('categories').select('id, section_id').eq('id', overrideCatId).maybeSingle()
+    : admin.from('categories').select('id, section_id').order('sort_order', { ascending: true }).limit(1).maybeSingle()
+    const { data } = await fbQ
+    fallbackCat = (data as CatSection | null)
   }
-  let lastId: string | null = null
+
+  // Caché local de category → section_id para evitar queries repetidas dentro del loop
+  const sectionCache = new Map<string, string>()
+
+  // Caché de sort_order por category_id: arranca en -1, se incrementa localmente sin re-query
+  const sortOrderCache = new Map<string, number>()
+
+  // Resolver taxonomía para todas las filas en paralelo (resolveCatalogCategoryIdForScrappingRow ya cachea internamente)
+  const resolvedCategoryIds = await Promise.all(
+    list.map(row => resolveCatalogCategoryIdForScrappingRow(admin, {
+      retailer: row.retailer,
+      sections: row.sections,
+      categories: row.categories,
+    }))
+  )
+
+  // Caché de taxonomía por clave de fila
+  const taxonomyCache = new Map<string, string | null>()
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i]
+    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
+    if (!taxonomyCache.has(key)) {
+      taxonomyCache.set(key, resolvedCategoryIds[i] ?? null)
+    }
+  }
+
+  const uniqueCategoryIds = [...new Set(resolvedCategoryIds.filter((id): id is string => id !== null))]
+
+  // Precachear section_id para todas las categorías encontradas (una query con .in)
+  if (uniqueCategoryIds.length > 0) {
+    const { data: catRows } = await admin
+      .from('categories')
+      .select('id, section_id')
+      .in('id', uniqueCategoryIds)
+    for (const c of (catRows ?? []) as CatSection[]) {
+      sectionCache.set(c.id, c.section_id)
+    }
+
+    // Precachear sort_order máximo por categoría (una query con .in)
+    const { data: sortRows } = await admin
+      .from('catalog_products')
+      .select('category_id, sort_order')
+      .in('category_id', uniqueCategoryIds)
+      .order('sort_order', { ascending: false })
+    const seen = new Set<string>()
+    for (const r of (sortRows ?? []) as { category_id: string; sort_order: number }[]) {
+      if (!seen.has(r.category_id)) {
+        sortOrderCache.set(r.category_id, r.sort_order)
+        seen.add(r.category_id)
+      }
+    }
+  }
+
+  /* ── Preparar trabajos: asignar sort_order localmente antes de lanzar en paralelo ── */
+
+  type RowJob = {
+    row: typeof list[number]
+    finalCategoryId: string
+    finalSectionId: string
+    sortOrder: number
+    validPrice: number | null
+    sourceUrl: string | null
+    norm: ReturnType<typeof normalizeRetailCapturedInput>
+  }
+
+  const jobs: RowJob[] = []
+  const skippedIds: string[] = []
 
   for (const row of list) {
-    lastId = row.id
-    stats.processed += 1
-
-    try {
-      // 1. Resolver categoría del catálogo
-      const categoryId = await resolveCatalogCategoryIdForScrappingRow(admin, {
-        retailer: row.retailer,
-        sections: row.sections,
-        categories: row.categories,
-      })
-
-      let sectionId: string | null = null
-
-      if (categoryId) {
-        // Obtener section_id de la categoría
-        const { data: catRow } = await admin
-          .from('categories')
-          .select('id, section_id')
-          .eq('id', categoryId)
-          .maybeSingle()
-        sectionId = (catRow as { section_id: string } | null)?.section_id ?? null
+    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
+    const categoryId = taxonomyCache.get(key) ?? null
+    let finalCategoryId = categoryId
+    let finalSectionId = categoryId ? (sectionCache.get(categoryId) ?? null) : null
+    if (!finalCategoryId || !finalSectionId) {
+      if (fallbackCat) {
+        finalCategoryId = finalCategoryId ?? fallbackCat.id
+        finalSectionId = finalSectionId ?? fallbackCat.section_id
       }
+    }
+    if (!finalCategoryId || !finalSectionId) {
+      logger.warn({ rowId: row.id, retailer: row.retailer, sections: row.sections, categories: row.categories }, '[create-new] sin categoría resuelta — omitido')
+      skippedIds.push(row.id)
+      continue
+    }
+    const currentMax = sortOrderCache.get(finalCategoryId) ?? -1
+    const sortOrder = currentMax + 1
+    sortOrderCache.set(finalCategoryId, sortOrder)
 
-      // Si no encontró taxonomía: usar override del usuario o primera categoría disponible
-      let finalCategoryId = categoryId
-      let finalSectionId = sectionId
-      if (!finalCategoryId || !finalSectionId) {
-        const overrideCatId = input.fallbackCategoryId?.trim() || null
-        const fbQ = overrideCatId ?
-          admin.from('categories').select('id, section_id').eq('id', overrideCatId).maybeSingle()
-        : admin.from('categories').select('id, section_id').order('sort_order', { ascending: true }).limit(1).maybeSingle()
-        const { data: fallback } = await fbQ
-        if (fallback) {
-          finalCategoryId = finalCategoryId ?? (fallback as { id: string }).id
-          finalSectionId = finalSectionId ?? (fallback as { section_id: string }).section_id
-        }
-      }
+    const priceNum = typeof row.price === 'string' ? Number(row.price) : (row.price ?? 0)
+    const validPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
+    const norm = normalizeRetailCapturedInput({
+      retailer: row.retailer, external_ref: row.external_ref, source_url: row.product_url,
+      title: row.product_name, brand: row.brand, price: validPrice, unit_price: null,
+      category_hint: [row.sections, row.categories].filter(Boolean).join(' > '),
+      description_hint: null, image_url: null, raw_data: null,
+    })
+    jobs.push({ row, finalCategoryId, finalSectionId, sortOrder, validPrice, sourceUrl: row.product_url?.trim() || null, norm })
+  }
 
-      if (!finalCategoryId || !finalSectionId) {
-        stats.skipped += 1
-        continue
-      }
+  /* ── Procesar todas las filas en paralelo ── */
 
-      // 2. Calcular sort_order
-      const { data: maxData } = await admin
-        .from('catalog_products')
-        .select('sort_order')
-        .eq('category_id', finalCategoryId)
-        .order('sort_order', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-      const sortOrder = ((maxData as { sort_order: number } | null)?.sort_order ?? -1) + 1
+  type JobResult = { created: number; recovered: number; skipped: number; errors: number; lastError?: string; imageTask?: { catalogProductId: string; imageUrl: string } }
 
-      // 3. Normalizar datos
-      const priceNum = typeof row.price === 'string' ? Number(row.price) : (row.price ?? 0)
-      const validPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
+  const jobResults = await Promise.allSettled(
+    jobs.map(async (job): Promise<JobResult> => {
+      const { row, finalCategoryId, finalSectionId, sortOrder, validPrice, sourceUrl, norm } = job
+      const now = new Date().toISOString()
 
-      const norm = normalizeRetailCapturedInput({
-        retailer: row.retailer,
-        external_ref: row.external_ref,
-        source_url: row.product_url,
-        title: row.product_name,
-        brand: row.brand,
-        price: validPrice,
-        unit_price: null,
-        category_hint: [row.sections, row.categories].filter(Boolean).join(' > '),
-        description_hint: null,
-        image_url: null,
-        raw_data: null,
-      })
-
-      // 4. Crear producto en catalog_products
+      // INSERT catalog_products
       const { data: created, error: createErr } = await admin
         .from('catalog_products')
         .insert({
@@ -236,74 +296,108 @@ export async function processHomologationCreateNewBatch(
           sort_order: sortOrder,
           active: true,
           source_system: 'scrapping_homologation',
-          source_product_url: row.product_url?.trim() || null,
+          source_product_url: sourceUrl,
         } as never)
         .select('id')
         .single()
 
-      if (createErr || !created) {
-        stats.errors += 1
-        continue
-      }
+      let catalogProductId: string | null = null
+      let isRecovered = false
 
-      const catalogProductId = (created as { id: string }).id
-      stats.created += 1
-
-      // 5. Crear link retail + alias
-      const { error: linkErr } = await admin.from('catalog_retail_links').upsert(
-        {
-          retailer: row.retailer,
-          external_ref: row.external_ref,
-          catalog_product_id: catalogProductId,
-          updated_at: new Date().toISOString(),
-        } as never,
-        { onConflict: 'retailer,external_ref' },
-      )
-      if (linkErr) {
-        stats.errors += 1
-      }
-
-      // Alias
-      const aliasNorm = normalizeCatalogAlias(row.product_name)
-      if (aliasNorm.length >= 2) {
-        const ins = await admin.from('catalog_product_aliases').insert({
-          catalog_product_id: catalogProductId,
-          alias_normalized: aliasNorm,
-        } as never)
-        if (ins.error && !isUniqueViolation(ins.error)) {
-          // non-fatal
+      if (createErr) {
+        if (isUniqueViolation(createErr) && sourceUrl) {
+          const { data: existing } = await admin
+            .from('catalog_products').select('id').eq('source_product_url', sourceUrl).maybeSingle()
+          if (existing) {
+            catalogProductId = (existing as { id: string }).id
+            isRecovered = true
+            logger.info({ rowId: row.id, catalogProductId, url: sourceUrl }, '[create-new] producto ya existía — vinculando')
+          }
         }
-      }
-
-      // 6. Intentar descargar imagen (primero desde image_url capturado, luego inferir desde product_url)
-      const imageUrl = row.image_url?.trim() || inferImageUrlFromProductUrl(row.product_url)
-      if (imageUrl) {
-        const img = await downloadAndUploadProductImage(admin, catalogProductId, imageUrl)
-        if (img.ok) {
-          stats.mediaOk += 1
-        } else {
-          stats.mediaFailed += 1
+        if (!catalogProductId) {
+          logger.error({ rowId: row.id, code: createErr.code, err: createErr.message }, '[create-new] error insertando catalog_products')
+          return { created: 0, recovered: 0, skipped: 0, errors: 1, lastError: createErr.message }
         }
+      } else if (!created) {
+        return { created: 0, recovered: 0, skipped: 0, errors: 1, lastError: 'No se obtuvo el producto creado' }
       } else {
-        stats.mediaFailed += 1
+        catalogProductId = (created as { id: string }).id
+        logger.info({ rowId: row.id, catalogProductId, name: row.product_name }, '[create-new] producto creado')
       }
 
-      // 7. Marcar fila de scrapping como procesada
-      await admin
-        .from('scrapping')
-        .update({
+      // Link + alias + scrapping update en paralelo
+      const aliasNorm = normalizeCatalogAlias(row.product_name)
+      const [linkRes] = await Promise.all([
+        admin.from('catalog_retail_links').upsert(
+          { retailer: row.retailer, external_ref: row.external_ref, catalog_product_id: catalogProductId, updated_at: now } as never,
+          { onConflict: 'retailer,external_ref' },
+        ),
+        aliasNorm.length >= 2
+          ? admin.from('catalog_product_aliases').insert({ catalog_product_id: catalogProductId, alias_normalized: aliasNorm } as never)
+          : Promise.resolve({ error: null }),
+        admin.from('scrapping').update({
           catalog_match_status: 'matched',
           matched_catalog_product_id: catalogProductId,
-          catalog_matched_at: new Date().toISOString(),
-          homolog_final_status: 'CREATED_NEW',
-          homolog_reviewed_at: new Date().toISOString(),
-        } as never)
-        .eq('id', row.id)
+          catalog_matched_at: now,
+          homolog_final_status: isRecovered ? 'MATCHED_EXISTING' : 'CREATED_NEW',
+          homolog_reviewed_at: now,
+        } as never).eq('id', row.id),
+      ])
 
-    } catch {
+      if (linkRes.error) {
+        logger.error({ rowId: row.id, catalogProductId, err: linkRes.error.message }, '[create-new] error insertando catalog_retail_links')
+      }
+
+      const imageUrl = row.image_url?.trim() || inferImageUrlFromProductUrl(row.product_url)
+      return {
+        created: isRecovered ? 0 : 1,
+        recovered: isRecovered ? 1 : 0,
+        skipped: 0,
+        errors: linkRes.error ? 1 : 0,
+        imageTask: imageUrl ? { catalogProductId, imageUrl } : undefined,
+      }
+    })
+  )
+
+  /* ── Agregar resultados ── */
+
+  const stats: CreateNewProductsSummary = {
+    processed: list.length,
+    created: 0, recovered: 0, skipped: skippedIds.length,
+    mediaOk: 0, mediaFailed: 0, errors: 0,
+  }
+  const lastId = list.length > 0 ? list[list.length - 1].id : null
+  const imageTasks: Array<{ catalogProductId: string; imageUrl: string }> = []
+
+  for (const r of jobResults) {
+    if (r.status === 'rejected') {
       stats.errors += 1
+      stats.lastError = r.reason instanceof Error ? r.reason.message : String(r.reason)
+      logger.error({ err: stats.lastError }, '[create-new] job rechazado inesperadamente')
+      continue
+    }
+    const v = r.value
+    stats.created += v.created
+    stats.recovered += v.recovered
+    stats.errors += v.errors
+    if (v.lastError) stats.lastError = v.lastError
+    if (v.imageTask) imageTasks.push(v.imageTask)
+    else stats.mediaFailed += 1
+  }
+
+  // Imágenes en paralelo al final
+  if (imageTasks.length > 0) {
+    logger.info({ count: imageTasks.length }, '[create-new] descargando imágenes en paralelo')
+    const imgResults = await Promise.allSettled(
+      imageTasks.map(t => downloadAndUploadProductImage(admin, t.catalogProductId, t.imageUrl))
+    )
+    for (const r of imgResults) {
+      if (r.status === 'fulfilled' && r.value.ok) stats.mediaOk += 1
+      else stats.mediaFailed += 1
     }
   }
+
+  logger.info({ ...stats, hasMore: list.length === limit }, '[create-new] lote finalizado')
 
   return {
     ok: true,

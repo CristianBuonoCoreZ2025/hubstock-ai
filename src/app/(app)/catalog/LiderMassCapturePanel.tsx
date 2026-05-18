@@ -373,7 +373,7 @@ export function LiderMassCapturePanel(props: Props) {
       : null}
 
       <Dialog open={groupDialogOpen} onOpenChange={setGroupDialogOpen}>
-        <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Detalle del grupo</DialogTitle>
             <DialogDescription>

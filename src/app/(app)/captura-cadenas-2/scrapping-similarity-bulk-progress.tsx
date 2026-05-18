@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2, Zap, Trash2, Brain, SkipForward } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import { Loader2, Zap, Trash2, Brain } from 'lucide-react'
 import type { ScrappingSimilarityPrepSummary } from '@/server/retail/scrapping/scrapping-similarity-bulk-summary'
 
 export type SimilarityBulkProgressState = {
@@ -23,7 +22,6 @@ export type ScrappingSimilarityBulkProgressProps = {
   progress: SimilarityBulkProgressState
   /** Epoch ms cuando empezó esta pasada (cliente); muestra tiempo transcurrido */
   bulkSessionStartedAtMs?: number | null
-  onSkipToReview?: () => void
   /** Resumen motor base (antes de aplicar vínculos); null si no se cargó */
   prepSummary?: ScrappingSimilarityPrepSummary | null
   prepSummaryLoading?: boolean
@@ -62,7 +60,6 @@ function ShimmerProgressBar({ pct, indeterminate }: { pct: number; indeterminate
 export function ScrappingSimilarityBulkProgress({
   progress,
   bulkSessionStartedAtMs,
-  onSkipToReview,
   prepSummary = null,
   prepSummaryLoading = false,
 }: ScrappingSimilarityBulkProgressProps) {
@@ -106,165 +103,145 @@ export function ScrappingSimilarityBulkProgress({
 
   return (
     <div
-      className="flex min-h-[min(52vh,520px)] flex-1 flex-col items-center justify-center gap-6 rounded-xl border border-border bg-muted/10 px-6 py-10"
+      className="flex flex-1 gap-6 rounded-xl border border-border bg-muted/10 p-8"
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
+      {/* ══ COLUMNA IZQUIERDA: estado + progreso + stats ══ */}
+      <div className="flex flex-1 flex-col justify-between gap-6" style={{ animation: 'bulk-fade-up 0.4s ease-out both' }}>
 
-      {/* ── Header animado ── */}
-      <div className="flex flex-col items-center gap-4 text-center" style={{ animation: 'bulk-fade-up 0.4s ease-out both' }}>
-        <div className="relative flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-violet-600 shadow-lg shadow-primary/25">
-          <div
-            className="absolute inset-0 rounded-2xl bg-primary/40"
-            style={{ animation: 'bulk-pulse-ring 2s ease-in-out infinite' }}
-          />
-          {isPurge
-            ? <Trash2 className="relative size-7 text-white" aria-hidden />
-            : <Zap className="relative size-7 text-white" aria-hidden />
-          }
-        </div>
-        <div>
-          <h3 className="text-lg font-bold tracking-tight text-foreground">
-            {isPurge ? 'Limpiando cola duplicada' : 'Homologación automática'}
-          </h3>
-          <p className="mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
+        {/* Header con icono animado */}
+        <div className="flex items-center gap-4">
+          <div className="relative flex size-14 shrink-0 items-center justify-center rounded-2xl bg-linear-to-br from-primary to-violet-600 shadow-lg shadow-primary/25">
+            <div
+              className="absolute inset-0 rounded-2xl bg-primary/40"
+              style={{ animation: 'bulk-pulse-ring 2s ease-in-out infinite' }}
+            />
             {isPurge
-              ? 'Quitando filas de scrapping que ya tienen vínculo en el catálogo.'
-              : 'Procesando en el servidor. La barra se actualiza cada pocos segundos.'}
+              ? <Trash2 className="relative size-6 text-white" aria-hidden />
+              : <Zap className="relative size-6 text-white" aria-hidden />
+            }
+          </div>
+          <div>
+            <h3 className="text-lg font-bold tracking-tight text-foreground">
+              {isPurge ? 'Limpiando cola duplicada' : 'Homologación automática'}
+            </h3>
+            <p className="mt-0.5 text-sm leading-relaxed text-muted-foreground">
+              {isPurge
+                ? 'Quitando filas de scrapping que ya tienen vínculo en el catálogo.'
+                : 'Procesando en el servidor. La barra se actualiza cada pocos segundos.'}
+            </p>
+          </div>
+        </div>
+
+        {/* Barra de progreso */}
+        <div className="space-y-2" style={{ animation: 'bulk-fade-up 0.4s ease-out 0.1s both' }}>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-sm tabular-nums">
+            <span className="font-bold text-foreground">
+              {isPurge ?
+                purgedDuplicates > 0 ?
+                  `${purgedDuplicates.toLocaleString('es-CL')} duplicada(s) quitada(s)`
+                : 'Revisando scrapping…'
+              : `${displayProcessed.toLocaleString('es-CL')} de ${effectiveTotal.toLocaleString('es-CL')}`}
+            </span>
+            <div className="flex items-center gap-3 text-xs">
+              {!isPurge && elapsedLabel != null ?
+                <span className="font-bold text-foreground tabular-nums">{elapsedLabel}</span>
+              : null}
+              {!isPurge ?
+                <span className="rounded-md bg-primary/10 px-2 py-0.5 font-bold text-primary">{pct}%</span>
+              : null}
+            </div>
+          </div>
+          <ShimmerProgressBar pct={pct} indeterminate={waitingFirstBatch || isPurge} />
+          <p className="text-xs text-muted-foreground">
+            {isPurge ?
+              'Paso 1 de 2 · limpieza automática'
+            : waitingFirstBatch ?
+              'Procesando el primer lote en el servidor…'
+            : remaining > 0 ?
+              `Faltan aprox. ${remaining.toLocaleString('es-CL')} fila(s) por analizar`
+            : 'Finalizando pasada…'}
           </p>
+        </div>
+
+        {/* Stat cards */}
+        <div style={{ animation: 'bulk-fade-up 0.4s ease-out 0.2s both' }}>
+          {isPurge ?
+            <div className="grid grid-cols-1 gap-3">
+              <StatCard label="Quitadas de scrapping" value={purgedDuplicates} tone="muted" />
+            </div>
+          : (
+            <div className={`grid gap-3 ${iaHintsStored > 0 ? 'grid-cols-5' : 'grid-cols-4'}`}>
+              <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
+              {iaHintsStored > 0 ?
+                <StatCard label="Hints IA" value={iaHintsStored} tone="violet" />
+              : null}
+              <StatCard label="Nuevo" value={autoPendingNew} tone="amber" />
+              <StatCard label="Revisar" value={leftForReview} tone="sky" />
+              <StatCard label="Errores" value={failed} tone="muted" />
+            </div>
+          )}
         </div>
       </div>
 
-      {/* ── Vista previa motor base ── */}
+      {/* ══ COLUMNA DERECHA: estimación previa ══ */}
       {!isPurge ?
         <div
-          className="w-full max-w-xl rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm"
-          style={{ animation: 'bulk-fade-up 0.4s ease-out 0.1s both' }}
+          className="w-80 shrink-0 rounded-xl border border-border bg-card px-5 py-5 text-left shadow-sm"
+          style={{ animation: 'bulk-fade-up 0.4s ease-out 0.15s both' }}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 border-b border-border pb-3">
             <Brain className="h-4 w-4 text-muted-foreground" />
             <p className="text-sm font-bold tracking-tight text-foreground">Estimación previa</p>
           </div>
           {prepSummaryLoading ?
-            <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+            <p className="mt-4 flex items-center gap-2 text-xs text-muted-foreground">
               <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
               Analizando productos pendientes…
             </p>
           : prepSummary ?
             <>
-              <p className="mt-2 text-xs tabular-nums text-muted-foreground">
-                <span className="font-bold text-foreground">
+              <p className="mt-3 text-xs tabular-nums text-muted-foreground">
+                <span className="text-2xl font-bold tabular-nums text-foreground">
                   {prepSummary.totalPending.toLocaleString('es-CL')}
                 </span>{' '}
                 producto(s) pendientes
-                {prepSummary.rowsAnalyzed > 0 && prepSummary.rowsAnalyzed !== prepSummary.totalPending ?
-                  <span className="text-muted-foreground/70"> · analizados: {prepSummary.rowsAnalyzed.toLocaleString('es-CL')}</span>
-                : null}
               </p>
               {prepSummary.prepSliceError ?
-                <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{prepSummary.prepSliceError}</p>
+                <p className="mt-3 text-xs text-amber-800 dark:text-amber-200">{prepSummary.prepSliceError}</p>
               : (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-emerald-700">
-                    {prepSummary.estimatedAutoLink.toLocaleString('es-CL')}
-                    <span className="font-normal opacity-70">autovínculo</span>
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-amber-700">
-                    {prepSummary.estimatedAutoPendingNew.toLocaleString('es-CL')}
-                    <span className="font-normal opacity-70">nuevo</span>
-                  </span>
-                  <span className="inline-flex items-center gap-1 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-sky-700">
-                    {prepSummary.estimatedNeedsReview.toLocaleString('es-CL')}
-                    <span className="font-normal opacity-70">revisión</span>
-                  </span>
-                  {prepSummary.iaEnabled ?
-                    <span className="inline-flex items-center gap-1 rounded-lg border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-violet-700">
-                      {prepSummary.estimatedIaInvocations.toLocaleString('es-CL')}
-                      <span className="font-normal opacity-70">IA est.</span>
+                <div className="mt-4 flex flex-col gap-2">
+                  <div className="flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
+                    <span className="text-xs text-emerald-700">Autovínculo</span>
+                    <span className="text-sm font-bold tabular-nums text-emerald-700">{prepSummary.estimatedAutoLink.toLocaleString('es-CL')}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                    <span className="text-xs text-amber-700">Nuevos</span>
+                    <span className="text-sm font-bold tabular-nums text-amber-700">{prepSummary.estimatedAutoPendingNew.toLocaleString('es-CL')}</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-lg border border-sky-500/20 bg-sky-500/10 px-3 py-2">
+                    <span className="text-xs text-sky-700">Para revisión</span>
+                    <span className="text-sm font-bold tabular-nums text-sky-700">{prepSummary.estimatedNeedsReview.toLocaleString('es-CL')}</span>
+                  </div>
+                  <div className={`flex items-center justify-between rounded-lg border px-3 py-2 ${prepSummary.iaEnabled ? 'border-violet-500/20 bg-violet-500/10' : 'border-border bg-muted/40'}`}>
+                    <span className={`text-xs ${prepSummary.iaEnabled ? 'text-violet-700' : 'text-muted-foreground'}`}>
+                      {prepSummary.iaEnabled ? 'Llamadas IA' : 'IA desactivada'}
                     </span>
-                  : (
-                    <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      IA desactivada
-                    </span>
-                  )}
+                    {prepSummary.iaEnabled ?
+                      <span className="text-sm font-bold tabular-nums text-violet-700">{prepSummary.estimatedIaInvocations.toLocaleString('es-CL')}</span>
+                    : null}
+                  </div>
                 </div>
               )}
-              {prepSummary.fastBaseRpc ?
-                <p className="mt-2 text-[11px] tabular-nums leading-snug text-muted-foreground">
-                  {prepSummary.fastBaseRpc.conservativeNoIaByCompositeCeil.toLocaleString('es-CL')} productos no necesitarán IA
-                  · {prepSummary.fastBaseRpc.rowsScored.toLocaleString('es-CL')} analizados
-                </p>
-              : null}
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground/60">{prepSummary.disclaimer}</p>
+              <p className="mt-3 text-[11px] leading-snug text-muted-foreground/60">{prepSummary.disclaimer}</p>
             </>
           : (
-            <p className="mt-2 text-xs text-muted-foreground">El resumen estará disponible una vez se analicen los productos.</p>
+            <p className="mt-4 text-xs text-muted-foreground">El resumen estará disponible una vez se analicen los productos.</p>
           )}
         </div>
       : null}
-
-      {/* ── Barra de progreso ── */}
-      <div className="w-full max-w-xl space-y-2" style={{ animation: 'bulk-fade-up 0.4s ease-out 0.15s both' }}>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm tabular-nums">
-          <span className="font-bold text-foreground">
-            {isPurge ?
-              purgedDuplicates > 0 ?
-                `${purgedDuplicates.toLocaleString('es-CL')} duplicada(s) quitada(s)`
-              : 'Revisando scrapping…'
-            : `${displayProcessed.toLocaleString('es-CL')} de ${effectiveTotal.toLocaleString('es-CL')}`}
-          </span>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-            {!isPurge && elapsedLabel != null ?
-              <span className="text-muted-foreground">
-                <span className="font-bold text-foreground">{elapsedLabel}</span>
-              </span>
-            : null}
-            {!isPurge ?
-              <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-bold text-primary">{pct}%</span>
-            : null}
-          </div>
-        </div>
-        <ShimmerProgressBar pct={pct} indeterminate={waitingFirstBatch || isPurge} />
-        <p className="text-center text-xs text-muted-foreground">
-          {isPurge ?
-            'Paso 1 de 2 · limpieza automática'
-          : waitingFirstBatch ?
-            'Procesando el primer lote en el servidor…'
-          : remaining > 0 ?
-            `Faltan aprox. ${remaining.toLocaleString('es-CL')} fila(s) por analizar`
-          : 'Finalizando pasada…'}
-        </p>
-      </div>
-
-      {/* ── Botón saltar ── */}
-      {onSkipToReview && !isPurge ?
-        <Button type="button" variant="outline" onClick={onSkipToReview} className="gap-2">
-          <SkipForward className="h-4 w-4" />
-          Ir a revisión manual
-        </Button>
-      : null}
-
-      {/* ── Stat cards ── */}
-      <div style={{ animation: 'bulk-fade-up 0.4s ease-out 0.2s both' }} className="w-full max-w-xl">
-        {isPurge ?
-          <div className="grid grid-cols-1 gap-3">
-            <StatCard label="Quitadas de scrapping" value={purgedDuplicates} tone="muted" />
-          </div>
-        : (
-          <div
-            className={`grid gap-3 ${iaHintsStored > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
-          >
-            <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
-            {iaHintsStored > 0 ?
-              <StatCard label="Hints IA" value={iaHintsStored} tone="violet" />
-            : null}
-            <StatCard label="Nuevo" value={autoPendingNew} tone="amber" />
-            <StatCard label="Revisar" value={leftForReview} tone="sky" />
-            <StatCard label="Errores" value={failed} tone="muted" />
-          </div>
-        )}
-      </div>
     </div>
   )
 }

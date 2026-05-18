@@ -42,7 +42,7 @@ import {
 import type { ScrappingProductRow } from '@/server/retail/scrapping/lider-scrapping-service'
 import type { ScrappingSimilarityManualCandidate } from '@/server/retail/scrapping/scrapping-similarity-manual'
 
-const FOOTER_ACTION_BTN = 'h-9 min-w-[280px] shrink-0'
+const FOOTER_ACTION_BTN = 'h-9 shrink-0'
 const CANDIDATE_PREFETCH_CONCURRENCY = 6
 const APPLY_BATCH_SIZE = 120
 
@@ -626,6 +626,26 @@ export function ScrappingSimilarityReviewModal({
       </span>
     : null
 
+  const sharedHeader = (
+    <DialogHeader className="shrink-0">
+      <div className="flex items-center gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-violet-600 shadow-md shadow-primary/20">
+          <ClipboardCheck className="h-4.5 w-4.5 text-white" />
+        </div>
+        <div>
+          <DialogTitle className="text-base font-bold tracking-tight">
+            Revisión de similitud
+          </DialogTitle>
+          <DialogDescription className="text-xs leading-relaxed">
+            {phase === 'bulk' ? 'Pasada automática en curso. Pods saltarte a revisión manual cuando quieras.'
+            : phase === 'empty' ? 'Clasificación completada sin filas pendientes.'
+            : 'Grilla de filas en revisión humana. Homologá candidatos, elegí otro maestro o marcá producto nuevo.'}
+          </DialogDescription>
+        </div>
+      </div>
+    </DialogHeader>
+  )
+
   return (
     <Dialog
       open={open}
@@ -638,44 +658,29 @@ export function ScrappingSimilarityReviewModal({
         showCloseButton={phase !== 'bulk'}
         className="flex max-h-[min(92vh,960px)] min-h-0 w-[min(98vw,1440px)] max-w-[min(98vw,1440px)] flex-col gap-4 overflow-hidden p-6 sm:max-w-[min(98vw,1440px)]"
       >
-        <DialogHeader className="shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-violet-600 shadow-md shadow-primary/20">
-              <ClipboardCheck className="h-4.5 w-4.5 text-white" />
-            </div>
-            <div>
-              <DialogTitle className="text-base font-bold tracking-tight">
-                Revisión de similitud
-              </DialogTitle>
-              <DialogDescription className="text-xs leading-relaxed">
-                Grilla de filas en revisión humana. Homologá candidatos, elegí otro maestro o marcá producto nuevo.
-              </DialogDescription>
-            </div>
-          </div>
-        </DialogHeader>
+        {sharedHeader}
 
         {homologacionBloqueada ?
-          <p className="text-sm text-muted-foreground">
-            No se puede revisar mientras haya scrapping en curso o barrido activo en esta vista.
-          </p>
+          <div className="flex flex-1 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/5 px-6 py-8">
+            <p className="text-sm text-amber-800 dark:text-amber-200">
+              No se puede revisar mientras haya scrapping en curso o barrido activo en esta vista.
+            </p>
+          </div>
         : phase === 'bulk' ?
           <ScrappingSimilarityBulkProgress
             progress={bulkProgress}
             bulkSessionStartedAtMs={bulkSessionStartedAtMs}
-            onSkipToReview={() => void skipBulkToReview()}
             prepSummary={prepSummary}
             prepSummaryLoading={prepSummaryLoading}
           />
         : phase === 'empty' ?
-          <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-6 py-10 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/25">
-              <Trophy className="h-7 w-7 text-white" />
+          <div className="flex flex-1 flex-col items-center justify-center gap-6 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-6 py-16 text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/25">
+              <Trophy className="h-8 w-8 text-white" />
             </div>
             <div>
-              <p className="text-lg font-bold tracking-tight text-foreground">
-                ¡Todo clasificado!
-              </p>
-              <p className="mt-1 max-w-md text-sm leading-relaxed text-muted-foreground">
+              <p className="text-xl font-bold tracking-tight text-foreground">¡Todo clasificado!</p>
+              <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
                 La pasada automática resolvió todo el universo pendiente.
                 {bulkProgress.autoLinked + bulkProgress.autoPendingNew > 0 ?
                   ` Se procesaron ${(bulkProgress.autoLinked + bulkProgress.autoPendingNew + bulkProgress.leftForReview).toLocaleString('es-CL')} fila(s) en total.`
@@ -683,7 +688,7 @@ export function ScrappingSimilarityReviewModal({
               </p>
             </div>
             {bulkError ?
-              <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">{bulkError}</p>
+              <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs text-amber-800 dark:text-amber-200">{bulkError}</p>
             : null}
           </div>
         : (
@@ -708,31 +713,28 @@ export function ScrappingSimilarityReviewModal({
           />
         )}
 
-        <DialogFooter className="gap-2 sm:justify-end">
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button
+            type="button"
+            className={`btn-close ${FOOTER_ACTION_BTN}`}
+            disabled={applyBusy || phase === 'bulk'}
+            onClick={() => onOpenChange(false)}
+          >
+            Cerrar
+          </Button>
           {!homologacionBloqueada && phase === 'bulk' ?
             <Button
               type="button"
-              variant="secondary"
-              className={`gap-2 ${FOOTER_ACTION_BTN}`}
+              className={`btn-skip gap-2 ${FOOTER_ACTION_BTN}`}
               onClick={() => void skipBulkToReview()}
             >
               <SkipForward className="h-4 w-4" />
               Ir a revisión manual
             </Button>
-          : null}
-          <Button
-            type="button"
-            variant="ghost"
-            className={FOOTER_ACTION_BTN}
-            disabled={applyBusy}
-            onClick={() => onOpenChange(false)}
-          >
-            Cerrar
-          </Button>
-          {!homologacionBloqueada && phase === 'review' ?
+          : !homologacionBloqueada && phase === 'review' ?
             <Button
               type="button"
-              className={`gap-2 bg-gradient-to-r from-primary to-violet-600 shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/30 ${FOOTER_ACTION_BTN}`}
+              className={`btn-violet gap-2 ${FOOTER_ACTION_BTN}`}
               disabled={uiLocked || pendingTotal === 0}
               onClick={() => void onApplyAllPending()}
             >

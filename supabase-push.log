@@ -1,0 +1,31 @@
+open C:\Users\cristian.buono-core\.supabase\profile: The system cannot find the file specified.
+Loading project ref from file: supabase\.temp\project-ref
+Using connection pooler: postgresql://postgres.mmnehxpijmajkspyxrfl@aws-1-us-east-1.pooler.supabase.com:5432/postgres
+Initialising login role...
+Using access token for profile: supabase
+failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (1/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (2/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (3/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (4/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (5/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (6/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (7/8): failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Retry (8/8): github.com/supabase/cli/internal/utils/flags/db_url.go:194 (0x7ff7cedacb86)
+github.com/cenkalti/backoff/v4@v4.3.0/retry.go:18 (0x7ff7ce6a17d3)
+github.com/cenkalti/backoff/v4@v4.3.0/retry.go:88 (0x7ff7ce6a1bbc)
+github.com/cenkalti/backoff/v4@v4.3.0/retry.go:61 (0x7ff7ce6a1756)
+github.com/cenkalti/backoff/v4@v4.3.0/retry.go:49 (0x7ff7cedac9c5)
+github.com/supabase/cli/internal/utils/flags/db_url.go:209 (0x7ff7cedac971)
+github.com/supabase/cli/internal/utils/flags/db_url.go:144 (0x7ff7cedabf66)
+github.com/supabase/cli/internal/utils/flags/db_url.go:88 (0x7ff7cedaba36)
+github.com/supabase/cli/cmd/root.go:118 (0x7ff7d07d174b)
+github.com/spf13/cobra@v1.10.2/command.go:986 (0x7ff7ce11fb0f)
+github.com/spf13/cobra@v1.10.2/command.go:1148 (0x7ff7ce1205c5)
+github.com/supabase/cli/cmd/root.go:173 (0x7ff7d07dd446)
+github.com/supabase/cli/main.go:11 (0x7ff7d07e25ef)
+internal/runtime/atomic/types.go:194 (0x7ff7cdf3897d)
+runtime/asm_amd64.s:1693 (0x7ff7cdf72901)
+
+failed to connect as temp role: failed to connect to `host=aws-1-us-east-1.pooler.supabase.com user=cli_login_postgres.mmnehxpijmajkspyxrfl database=postgres`: failed SASL auth (FATAL: password authentication failed for user "cli_login_postgres" (SQLSTATE 28P01))
+Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD

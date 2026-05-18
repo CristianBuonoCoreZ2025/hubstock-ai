@@ -1416,7 +1416,7 @@ export function RetailPricingTab(props: {
       </div>
 
       <Dialog open={homologOpen} onOpenChange={setHomologOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Homologar a catálogo maestro</DialogTitle>
           </DialogHeader>
@@ -1586,7 +1586,7 @@ export function RetailPricingTab(props: {
       </Dialog>
 
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent>
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Historial de capturas</DialogTitle>
           </DialogHeader>

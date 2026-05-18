@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 
 export type GridRowIconButtonProps = Omit<
   React.ComponentProps<typeof Button>,
-  'children' | 'size'
+  'children'
 > & {
   /** Tooltip y aria-label (misma redacción; obligatorio para acciones en grilla). */
   label: string

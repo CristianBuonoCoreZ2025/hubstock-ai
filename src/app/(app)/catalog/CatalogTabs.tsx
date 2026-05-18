@@ -3,7 +3,7 @@
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Check, GitMerge, Minus, Pencil } from 'lucide-react'
+import { Check, GitMerge, Minus, Pencil, CheckCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   CatalogFilterCombo,
@@ -43,6 +43,7 @@ import {
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
 import { GridPagingRow } from '@/components/grid/grid-paging-row'
+import { GridRowIconButton } from '@/components/grid/grid-row-icon-button'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -86,34 +87,25 @@ function CatalogProductQuickActions({
 }) {
   return (
     <div className="flex items-center justify-end gap-1">
-      <Button
-        type="button"
-        variant="ghost"
+      <GridRowIconButton
+        label="Editar producto"
+        className="btn-sky"
         size="icon-sm"
-        className="shrink-0 text-muted-foreground hover:text-foreground"
         onClick={onEdit}
-        title="Editar producto"
       >
-        <Pencil className="size-4" aria-hidden />
-      </Button>
-      <Button
-        type="button"
-        variant="ghost"
+        <Pencil className="size-3.5" aria-hidden />
+      </GridRowIconButton>
+      <GridRowIconButton
+        label={row.active ? 'Desactivar producto' : 'Activar producto'}
+        className={row.active ? 'btn-danger' : 'btn-save'}
         size="icon-sm"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
         onClick={onToggleRequest}
-        title={row.active ? 'Desactivar producto' : 'Activar producto'}
       >
-        {row.active ? (
-          <span className="inline-flex size-6 items-center justify-center rounded-full border border-destructive text-destructive">
-            <Minus className="size-3.5" strokeWidth={2.5} aria-hidden />
-          </span>
-        ) : (
-          <span className="inline-flex size-6 items-center justify-center rounded-full border border-emerald-600 text-emerald-600 dark:border-emerald-500 dark:text-emerald-400">
-            <Check className="size-3.5" strokeWidth={2.5} aria-hidden />
-          </span>
-        )}
-      </Button>
+        {row.active
+          ? <Minus className="size-3.5" strokeWidth={2.5} aria-hidden />
+          : <Check className="size-3.5" strokeWidth={2.5} aria-hidden />
+        }
+      </GridRowIconButton>
     </div>
   )
 }
@@ -1284,7 +1276,7 @@ export function CatalogTabs(props: {
               />
               Mostrar inactivos
             </label>
-            <Button type="button" className="h-9 shrink-0" onClick={openNewProduct}>
+            <Button type="button" className="btn-create h-9 shrink-0 gap-2" onClick={openNewProduct}>
               Nuevo producto
             </Button>
           </div>
@@ -1430,26 +1422,46 @@ export function CatalogTabs(props: {
           />
 
           <Dialog open={deactivateProductRow != null} onOpenChange={(o) => !o && setDeactivateProductRow(null)}>
-            <DialogContent className="sm:max-w-md">
-              <DialogHeader>
-                <DialogTitle>Desactivar producto</DialogTitle>
-                <DialogDescription>
-                  El producto quedará inactivo en el catálogo maestro. ¿Continuar?
-                  {deactivateProductRow ? (
-                    <span className="mt-2 block font-medium text-foreground">
-                      {deactivateProductRow.name}
-                    </span>
-                  ) : null}
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter className="gap-2 sm:justify-end">
-                <Button type="button" variant="outline" onClick={() => setDeactivateProductRow(null)}>
-                  Cancelar
-                </Button>
-                <Button type="button" variant="destructive" onClick={() => void confirmDeactivateProduct()}>
-                  Desactivar
-                </Button>
-              </DialogFooter>
+            <DialogContent className="modal-lg">
+              <div className="modal-header">
+                <h2 className="text-base font-semibold text-foreground">Desactivar producto</h2>
+                <p className="mt-0.5 text-[13px] text-muted-foreground">El producto quedará inactivo en el catálogo maestro.</p>
+              </div>
+              <div className="modal-body-cols">
+                <div className="modal-col-main justify-center">
+                  <div className="rounded-xl border border-rose-200 bg-rose-50 p-5 dark:border-rose-900/40 dark:bg-rose-950/20">
+                    <p className="text-[13px] font-semibold text-rose-800 dark:text-rose-300">Producto a desactivar</p>
+                    <p className="mt-1.5 text-[15px] font-bold text-foreground">
+                      {deactivateProductRow?.name ?? '—'}
+                    </p>
+                  </div>
+                  <p className="text-[13px] text-muted-foreground">
+                    El producto no se eliminará de la base de datos. Puedes reactivarlo desde esta misma sección cuando sea necesario.
+                  </p>
+                </div>
+                <div className="modal-col-aside flex flex-col gap-4">
+                  <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900/40 dark:bg-amber-950/20">
+                    <p className="text-[11px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Efecto de la acción</p>
+                    <ul className="mt-2 space-y-1.5 text-[12px] text-amber-800 dark:text-amber-300">
+                      <li>• El producto deja de aparecer en búsquedas</li>
+                      <li>• Los precios de retail ya capturados se conservan</li>
+                      <li>• Los datos históricos no se eliminan</li>
+                      <li>• Puedes reactivarlo en cualquier momento</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <div />
+                <div className="flex gap-2">
+                  <Button type="button" className="btn-cancel h-9" onClick={() => setDeactivateProductRow(null)}>
+                    Cancelar
+                  </Button>
+                  <Button type="button" className="btn-danger h-9" onClick={() => void confirmDeactivateProduct()}>
+                    Desactivar
+                  </Button>
+                </div>
+              </div>
             </DialogContent>
           </Dialog>
         </div>
@@ -1491,8 +1503,7 @@ export function CatalogTabs(props: {
             </label>
             <Button
               type="button"
-              variant="outline"
-              className="h-9 shrink-0 gap-2"
+              className="btn-violet-alt h-9 shrink-0 gap-2"
               onClick={() => {
                 resetBrandMergeForm()
                 setBrandMergeOpen(true)
@@ -1553,28 +1564,24 @@ export function CatalogTabs(props: {
                           </span>
                         </td>
                         <td className="p-3">
-                          <div className="flex flex-wrap justify-end gap-2">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8"
+                          <div className="flex justify-end gap-1">
+                            <GridRowIconButton
+                              label="Seleccionar marca"
+                              className="btn-save"
                               onClick={() => {
                                 setSelectedBrandId(b.id)
                                 setSelectedBrandName(b.name)
                               }}
                             >
-                              Seleccionar
-                            </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              className="h-8"
+                              <CheckCheck className="size-4" aria-hidden />
+                            </GridRowIconButton>
+                            <GridRowIconButton
+                              label="Editar marca"
+                              className="btn-sky"
                               onClick={() => openEditBrand(b)}
                             >
-                              Editar
-                            </Button>
+                              <Pencil className="size-4" aria-hidden />
+                            </GridRowIconButton>
                           </div>
                         </td>
                       </tr>
@@ -2013,7 +2020,7 @@ export function CatalogTabs(props: {
           if (!open) resetBrandMergeForm()
         }}
       >
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Unir marcas</DialogTitle>
             <DialogDescription>
@@ -2085,53 +2092,88 @@ export function CatalogTabs(props: {
       </Dialog>
 
       <Dialog open={brandEditOpen} onOpenChange={setBrandEditOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Editar marca</DialogTitle>
-            <DialogDescription>Nombre canónico en el catálogo maestro.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>Nombre</Label>
-            <Input
-              className="app-input"
-              value={brandEditName}
-              onChange={(e) => setBrandEditName(e.target.value)}
-            />
+        <DialogContent className="modal-lg">
+          <div className="modal-header">
+            <h2 className="text-base font-semibold text-foreground">Editar marca</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">Nombre canónico en el catálogo maestro.</p>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setBrandEditOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" onClick={() => void submitBrandEdit()}>
-              Guardar
-            </Button>
-          </DialogFooter>
+          <div className="modal-body-cols">
+            <div className="modal-col-main justify-center">
+              <div className="space-y-2">
+                <Label>Nombre de la marca</Label>
+                <Input
+                  className="app-input"
+                  value={brandEditName}
+                  onChange={(e) => setBrandEditName(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-col-aside flex flex-col gap-4">
+              <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-400">Alcance del cambio</p>
+                <ul className="mt-2 space-y-1.5 text-[12px] text-sky-800 dark:text-sky-300">
+                  <li>• El nombre se actualiza en todos los productos enlazados</li>
+                  <li>• El alias de búsqueda se recalcula automáticamente</li>
+                  <li>• Los precios de retail no se ven afectados</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <div />
+            <div className="flex gap-2">
+              <Button type="button" className="btn-close h-9" onClick={() => setBrandEditOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="button" className="btn-save h-9" onClick={() => void submitBrandEdit()}>
+                Guardar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={sectionDialogOpen} onOpenChange={setSectionDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Nueva sección</DialogTitle>
-            <DialogDescription>La sección agrupa categorías del catálogo global.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label>Nombre</Label>
-            <Input
-              className="app-input"
-              placeholder="Ej.: Refrigerador"
-              value={sectionName}
-              onChange={(e) => setSectionName(e.target.value)}
-            />
+        <DialogContent className="modal-lg">
+          <div className="modal-header">
+            <h2 className="text-base font-semibold text-foreground">Nueva sección</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">La sección agrupa categorías del catálogo global.</p>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setSectionDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" onClick={() => void submitSection()}>
-              Crear
-            </Button>
-          </DialogFooter>
+          <div className="modal-body-cols">
+            <div className="modal-col-main justify-center">
+              <div className="space-y-2">
+                <Label>Nombre de la sección</Label>
+                <Input
+                  className="app-input"
+                  placeholder="Ej.: Refrigerador"
+                  value={sectionName}
+                  onChange={(e) => setSectionName(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-col-aside flex flex-col gap-4">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4 dark:border-emerald-900/40 dark:bg-emerald-950/20">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Estructura del catálogo</p>
+                <p className="mt-2 text-[12px] text-emerald-800 dark:text-emerald-300">
+                  Las secciones son el nivel más alto. Cada sección puede contener múltiples categorías y cada categoría agrupa productos del catálogo maestro.
+                </p>
+                <p className="mt-2 text-[12px] text-emerald-800 dark:text-emerald-300">
+                  Ejemplos: <span className="font-semibold">Lácteos</span>, <span className="font-semibold">Bebidas</span>, <span className="font-semibold">Limpieza</span>.
+                </p>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <div />
+            <div className="flex gap-2">
+              <Button type="button" className="btn-close h-9" onClick={() => setSectionDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="button" className="btn-create h-9" onClick={() => void submitSection()}>
+                Crear
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -2145,16 +2187,13 @@ export function CatalogTabs(props: {
           }
         }}
       >
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Nueva categoría</DialogTitle>
-            <DialogDescription>
-              Hace falta una sección padre y el nombre de la categoría. Si falta la sección, crearla antes
-              con «Nueva sección».
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-2 sm:col-span-2">
+        <DialogContent className="modal-lg">
+          <div className="modal-header">
+            <h2 className="text-base font-semibold text-foreground">Nueva categoría</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">Selecciona la sección padre y asigna un nombre único.</p>
+          </div>
+          <div className="modal-body-cols">
+            <div className="modal-col-main justify-center gap-4">
               <SectionSearchCombo
                 omitAllOption
                 emptyPickLabel="Selecciona la sección padre"
@@ -2163,69 +2202,99 @@ export function CatalogTabs(props: {
                 value={catSectionId || ''}
                 onChange={(v) => setCatSectionId(v === 'all' ? '' : v)}
               />
+              <div className="space-y-2">
+                <Label>Nombre de la categoría</Label>
+                <Input
+                  className="app-input"
+                  placeholder="Ej.: Mayonesa"
+                  value={catName}
+                  onChange={(e) => setCatName(e.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-2 sm:col-span-2">
-              <Label>Nombre</Label>
-              <Input
-                className="app-input"
-                placeholder="Ej.: Mayonesa"
-                value={catName}
-                onChange={(e) => setCatName(e.target.value)}
-              />
+            <div className="modal-col-aside flex flex-col gap-4">
+              <div className="rounded-xl border border-violet-200 bg-violet-50/60 p-4 dark:border-violet-900/40 dark:bg-violet-950/20">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-violet-700 dark:text-violet-400">Jerarquía</p>
+                <p className="mt-2 text-[12px] text-violet-800 dark:text-violet-300">
+                  Sección → Categoría → Productos
+                </p>
+                <p className="mt-2 text-[12px] text-violet-800 dark:text-violet-300">
+                  Si la sección necesaria aún no existe, cierra este diálogo y crea la sección primero desde «Nueva sección».
+                </p>
+              </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCategoryDialogOpen(false)}>
-              Cancelar
-            </Button>
-            <Button
-              type="button"
-              disabled={!catSectionId.trim() || !normalizeSearchText(catName)}
-              onClick={() => void submitCategory()}
-            >
-              Crear
-            </Button>
-          </DialogFooter>
+          <div className="modal-footer">
+            <div />
+            <div className="flex gap-2">
+              <Button type="button" className="btn-close h-9" onClick={() => setCategoryDialogOpen(false)}>
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                className="btn-create h-9"
+                disabled={!catSectionId.trim() || !normalizeSearchText(catName)}
+                onClick={() => void submitCategory()}
+              >
+                Crear
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={categoryEditOpen} onOpenChange={setCategoryEditOpen}>
-        <DialogContent className="sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Editar categoría</DialogTitle>
-            <DialogDescription>La categoría pertenece a una sección del catálogo.</DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3">
-            <SectionSearchCombo
-              omitAllOption
-              emptyPickLabel="Selecciona la sección"
-              label="Sección"
-              sections={sections}
-              value={categoryEditSectionId || ''}
-              onChange={(v) => setCategoryEditSectionId(v === 'all' ? '' : v)}
-            />
-            <div className="space-y-2">
-              <Label>Nombre</Label>
-              <Input
-                className="app-input"
-                value={categoryEditName}
-                onChange={(e) => setCategoryEditName(e.target.value)}
+        <DialogContent className="modal-lg">
+          <div className="modal-header">
+            <h2 className="text-base font-semibold text-foreground">Editar categoría</h2>
+            <p className="mt-0.5 text-[13px] text-muted-foreground">La categoría pertenece a una sección del catálogo.</p>
+          </div>
+          <div className="modal-body-cols">
+            <div className="modal-col-main justify-center gap-4">
+              <SectionSearchCombo
+                omitAllOption
+                emptyPickLabel="Selecciona la sección"
+                label="Sección"
+                sections={sections}
+                value={categoryEditSectionId || ''}
+                onChange={(v) => setCategoryEditSectionId(v === 'all' ? '' : v)}
               />
+              <div className="space-y-2">
+                <Label>Nombre de la categoría</Label>
+                <Input
+                  className="app-input"
+                  value={categoryEditName}
+                  onChange={(e) => setCategoryEditName(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="modal-col-aside flex flex-col gap-4">
+              <div className="rounded-xl border border-sky-200 bg-sky-50/60 p-4 dark:border-sky-900/40 dark:bg-sky-950/20">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-sky-700 dark:text-sky-400">Alcance del cambio</p>
+                <ul className="mt-2 space-y-1.5 text-[12px] text-sky-800 dark:text-sky-300">
+                  <li>• El nombre se actualiza en todo el catálogo</li>
+                  <li>• Los productos en esta categoría no cambian</li>
+                  <li>• La sección puede cambiarse a una diferente</li>
+                </ul>
+              </div>
             </div>
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCategoryEditOpen(false)}>
-              Cancelar
-            </Button>
-            <Button type="button" onClick={() => void submitCategoryEdit()}>
-              Guardar
-            </Button>
-          </DialogFooter>
+          <div className="modal-footer">
+            <div />
+            <div className="flex gap-2">
+              <Button type="button" className="btn-close h-9" onClick={() => setCategoryEditOpen(false)}>
+                Cancelar
+              </Button>
+              <Button type="button" className="btn-save h-9" onClick={() => void submitCategoryEdit()}>
+                Guardar
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
 
       <Dialog open={aliasDialogOpen} onOpenChange={setAliasDialogOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Alias (avanzado)</DialogTitle>
             <DialogDescription>
@@ -2338,7 +2407,7 @@ export function CatalogTabs(props: {
       </Dialog>
 
       <Dialog open={productDialogOpen} onOpenChange={setProductDialogOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>
               {editingProductId ? 'Editar producto del catálogo' : 'Nuevo producto del catálogo'}

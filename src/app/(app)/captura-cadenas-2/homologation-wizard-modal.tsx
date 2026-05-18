@@ -689,7 +689,7 @@ export function HomologationWizardModal({
 }: HomologationWizardModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl shadow-black/20">
+      <DialogContent className="modal-lg">
         {open && (
           <HomologationWizardInner
             onOpenChange={onOpenChange}

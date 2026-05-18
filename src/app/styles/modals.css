@@ -1,0 +1,76 @@
+/*
+ * ESTÁNDAR DE MODALES — hub-stock-ai
+ *
+ * Un único tamaño canónico: modal-lg (900px).
+ * Todos los modales de la app deben usar esta clase en DialogContent.
+ *
+ * Uso:
+ *   <DialogContent className="modal-lg">
+ *
+ * Para modales con header/body/footer custom (p-0, gap-0):
+ *   <DialogContent className="modal-lg modal-no-pad">
+ */
+
+@layer components {
+  /* Tamaño estándar único para todos los modales */
+  .modal-lg {
+    @apply flex max-h-[90vh] w-[min(98vw,900px)] flex-col gap-0
+           overflow-hidden rounded-2xl border-0 bg-popover p-0
+           shadow-2xl shadow-black/20;
+  }
+
+  /* Header de modal con gradiente sutil */
+  .modal-header {
+    @apply relative overflow-hidden border-b px-8 pb-5 pt-6;
+  }
+
+  /* Body scrolleable del modal */
+  .modal-body {
+    @apply flex min-h-0 flex-1 flex-col overflow-y-auto;
+  }
+
+  /* Body en dos columnas para modales con panel lateral */
+  .modal-body-cols {
+    @apply flex min-h-0 flex-1 overflow-hidden;
+  }
+
+  /* Columna principal del modal (izquierda en layout de dos columnas) */
+  .modal-col-main {
+    @apply flex flex-1 flex-col gap-5 overflow-y-auto px-8 py-6;
+  }
+
+  /* Panel lateral informativo del modal (derecha en layout de dos columnas) */
+  .modal-col-aside {
+    @apply w-72 shrink-0 overflow-y-auto border-l bg-muted/20 px-6 py-6;
+  }
+
+  /* Banda de estadísticas horizontal al pie del body */
+  .modal-stats-bar {
+    @apply border-t bg-muted/20 px-8 py-5;
+  }
+
+  /* Footer del modal */
+  .modal-footer {
+    @apply flex items-center justify-between border-t bg-muted/10 px-8 py-4;
+  }
+}
+
+/* Estilos de ui-style-skins para modales (anteriormente en globals.css) */
+html[data-ui-style] [data-slot='dialog-content'] {
+  border-radius: var(--ui-modal-radius, 1rem);
+  padding: var(--ui-modal-padding, 1.5rem);
+  font-size: var(--ui-modal-font-size, 0.8125rem);
+  line-height: var(--ui-modal-leading, 1.5);
+  letter-spacing: var(--ui-modal-tracking, inherit);
+  border-width: var(--ui-modal-border-width, 1px);
+  box-shadow: var(
+    --ui-modal-shadow,
+    0 24px 48px -12px rgb(0 0 0 / 0.18)
+  );
+}
+
+html[data-ui-style] [data-slot='dialog-overlay'] {
+  -webkit-backdrop-filter: var(--ui-modal-backdrop, blur(2px));
+  backdrop-filter: var(--ui-modal-backdrop, blur(2px));
+  background: var(--ui-modal-overlay-bg, rgb(0 0 0 / 0.4)) !important;
+}

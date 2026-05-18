@@ -933,7 +933,7 @@ export function LiderTaxonomyMatrix({
       </div>
 
       <Dialog open={hubSectionOpen} onOpenChange={setHubSectionOpen}>
-        <DialogContent>
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Nueva sección maestra desde Lider</DialogTitle>
             <DialogDescription>
@@ -976,7 +976,7 @@ export function LiderTaxonomyMatrix({
       </Dialog>
 
       <Dialog open={linkOpen} onOpenChange={setLinkOpen}>
-        <DialogContent>
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Relacionar sección Lider</DialogTitle>
             <DialogDescription>
@@ -1023,7 +1023,7 @@ export function LiderTaxonomyMatrix({
       </Dialog>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Nueva categoría maestra</DialogTitle>
             <DialogDescription>
@@ -1061,7 +1061,7 @@ export function LiderTaxonomyMatrix({
       </Dialog>
 
       <Dialog open={linkCatOpen} onOpenChange={setLinkCatOpen}>
-        <DialogContent>
+        <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Relacionar con categoría maestra</DialogTitle>
             <DialogDescription>
