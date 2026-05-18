@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/select'
 import {
   getCatalogSectionsWithCategoriesAction,
-  runScrappingHomologationCreateNewBatchAction,
+  runScrappingHomologationCreateNewAllAction,
   type CatalogSectionWithCategories,
 } from '@/app/actions/retail-scrapping'
 
@@ -110,46 +110,30 @@ function CreateNewProductsModalInner({
     setError(null)
     const fallbackCategoryId = fallbackCatId !== '__auto__' ? fallbackCatId : null
 
-    const acc: RunResult = {
-      processed: 0,
-      total: pendingNew,
-      created: 0,
-      recovered: 0,
-      skipped: 0,
-      mediaOk: 0,
-      mediaFailed: 0,
-      errors: 0,
-    }
-    setResult({ ...acc })
+    setResult({
+      processed: 0, total: pendingNew, created: 0, recovered: 0, skipped: 0,
+      mediaOk: 0, mediaFailed: 0, errors: 0,
+    })
 
-    let afterId: string | null = null
     try {
-      for (;;) {
-        const out = await runScrappingHomologationCreateNewBatchAction({
-          afterId,
-          batchSize: 10,
-          fallbackCategoryId,
-        })
-        if (!out.ok) {
-          setStatus('error')
-          setError(out.error)
-          return
-        }
-        const { stats, hasMore, lastId, total } = out.result
-        acc.processed += stats.processed
-        acc.created += stats.created
-        acc.recovered += stats.recovered
-        acc.skipped += stats.skipped
-        acc.mediaOk += stats.mediaOk
-        acc.mediaFailed += stats.mediaFailed
-        acc.errors += stats.errors
-        acc.lastError = stats.lastError ?? acc.lastError
-        acc.total = Math.max(acc.total, total + acc.processed)
-        setResult({ ...acc })
-
-        if (!hasMore || !lastId) break
-        afterId = lastId
+      const out = await runScrappingHomologationCreateNewAllAction({ fallbackCategoryId })
+      if (!out.ok) {
+        setStatus('error')
+        setError(out.error)
+        return
       }
+      const { stats } = out.result
+      setResult({
+        processed: stats.processed,
+        total: pendingNew,
+        created: stats.created,
+        recovered: stats.recovered,
+        skipped: stats.skipped,
+        mediaOk: stats.mediaOk,
+        mediaFailed: stats.mediaFailed,
+        errors: stats.errors,
+        lastError: stats.lastError,
+      })
       setStatus('done')
       onFinished()
     } catch (e) {
@@ -160,7 +144,6 @@ function CreateNewProductsModalInner({
 
   const isRunning = status === 'running'
   const isDone = status === 'done'
-  const pct = result && result.total > 0 ? Math.min(100, Math.round((result.processed / result.total) * 100)) : 0
 
   return (
     <>
@@ -278,33 +261,18 @@ function CreateNewProductsModalInner({
           )}
 
           {/* Progreso en tiempo real */}
-          {(isRunning || isDone) && result && (
+          {isRunning && (
             <div
-              className="space-y-4 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] p-5"
+              className="space-y-3 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.03] p-5"
               style={{ animation: 'homolog-fade-up 0.3s ease-out both' }}
             >
-              <div className="flex items-center justify-between text-sm tabular-nums">
+              <div className="flex items-center justify-between text-sm">
                 <p className="font-bold text-emerald-700">
-                  {result.processed.toLocaleString('es-CL')} de {result.total.toLocaleString('es-CL')} productos
+                  Procesando {pendingNew.toLocaleString('es-CL')} productos…
                 </p>
-                <div className="flex items-center gap-2">
-                  <span className="rounded-md bg-emerald-500/10 px-2 py-0.5 font-bold text-emerald-700">
-                    {pct}%
-                  </span>
-                  {isRunning && <Sparkles className="h-4 w-4 animate-pulse text-emerald-500" />}
-                  {isDone && <CheckCircle2 className="h-4 w-4 text-emerald-500" />}
-                </div>
+                <Sparkles className="h-4 w-4 animate-pulse text-emerald-500" />
               </div>
-              <ShimmerBar
-                indeterminate={isRunning && result.processed === 0}
-                pct={pct}
-                color="emerald"
-              />
-              {result.lastError && result.errors > 0 && (
-                <div className="rounded-md border border-destructive/20 bg-destructive/5 px-3 py-2 text-[11px] font-mono leading-relaxed text-destructive">
-                  {result.lastError}
-                </div>
-              )}
+              <ShimmerBar indeterminate color="emerald" />
             </div>
           )}
 

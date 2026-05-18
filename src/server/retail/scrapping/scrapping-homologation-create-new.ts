@@ -38,6 +38,11 @@ export type CreateNewProductsBatchResult = {
   total: number
 }
 
+export type CreateNewProductsAllResult = {
+  stats: CreateNewProductsSummary
+  total: number
+}
+
 /* ── Helpers internos ── */
 
 function isUniqueViolation(err: { code?: string }): boolean {
@@ -120,7 +125,7 @@ export async function processHomologationCreateNewBatch(
   admin: SupabaseClient,
   input: { afterId?: string | null; batchSize?: number; fallbackCategoryId?: string | null },
 ): Promise<{ ok: true; result: CreateNewProductsBatchResult } | { ok: false; error: string }> {
-  const limit = Math.min(Math.max(input.batchSize ?? 10, 1), 50)
+  const limit = Math.min(Math.max(input.batchSize ?? 50, 1), 200)
 
   // Contar total pendiente
   const { count: totalRemaining } = await admin
@@ -327,7 +332,7 @@ export async function processHomologationCreateNewBatch(
 
       // Link + alias + scrapping update en paralelo
       const aliasNorm = normalizeCatalogAlias(row.product_name)
-      const [linkRes] = await Promise.all([
+      const [linkRes, aliasRes, scrappingRes] = await Promise.all([
         admin.from('catalog_retail_links').upsert(
           { retailer: row.retailer, external_ref: row.external_ref, catalog_product_id: catalogProductId, updated_at: now } as never,
           { onConflict: 'retailer,external_ref' },
@@ -346,6 +351,16 @@ export async function processHomologationCreateNewBatch(
 
       if (linkRes.error) {
         logger.error({ rowId: row.id, catalogProductId, err: linkRes.error.message }, '[create-new] error insertando catalog_retail_links')
+      }
+      if (aliasRes.error) {
+        logger.warn({ rowId: row.id, catalogProductId, err: aliasRes.error.message }, '[create-new] error insertando alias (no crítico)')
+      }
+      if (scrappingRes.error) {
+        logger.error({ rowId: row.id, catalogProductId, err: scrappingRes.error.message }, '[create-new] error actualizando scrapping')
+        return {
+          created: 0, recovered: 0, skipped: 0, errors: 1,
+          lastError: `No se pudo marcar la fila de scrapping: ${scrappingRes.error.message}`,
+        }
       }
 
       const imageUrl = row.image_url?.trim() || inferImageUrlFromProductUrl(row.product_url)
@@ -408,4 +423,261 @@ export async function processHomologationCreateNewBatch(
       total: totalRemaining ?? 0,
     },
   }
+}
+
+/**
+ * Procesa TODOS los pending_new en una sola operación atómica.
+ * Lee todas las filas de una vez, precachea taxonomía, procesa en paralelo.
+ */
+export async function processHomologationCreateNewAll(
+  admin: SupabaseClient,
+  input: { fallbackCategoryId?: string | null },
+): Promise<{ ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string }> {
+  /* ── Leer TODOS los pending_new de una vez ── */
+  const { count: totalRemaining } = await admin
+    .from('scrapping')
+    .select('id', { count: 'exact', head: true })
+    .eq('catalog_match_status', 'pending_new')
+
+  const { data: rows, error } = await admin
+    .from('scrapping')
+    .select('id, retailer, external_ref, product_url, product_name, brand, price, sections, categories, image_url, catalog_match_status')
+    .eq('catalog_match_status', 'pending_new')
+    .order('id', { ascending: true })
+
+  if (error) {
+    logger.error({ err: error.message, code: error.code }, '[create-new] error consultando scrapping pending_new')
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+  }
+
+  const list = (rows ?? []) as Array<{
+    id: string; retailer: string; external_ref: string; product_url: string | null
+    product_name: string; brand: string | null; price: number | string | null
+    sections: string | null; categories: string | null; image_url: string | null
+  }>
+
+  logger.info({ total: totalRemaining, rows: list.length }, '[create-new] iniciando procesamiento atómico')
+
+  if (list.length === 0) {
+    return { ok: true, result: { stats: { processed: 0, created: 0, recovered: 0, skipped: 0, mediaOk: 0, mediaFailed: 0, errors: 0 }, total: 0 } }
+  }
+
+  /* ── Pre-caché ── */
+  type CatSection = { id: string; section_id: string }
+  let fallbackCat: CatSection | null = null
+  const overrideCatId = input.fallbackCategoryId?.trim() || null
+  {
+    const fbQ = overrideCatId
+      ? admin.from('categories').select('id, section_id').eq('id', overrideCatId).maybeSingle()
+      : admin.from('categories').select('id, section_id').order('sort_order', { ascending: true }).limit(1).maybeSingle()
+    const { data } = await fbQ
+    fallbackCat = (data as CatSection | null)
+  }
+
+  const sectionCache = new Map<string, string>()
+  const sortOrderCache = new Map<string, number>()
+
+  const resolvedCategoryIds = await Promise.all(
+    list.map(row => resolveCatalogCategoryIdForScrappingRow(admin, {
+      retailer: row.retailer, sections: row.sections, categories: row.categories,
+    }))
+  )
+
+  const taxonomyCache = new Map<string, string | null>()
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i]
+    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
+    if (!taxonomyCache.has(key)) taxonomyCache.set(key, resolvedCategoryIds[i] ?? null)
+  }
+
+  const uniqueCategoryIds = [...new Set(resolvedCategoryIds.filter((id): id is string => id !== null))]
+  if (uniqueCategoryIds.length > 0) {
+    const { data: catRows } = await admin.from('categories').select('id, section_id').in('id', uniqueCategoryIds)
+    for (const c of (catRows ?? []) as CatSection[]) sectionCache.set(c.id, c.section_id)
+
+    const { data: sortRows } = await admin.from('catalog_products').select('category_id, sort_order').in('category_id', uniqueCategoryIds).order('sort_order', { ascending: false })
+    const seen = new Set<string>()
+    for (const r of (sortRows ?? []) as { category_id: string; sort_order: number }[]) {
+      if (!seen.has(r.category_id)) { sortOrderCache.set(r.category_id, r.sort_order); seen.add(r.category_id) }
+    }
+  }
+
+  /* ── Preparar jobs ── */
+  type RowJob = {
+    row: typeof list[number]; finalCategoryId: string; finalSectionId: string
+    sortOrder: number; validPrice: number | null; sourceUrl: string | null
+    norm: ReturnType<typeof normalizeRetailCapturedInput>
+  }
+
+  const jobs: RowJob[] = []
+  const skippedIds: string[] = []
+
+  for (const row of list) {
+    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
+    const categoryId = taxonomyCache.get(key) ?? null
+    let finalCategoryId = categoryId
+    let finalSectionId = categoryId ? (sectionCache.get(categoryId) ?? null) : null
+    if (!finalCategoryId || !finalSectionId) {
+      if (fallbackCat) {
+        finalCategoryId = finalCategoryId ?? fallbackCat.id
+        finalSectionId = finalSectionId ?? fallbackCat.section_id
+      }
+    }
+    if (!finalCategoryId || !finalSectionId) {
+      logger.warn({ rowId: row.id }, '[create-new] sin categoría resuelta — omitido')
+      skippedIds.push(row.id)
+      continue
+    }
+    const currentMax = sortOrderCache.get(finalCategoryId) ?? -1
+    const sortOrder = currentMax + 1
+    sortOrderCache.set(finalCategoryId, sortOrder)
+
+    const priceNum = typeof row.price === 'string' ? Number(row.price) : (row.price ?? 0)
+    const validPrice = Number.isFinite(priceNum) && priceNum > 0 ? priceNum : null
+    const norm = normalizeRetailCapturedInput({
+      retailer: row.retailer, external_ref: row.external_ref, source_url: row.product_url,
+      title: row.product_name, brand: row.brand, price: validPrice, unit_price: null,
+      category_hint: [row.sections, row.categories].filter(Boolean).join(' > '),
+      description_hint: null, image_url: null, raw_data: null,
+    })
+    jobs.push({ row, finalCategoryId, finalSectionId, sortOrder, validPrice, sourceUrl: row.product_url?.trim() || null, norm })
+  }
+
+  /* ── Batch inserts masivos ── */
+  const now = new Date().toISOString()
+
+  // Detectar productos ya existentes por source_product_url
+  const sourceUrls = [...new Set(jobs.map(j => j.sourceUrl).filter(Boolean) as string[])]
+  const existingByUrl = new Map<string, string>()
+  if (sourceUrls.length > 0) {
+    const { data: existing } = await admin.from('catalog_products').select('id, source_product_url').in('source_product_url', sourceUrls)
+    for (const e of (existing ?? []) as { id: string; source_product_url: string }[]) {
+      existingByUrl.set(e.source_product_url, e.id)
+    }
+  }
+
+  // Separar: nuevos vs recuperados
+  const newJobs = jobs.filter(j => !existingByUrl.has(j.sourceUrl ?? ''))
+  const recoveredJobs = jobs.filter(j => existingByUrl.has(j.sourceUrl ?? ''))
+
+  // 1) Batch insert catalog_products (solo nuevos)
+  let insertedIds: string[] = []
+  if (newJobs.length > 0) {
+    const { data, error } = await admin.from('catalog_products').insert(
+      newJobs.map(j => ({
+        name: j.row.product_name.trim(),
+        section_id: j.finalSectionId,
+        category_id: j.finalCategoryId,
+        brand: j.row.brand?.trim() || null,
+        brand_id: null,
+        format: j.norm.format_signature,
+        unit: null,
+        default_reference_price: j.validPrice,
+        sort_order: j.sortOrder,
+        active: true,
+        source_system: 'scrapping_homologation',
+        source_product_url: j.sourceUrl,
+      })) as never[]
+    ).select('id')
+    if (error) {
+      logger.error({ err: error.message }, '[create-new] error batch insert catalog_products')
+      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    }
+    insertedIds = ((data ?? []) as { id: string }[]).map(r => r.id)
+  }
+
+  // Mapear job → catalog_product_id
+  const jobToCatalogId = new Map<number, string>()
+  newJobs.forEach((j, i) => { jobToCatalogId.set(jobs.indexOf(j), insertedIds[i]) })
+  recoveredJobs.forEach(j => { jobToCatalogId.set(jobs.indexOf(j), existingByUrl.get(j.sourceUrl ?? '')!) })
+
+  // 2) Batch insert catalog_retail_links
+  const allLinks = jobs.map((j, idx) => {
+    const catalogProductId = jobToCatalogId.get(idx)
+    if (!catalogProductId) return null
+    return {
+      retailer: j.row.retailer,
+      external_ref: j.row.external_ref,
+      catalog_product_id: catalogProductId,
+      updated_at: now,
+    }
+  }).filter(Boolean) as never[]
+
+  if (allLinks.length > 0) {
+    const { error } = await admin.from('catalog_retail_links').upsert(allLinks, { onConflict: 'retailer,external_ref' })
+    if (error) logger.error({ err: error.message }, '[create-new] error batch insert links')
+  }
+
+  // 3) Batch insert aliases
+  const allAliases = jobs.map((j, idx) => {
+    const aliasNorm = normalizeCatalogAlias(j.row.product_name)
+    if (aliasNorm.length < 2) return null
+    const catalogProductId = jobToCatalogId.get(idx)
+    if (!catalogProductId) return null
+    return { catalog_product_id: catalogProductId, alias_normalized: aliasNorm }
+  }).filter(Boolean) as never[]
+
+  if (allAliases.length > 0) {
+    const { error } = await admin.from('catalog_product_aliases').insert(allAliases)
+    if (error) logger.warn({ err: error.message }, '[create-new] error batch insert aliases (posible duplicado)')
+  }
+
+  // 4) Batch update scrapping
+  const allUpdates = jobs.map((j, idx) => {
+    const catalogProductId = jobToCatalogId.get(idx)
+    const isRecovered = existingByUrl.has(j.sourceUrl ?? '')
+    if (!catalogProductId) return null
+    return {
+      id: j.row.id,
+      catalog_match_status: 'matched',
+      matched_catalog_product_id: catalogProductId,
+      catalog_matched_at: now,
+      homolog_final_status: isRecovered ? 'MATCHED_EXISTING' : 'CREATED_NEW',
+      homolog_reviewed_at: now,
+    }
+  }).filter(Boolean) as never[]
+
+  if (allUpdates.length > 0) {
+    // Supabase no tiene batch update por ID fácilmente, hacemos upsert
+    const { error } = await admin.from('scrapping').upsert(allUpdates, { onConflict: 'id' })
+    if (error) {
+      logger.error({ err: error.message }, '[create-new] error batch update scrapping')
+      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    }
+  }
+
+  /* ── Imágenes en paralelo ── */
+  const imageTasks: Array<{ catalogProductId: string; imageUrl: string }> = []
+  for (const j of jobs) {
+    const idx = jobs.indexOf(j)
+    const catalogProductId = jobToCatalogId.get(idx)
+    if (!catalogProductId) continue
+    const imageUrl = j.row.image_url?.trim() || inferImageUrlFromProductUrl(j.row.product_url)
+    if (imageUrl) imageTasks.push({ catalogProductId, imageUrl })
+  }
+
+  let mediaOk = 0
+  let mediaFailed = 0
+  if (imageTasks.length > 0) {
+    logger.info({ count: imageTasks.length }, '[create-new] descargando imágenes en paralelo')
+    const imgResults = await Promise.allSettled(imageTasks.map(t => downloadAndUploadProductImage(admin, t.catalogProductId, t.imageUrl)))
+    for (const r of imgResults) {
+      if (r.status === 'fulfilled' && r.value.ok) mediaOk += 1
+      else mediaFailed += 1
+    }
+  }
+
+  const stats: CreateNewProductsSummary = {
+    processed: jobs.length,
+    created: newJobs.length,
+    recovered: recoveredJobs.length,
+    skipped: skippedIds.length,
+    mediaOk,
+    mediaFailed,
+    errors: 0,
+  }
+
+  logger.info({ ...stats }, '[create-new] procesamiento atómico finalizado')
+
+  return { ok: true, result: { stats, total: totalRemaining ?? 0 } }
 }

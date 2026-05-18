@@ -44,7 +44,9 @@ import {
 } from '@/server/retail/scrapping/scrapping-homologation-db'
 import {
   processHomologationCreateNewBatch,
+  processHomologationCreateNewAll,
   type CreateNewProductsBatchResult,
+  type CreateNewProductsAllResult,
 } from '@/server/retail/scrapping/scrapping-homologation-create-new'
 import type {
   SimilarityBulkBatchStats,
@@ -1625,6 +1627,21 @@ export async function runScrappingHomologationCreateNewBatchAction(input: {
   const gate = await assertNoRunningScrappingForHomologation()
   if (!gate.ok) return { ok: false, error: gate.error }
   const r = await processHomologationCreateNewBatch(gate.admin, input)
+  if (!r.ok) return r
+  revalidatePath('/captura-cadenas-2')
+  revalidatePath('/catalogo')
+  return r
+}
+
+/** Paso 3 · crear TODOS los productos nuevos en un solo request atómico. */
+export async function runScrappingHomologationCreateNewAllAction(input: {
+  fallbackCategoryId?: string | null
+}): Promise<
+  { ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const r = await processHomologationCreateNewAll(gate.admin, input)
   if (!r.ok) return r
   revalidatePath('/captura-cadenas-2')
   revalidatePath('/catalogo')
