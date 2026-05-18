@@ -48,6 +48,7 @@ import {
   type CreateNewProductsBatchResult,
   type CreateNewProductsAllResult,
 } from '@/server/retail/scrapping/scrapping-homologation-create-new'
+import { logError } from '@/lib/db-logger'
 import type {
   SimilarityBulkBatchStats,
   SimilarityBulkRunStats,
@@ -1640,9 +1641,26 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
   { ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string }
 > {
   const gate = await assertNoRunningScrappingForHomologation()
-  if (!gate.ok) return { ok: false, error: gate.error }
+  if (!gate.ok) {
+    const admin = createServiceRoleClient()
+    await logError(admin, {
+      module: '[create-new-action]',
+      message: 'Validación fallida antes de procesar',
+      context: { error: gate.error },
+      screen: 'create-new-products-modal',
+    })
+    return { ok: false, error: gate.error }
+  }
   const r = await processHomologationCreateNewAll(gate.admin, input)
-  if (!r.ok) return r
+  if (!r.ok) {
+    await logError(gate.admin, {
+      module: '[create-new-action]',
+      message: 'Error en procesamiento atómico',
+      context: { error: r.error },
+      screen: 'create-new-products-modal',
+    })
+    return r
+  }
   revalidatePath('/captura-cadenas-2')
   revalidatePath('/catalogo')
   return r
