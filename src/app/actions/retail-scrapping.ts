@@ -1642,6 +1642,7 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
 > {
   const gate = await assertNoRunningScrappingForHomologation()
   if (!gate.ok) {
+    console.error('[create-new-action] ERROR:', gate.error)
     const admin = createServiceRoleClient()
     await logError(admin, {
       module: '[create-new-action]',
@@ -1653,6 +1654,7 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
   }
   const r = await processHomologationCreateNewAll(gate.admin, input)
   if (!r.ok) {
+    console.error('[create-new-action] ERROR:', r.error)
     await logError(gate.admin, {
       module: '[create-new-action]',
       message: 'Error en procesamiento atómico',

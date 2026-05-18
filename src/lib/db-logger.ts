@@ -36,11 +36,19 @@ export async function writeDbLog(
       session_id: entry.sessionId ?? null,
     } as never)
     if (error) {
-      // Fallback a console solo si la BD falla (edge case)
-      console.error('[db-logger] falló escritura a app_logs:', error.message)
+      console.error('[db-logger] falló escritura a app_logs:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        entry,
+      })
     }
-  } catch {
-    // Silencioso: nunca romper el flujo principal por un log
+  } catch (e) {
+    console.error('[db-logger] excepción inesperada escribiendo app_logs:', {
+      exception: e instanceof Error ? e.message : String(e),
+      entry,
+    })
   }
 }
 

@@ -629,28 +629,36 @@ export async function processHomologationCreateNewAll(
     if (error) logger.warn({ err: error.message }, '[create-new] error batch insert aliases (posible duplicado)')
   }
 
-  // 4) Batch update scrapping
-  const allUpdates = jobs.map((j, idx) => {
+  // 4) Batch update scrapping vía RPC (evita upsert con not_null_violation)
+  const updateIds: string[] = []
+  const updateCatalogIds: string[] = []
+  const updateStatuses: string[] = []
+  for (let idx = 0; idx < jobs.length; idx++) {
     const catalogProductId = jobToCatalogId.get(idx)
-    const isRecovered = existingByUrl.has(j.sourceUrl ?? '')
-    if (!catalogProductId) return null
-    return {
-      id: j.row.id,
-      catalog_match_status: 'matched',
-      matched_catalog_product_id: catalogProductId,
-      catalog_matched_at: now,
-      homolog_final_status: isRecovered ? 'MATCHED_EXISTING' : 'CREATED_NEW',
-      homolog_reviewed_at: now,
-    }
-  }).filter(Boolean) as never[]
+    if (!catalogProductId) continue
+    const isRecovered = existingByUrl.has(jobs[idx]!.sourceUrl ?? '')
+    updateIds.push(jobs[idx]!.row.id)
+    updateCatalogIds.push(catalogProductId)
+    updateStatuses.push(isRecovered ? 'MATCHED_EXISTING' : 'CREATED_NEW')
+  }
 
-  if (allUpdates.length > 0) {
-    // Supabase no tiene batch update por ID fácilmente, hacemos upsert
-    const { error } = await admin.from('scrapping').upsert(allUpdates, { onConflict: 'id' })
+  if (updateIds.length > 0) {
+    const { data: updatedCount, error } = await admin.rpc('update_scrapping_matched_batch', {
+      p_ids: updateIds,
+      p_catalog_product_ids: updateCatalogIds,
+      p_homolog_statuses: updateStatuses,
+    })
     if (error) {
       logger.error({ err: error.message }, '[create-new] error batch update scrapping')
+      await logError(admin, {
+        module: '[create-new]',
+        message: 'Error batch update scrapping',
+        context: { code: error.code, detail: error.message, count: updateIds.length },
+        screen: 'create-new-products-modal',
+      })
       return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
     }
+    logger.info({ updatedCount }, '[create-new] scrapping actualizado via RPC')
   }
 
   /* ── Imágenes en paralelo ── */
