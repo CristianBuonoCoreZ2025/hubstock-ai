@@ -1658,7 +1658,7 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
     await logError(gate.admin, {
       module: '[create-new-action]',
       message: 'Error en procesamiento atómico',
-      context: { error: r.error },
+      context: { rawError: r.error },
       screen: 'create-new-products-modal',
     })
     return r

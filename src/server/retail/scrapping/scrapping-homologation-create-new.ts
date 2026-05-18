@@ -581,11 +581,18 @@ export async function processHomologationCreateNewAll(
       })) as never[]
     ).select('id')
     if (error) {
-      logger.error({ err: error.message }, '[create-new] error batch insert catalog_products')
+      const rawError = {
+        pgCode: (error as { code?: string }).code ?? null,
+        pgMessage: (error as { message?: string }).message ?? null,
+        pgDetails: (error as { details?: string }).details ?? null,
+        pgHint: (error as { hint?: string }).hint ?? null,
+        pgConstraint: (error as { constraint?: string }).constraint ?? null,
+      }
+      logger.error(rawError, '[create-new] error batch insert catalog_products')
       await logError(admin, {
         module: '[create-new]',
         message: 'Error batch insert catalog_products',
-        context: { code: error.code, detail: error.message, count: newJobs.length },
+        context: { ...rawError, count: newJobs.length },
         screen: 'create-new-products-modal',
       })
       return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
@@ -649,11 +656,18 @@ export async function processHomologationCreateNewAll(
       p_homolog_statuses: updateStatuses,
     })
     if (error) {
-      logger.error({ err: error.message }, '[create-new] error batch update scrapping')
+      const rawError = {
+        pgCode: (error as { code?: string }).code ?? null,
+        pgMessage: (error as { message?: string }).message ?? null,
+        pgDetails: (error as { details?: string }).details ?? null,
+        pgHint: (error as { hint?: string }).hint ?? null,
+        pgConstraint: (error as { constraint?: string }).constraint ?? null,
+      }
+      logger.error(rawError, '[create-new] error batch update scrapping')
       await logError(admin, {
         module: '[create-new]',
         message: 'Error batch update scrapping',
-        context: { code: error.code, detail: error.message, count: updateIds.length },
+        context: { ...rawError, count: updateIds.length },
         screen: 'create-new-products-modal',
       })
       return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
