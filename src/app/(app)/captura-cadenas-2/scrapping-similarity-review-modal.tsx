@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, ClipboardCheck, Trophy, SkipForward } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   cancelScrappingSimilarityBulkJobAction,
@@ -639,12 +639,19 @@ export function ScrappingSimilarityReviewModal({
         className="flex max-h-[min(92vh,960px)] min-h-0 w-[min(98vw,1440px)] max-w-[min(98vw,1440px)] flex-col gap-4 overflow-hidden p-6 sm:max-w-[min(98vw,1440px)]"
       >
         <DialogHeader className="shrink-0">
-          <DialogTitle>Paso 2 · Similitud (revisión manual)</DialogTitle>
-          <DialogDescription>
-            Primero ejecutá el motor DB y la cola IA desde la pantalla principal (Captura cadenas 2). Esta grilla
-            lista solo filas <span className="font-mono">USER_REVIEW</span>: homologá candidato, elegí otro maestro o
-            marcá producto nuevo; la pasada masiva legacy sigue disponible en la barra de progreso si la usás.
-          </DialogDescription>
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-violet-600 shadow-md shadow-primary/20">
+              <ClipboardCheck className="h-4.5 w-4.5 text-white" />
+            </div>
+            <div>
+              <DialogTitle className="text-base font-bold tracking-tight">
+                Revisión de similitud
+              </DialogTitle>
+              <DialogDescription className="text-xs leading-relaxed">
+                Grilla de filas en revisión humana. Homologá candidatos, elegí otro maestro o marcá producto nuevo.
+              </DialogDescription>
+            </div>
+          </div>
         </DialogHeader>
 
         {homologacionBloqueada ?
@@ -660,16 +667,23 @@ export function ScrappingSimilarityReviewModal({
             prepSummaryLoading={prepSummaryLoading}
           />
         : phase === 'empty' ?
-          <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border px-6 py-10 text-center">
-            <p className="text-base font-medium text-foreground">No quedan filas para revisar en paso 2</p>
-            <p className="max-w-md text-sm text-muted-foreground">
-              La pasada automática resolvió todo el universo pending (vínculos seguros, producto nuevo o ya procesado).
-              {bulkProgress.autoLinked + bulkProgress.autoPendingNew > 0 ?
-                ` Se procesaron ${(bulkProgress.autoLinked + bulkProgress.autoPendingNew + bulkProgress.leftForReview).toLocaleString('es-CL')} fila(s) en total.`
-              : null}
-            </p>
+          <div className="flex min-h-[min(40vh,360px)] flex-1 flex-col items-center justify-center gap-5 rounded-xl border border-emerald-500/20 bg-emerald-500/5 px-6 py-10 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/25">
+              <Trophy className="h-7 w-7 text-white" />
+            </div>
+            <div>
+              <p className="text-lg font-bold tracking-tight text-foreground">
+                ¡Todo clasificado!
+              </p>
+              <p className="mt-1 max-w-md text-sm leading-relaxed text-muted-foreground">
+                La pasada automática resolvió todo el universo pendiente.
+                {bulkProgress.autoLinked + bulkProgress.autoPendingNew > 0 ?
+                  ` Se procesaron ${(bulkProgress.autoLinked + bulkProgress.autoPendingNew + bulkProgress.leftForReview).toLocaleString('es-CL')} fila(s) en total.`
+                : null}
+              </p>
+            </div>
             {bulkError ?
-              <p className="text-sm text-amber-800 dark:text-amber-200">{bulkError}</p>
+              <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">{bulkError}</p>
             : null}
           </div>
         : (
@@ -699,15 +713,16 @@ export function ScrappingSimilarityReviewModal({
             <Button
               type="button"
               variant="secondary"
-              className={FOOTER_ACTION_BTN}
+              className={`gap-2 ${FOOTER_ACTION_BTN}`}
               onClick={() => void skipBulkToReview()}
             >
+              <SkipForward className="h-4 w-4" />
               Ir a revisión manual
             </Button>
           : null}
           <Button
             type="button"
-            variant="secondary"
+            variant="ghost"
             className={FOOTER_ACTION_BTN}
             disabled={applyBusy}
             onClick={() => onOpenChange(false)}
@@ -717,7 +732,7 @@ export function ScrappingSimilarityReviewModal({
           {!homologacionBloqueada && phase === 'review' ?
             <Button
               type="button"
-              className={`inline-flex items-center justify-center gap-2 ${FOOTER_ACTION_BTN}`}
+              className={`gap-2 bg-gradient-to-r from-primary to-violet-600 shadow-md shadow-primary/20 hover:shadow-lg hover:shadow-primary/30 ${FOOTER_ACTION_BTN}`}
               disabled={uiLocked || pendingTotal === 0}
               onClick={() => void onApplyAllPending()}
             >
@@ -896,20 +911,18 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
                                 hint.base_gap != null ||
                                 hint.base_best_catalog_product_id) ?
                                 <p className="tabular-nums">
-                                  <span className="font-semibold">Motor base (hint): </span>
+                                  <span className="font-semibold">Coincidencia: </span>
                                   mejor {formatSimilarityScore(hint.base_best_score)}
                                   {' · '}
                                   2.º {formatSimilarityScore(hint.base_second_score)}
                                   {' · '}
-                                  brecha {formatSimilarityScore(hint.base_gap)}
-                                  {' · '}
-                                  maestro top {shortUuid(hint.base_best_catalog_product_id ?? undefined)}
+                                  diferencia {formatSimilarityScore(hint.base_gap)}
                                 </p>
                               : null}
                               {(hint.ai_score != null || hint.same_product != null || hint.reason?.trim()) ?
                                 <p className="tabular-nums">
-                                  <span className="font-semibold">IA (hint): </span>
-                                  score {formatSimilarityScore(hint.ai_score)}
+                                  <span className="font-semibold">Evaluación IA: </span>
+                                  confianza {formatSimilarityScore(hint.ai_score)}
                                   {' · '}
                                   mismo producto {sameProductLabel(hint.same_product)}
                                   {hint.reason?.trim() ?
@@ -922,7 +935,7 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
                               : null}
                               {blockedAutolink ?
                                 <p className="font-medium text-amber-900 dark:text-amber-200">
-                                  El motor base habilitaba autovínculo; la IA lo frenó para revisión humana.
+                                  La coincidencia automática fue bloqueada por la IA para tu revisión.
                                 </p>
                               : null}
                               {hint.ai_hint?.trim() ?

@@ -20,7 +20,7 @@ export function retailIaHomologationEnabled(): boolean {
 }
 
 export function isRetailIaHomologationConfigured(): boolean {
-  return Boolean(process.env.OPENROUTER_API_KEY?.trim())
+  return Boolean(process.env.OPENROUTER_API_KEYS?.trim() || process.env.OPENROUTER_API_KEY?.trim())
 }
 
 /** Máximo de llamadas OpenRouter por corrida de auto-asociación (evita costo/rate limit). */

@@ -11,7 +11,8 @@ import {
   deriveSectionCategoryFromListingUrl,
   type RetailListingPathConfig,
 } from '@/lib/retail-listing-url-path'
-import { captureLiderRetailPage, partitionLiderCaptureForCleanInsert } from '@/server/retail/capture/lider-capture'
+// Captura y paginación unificada en retail-capture-adapter.ts
+// (lider-capture.ts se usa indirectamente vía adapter)
 import {
   cancelSimilarityBulkJob,
   createSimilarityBulkJob,
@@ -32,13 +33,19 @@ import {
 } from '@/server/retail/scrapping/scrapping-similarity-bulk-prep'
 import {
   processHomologationGrayIaQueue,
+  processHomologationGrayIaBatch,
   type HomologGrayIaSummary,
+  type HomologGrayIaBatchResult,
 } from '@/server/retail/scrapping/scrapping-homologation-ia-gray'
 import {
   recordHomologationUserFeedbackRpc,
   runHomologationStep2ComputeAllPending,
   type HomologationStep2RpcSummary,
 } from '@/server/retail/scrapping/scrapping-homologation-db'
+import {
+  processHomologationCreateNewBatch,
+  type CreateNewProductsBatchResult,
+} from '@/server/retail/scrapping/scrapping-homologation-create-new'
 import type {
   SimilarityBulkBatchStats,
   SimilarityBulkRunStats,
@@ -82,14 +89,15 @@ import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-
 import {
   buildLiderFullCatalogPageSeeds,
   discoverLiderScrapingUrlsPhase1Only,
-  isLiderCatalogSystemSearchUrl,
-  isLiderHtmlBrowseListingUrl,
   LIDER_SCRAPPING_QUEUE_TOTAL_PAGES_OPEN,
   normalizeLiderStorefrontUrl,
-  nextLiderCatalogSystemSliceUrl,
-  nextLiderHtmlBrowseListingPageUrl,
-  type LiderPageSeed,
 } from '@/server/retail/capture/lider-catalog-plan'
+import { discoverVtexScrappingUrlsPhase1 } from '@/server/retail/capture/vtex-catalog-plan'
+import {
+  captureRetailPage,
+  computeNextRetailPageUrl,
+  isVtexRetailer,
+} from '@/server/retail/scrapping/retail-capture-adapter'
 
 type ScrappingUpsertRow = {
   run_id: string
@@ -411,11 +419,37 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
       return { ok: false, error: 'La ejecución ya no está en curso; no se puede armar la cola.' }
     }
 
-    const { urls } = await discoverLiderScrapingUrlsPhase1Only(baseUrl)
-    const fallback =
-      normalizeLiderStorefrontUrl(baseUrl, '/') ?? `${baseUrl.replace(/\/+$/, '')}/`
-    const list = urls.length > 0 ? urls : [fallback]
-    const seeds: LiderPageSeed[] = list.map((href, page_index) => ({ page_url: href, page_index }))
+    let seeds: Array<{ page_url: string; page_index: number }>
+
+    if (isVtexRetailer(row.name)) {
+      // Jumbo o Central Mayorista: usar plan VTEX
+      const vtexResult = await discoverVtexScrappingUrlsPhase1(row.name as 'jumbo' | 'central_mayorista', {
+        pagesPerQuery: 3,
+        pageSize: 20,
+      })
+      if (!vtexResult.ok) {
+        await editor.admin
+          .from('scrapping_runs')
+          .update({
+            status: 'cancelled',
+            finished_at: new Date().toISOString(),
+            total_pages: 0,
+            error_message: vtexResult.error,
+          } as never)
+          .eq('id', runId)
+          .eq('status', 'running' as never)
+        revalidatePath('/captura-cadenas-2')
+        return { ok: false, error: vtexResult.error }
+      }
+      seeds = vtexResult.seeds.map((s, i) => ({ page_url: s.page_url, page_index: i }))
+    } else {
+      // Lider: usar plan tradicional
+      const { urls } = await discoverLiderScrapingUrlsPhase1Only(baseUrl)
+      const fallback =
+        normalizeLiderStorefrontUrl(baseUrl, '/') ?? `${baseUrl.replace(/\/+$/, '')}/`
+      const list = urls.length > 0 ? urls : [fallback]
+      seeds = list.map((href, page_index) => ({ page_url: href, page_index }))
+    }
     if (seeds.length === 0) {
       await editor.admin
         .from('scrapping_runs')
@@ -542,50 +576,62 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
       return { ok: false, error: 'La ejecución ya no está en curso; no se puede completar el descubrimiento.' }
     }
 
-    const fullSeeds = await buildLiderFullCatalogPageSeeds(baseUrl)
-
-    run = await fetchScrappingRunById(editor.admin, runId)
-    if (!run || run.status !== 'running') {
-      return { ok: false, error: 'La ejecución se detuvo antes de terminar de ampliar la cola.' }
-    }
-
-    if (fullSeeds.length === 0) {
-      await editor.admin
-        .from('scrapping_runs')
-        .update({
-          status: 'cancelled',
-          finished_at: new Date().toISOString(),
-          total_pages: 0,
-          error_message: 'No se pudo armar la cola de URLs para este retail. Reintenta más tarde.',
-        } as never)
-        .eq('id', runId)
-        .eq('status', 'running' as never)
-
-      revalidatePath('/captura-cadenas-2')
-      return {
-        ok: false,
-        error: 'No se pudo armar la cola de URLs para este retail. Reintenta más tarde.',
-      }
-    }
-
     const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
-    const { urls: existing, error: listErr } = await listScrappingPageUrlsForRun(editor.admin, runId)
-    if (listErr) {
-      return { ok: false, error: getUserFriendlyErrorMessage(listErr, 'generic') }
+
+    // Para VTEX (Jumbo, Central Mayorista), la cola ya está completa desde Phase 1.
+    // Solo sellamos total_pages sin descubrimiento adicional.
+    let toInsert: Array<{ page_url: string; page_index: number }> = []
+
+    if (isVtexRetailer(row.name)) {
+      const t = await countScrappingPages(editor.admin, runId)
+      if (t.total === 0) {
+        return { ok: false, error: 'No hay páginas en cola para sellar.' }
+      }
+      // VTEX no expande; sellar directamente
+      toInsert = []
+    } else {
+      // Lider: descubrimiento completo del catálogo
+      const fullSeeds = await buildLiderFullCatalogPageSeeds(baseUrl)
+
+      run = await fetchScrappingRunById(editor.admin, runId)
+      if (!run || run.status !== 'running') {
+        return { ok: false, error: 'La ejecución se detuvo antes de terminar de ampliar la cola.' }
+      }
+
+      if (fullSeeds.length === 0) {
+        await editor.admin
+          .from('scrapping_runs')
+          .update({
+            status: 'cancelled',
+            finished_at: new Date().toISOString(),
+            total_pages: 0,
+            error_message: 'No se pudo armar la cola de URLs para este retail. Reintenta más tarde.',
+          } as never)
+          .eq('id', runId)
+          .eq('status', 'running' as never)
+        revalidatePath('/captura-cadenas-2')
+        return {
+          ok: false,
+          error: 'No se pudo armar la cola de URLs para este retail. Reintenta más tarde.',
+        }
+      }
+
+      const { urls: existing, error: listErr } = await listScrappingPageUrlsForRun(editor.admin, runId)
+      if (listErr) {
+        return { ok: false, error: getUserFriendlyErrorMessage(listErr, 'generic') }
+      }
+
+      const maxIx = await getMaxScrappingPageIndexForRun(editor.admin, runId)
+      const appendOrdered = []
+      for (const s of fullSeeds) {
+        const u = s.page_url.trim()
+        if (u && !existing.has(u)) appendOrdered.push(s)
+      }
+      toInsert =
+        existing.size === 0 && maxIx < 0 ?
+          fullSeeds
+        : appendOrdered.map((s, i) => ({ page_url: s.page_url, page_index: maxIx + 1 + i }))
     }
-
-    const maxIx = await getMaxScrappingPageIndexForRun(editor.admin, runId)
-
-    const appendOrdered: LiderPageSeed[] = []
-    for (const s of fullSeeds) {
-      const u = s.page_url.trim()
-      if (u && !existing.has(u)) appendOrdered.push(s)
-    }
-
-    const toInsert: LiderPageSeed[] =
-      existing.size === 0 && maxIx < 0 ?
-        fullSeeds
-      : appendOrdered.map((s, i) => ({ page_url: s.page_url, page_index: maxIx + 1 + i }))
 
     const runBeforeInsert = await fetchScrappingRunById(editor.admin, runId)
     if (!runBeforeInsert || runBeforeInsert.status !== 'running') {
@@ -1138,19 +1184,14 @@ export async function processLiderScrappingRunPageAction(input: {
   const extractedAt = new Date().toISOString()
 
   try {
-    const cap = await captureLiderRetailPage(page.page_url)
+    const cap = await captureRetailPage(page.retailer, page.page_url)
     if (!cap.ok) {
       pageError = cap.error
     } else {
-      const part = partitionLiderCaptureForCleanInsert({
-        snapshots: cap.data.snapshots,
-        stagingRows: cap.data.stagingRows,
-        rawProductCount: cap.data.rawProductCount,
-      })
-      productsFound = part.productsFound
+      productsFound = cap.data.rawProductCount
 
       const pathDerived = deriveSectionCategoryFromListingUrl(page.page_url, listingPathConfig ?? undefined)
-      const rows = part.cleanStaging.map((r) => ({
+      const rows = cap.data.snapshots.map((r) => ({
         run_id: runId,
         retailer: page.retailer,
         external_ref: r.external_ref,
@@ -1159,7 +1200,7 @@ export async function processLiderScrappingRunPageAction(input: {
         brand: r.brand ?? null,
         price: r.price,
         currency: 'CLP',
-        source_chain: 'lider',
+        source_chain: page.retailer,
         listing_url: page.page_url,
         sections: pathDerived.sections,
         categories: pathDerived.categories,
@@ -1193,12 +1234,7 @@ export async function processLiderScrappingRunPageAction(input: {
       }
 
       if (!pageError) {
-        const nextUrl =
-          isLiderCatalogSystemSearchUrl(page.page_url) ?
-            nextLiderCatalogSystemSliceUrl(page.page_url, cap.data.rawProductCount)
-          : isLiderHtmlBrowseListingUrl(page.page_url) ?
-            nextLiderHtmlBrowseListingPageUrl(page.page_url, cap.data.rawProductCount)
-          : null
+        const nextUrl = computeNextRetailPageUrl(page.page_url, page.retailer, cap.data.rawProductCount)
         if (nextUrl) {
           const app = await appendScrappingPage(editor.admin, runId, page.retailer, nextUrl)
           if (app.error) {
@@ -1555,6 +1591,37 @@ export async function runScrappingHomologationGrayIaAction(): Promise<
   const gate = await assertNoRunningScrappingForHomologation()
   if (!gate.ok) return { ok: false, error: gate.error }
   const r = await processHomologationGrayIaQueue(gate.admin)
+  if (!r.ok) return r
+  revalidatePath('/captura-cadenas-2')
+  revalidatePath('/catalogo')
+  return r
+}
+
+/** Paso 2 · cola IA gris en lotes pequeños (para progress real en el wizard). */
+export async function runScrappingHomologationGrayIaBatchAction(input: {
+  afterId?: string | null
+  batchSize?: number
+}): Promise<
+  { ok: true; result: HomologGrayIaBatchResult } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const r = await processHomologationGrayIaBatch(gate.admin, input)
+  if (!r.ok) return r
+  revalidatePath('/captura-cadenas-2')
+  return r
+}
+
+/** Paso 3 · crear productos nuevos en lotes pequeños (para progress real en el wizard). */
+export async function runScrappingHomologationCreateNewBatchAction(input: {
+  afterId?: string | null
+  batchSize?: number
+}): Promise<
+  { ok: true; result: CreateNewProductsBatchResult } | { ok: false; error: string }
+> {
+  const gate = await assertNoRunningScrappingForHomologation()
+  if (!gate.ok) return { ok: false, error: gate.error }
+  const r = await processHomologationCreateNewBatch(gate.admin, input)
   if (!r.ok) return r
   revalidatePath('/captura-cadenas-2')
   revalidatePath('/catalogo')

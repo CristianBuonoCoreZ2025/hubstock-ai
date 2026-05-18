@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Sparkles, Square, Trash2 } from 'lucide-react'
+import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Sparkles, PackagePlus } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   barridoApiBarridoContext,
@@ -22,8 +22,6 @@ import {
   forceFinalizeScrappingRunForRetailAction,
   getScrappingHomologacionPendingCountAction,
   getScrappingHomologationDashboardAction,
-  runScrappingHomologationGrayIaAction,
-  runScrappingHomologationStep2DbMotorAction,
   type ScrappingExactCatalogMatchStats,
 } from '@/app/actions/retail-scrapping'
 import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
@@ -33,6 +31,7 @@ import type {
   BarridoPhase2SealResponse,
 } from '@/types/retail-scrapping-barrido-api'
 import { ScrappingSimilarityReviewModal } from '@/app/(app)/captura-cadenas-2/scrapping-similarity-review-modal'
+import { HomologationWizardModal } from '@/app/(app)/captura-cadenas-2/homologation-wizard-modal'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -263,8 +262,7 @@ export function CapturaCadenas2Client() {
     grayIaQueued: number
     userReview: number
   } | null>(null)
-  const [homologDbBusy, setHomologDbBusy] = useState(false)
-  const [homologIaBusy, setHomologIaBusy] = useState(false)
+  const [homologWizardOpen, setHomologWizardOpen] = useState(false)
   const [forceFinalizeBusy, setForceFinalizeBusy] = useState(false)
 
   const canStopScrapping = useMemo(() => {
@@ -289,42 +287,6 @@ export function CapturaCadenas2Client() {
     }
   }, [])
 
-  const onRunHomologDbMotor = useCallback(async () => {
-    if (homologacionBloqueada) return
-    setHomologDbBusy(true)
-    try {
-      const out = await runScrappingHomologationStep2DbMotorAction()
-      if (!out.ok) {
-        toast.error(out.error)
-        return
-      }
-      toast.success(
-        `Motor DB: ${out.summary.processed.toLocaleString('es-CL')} fila(s) · tentativo base ${out.summary.auto_tentative_base.toLocaleString('es-CL')} · zona gris ${out.summary.gray_ia_queued.toLocaleString('es-CL')} · nuevo ${out.summary.pending_new.toLocaleString('es-CL')}`,
-      )
-      await refreshScrappingPendingHomologacion()
-    } finally {
-      setHomologDbBusy(false)
-    }
-  }, [homologacionBloqueada, refreshScrappingPendingHomologacion])
-
-  const onRunHomologGrayIa = useCallback(async () => {
-    if (homologacionBloqueada) return
-    setHomologIaBusy(true)
-    try {
-      const out = await runScrappingHomologationGrayIaAction()
-      if (!out.ok) {
-        toast.error(out.error)
-        return
-      }
-      const s = out.summary
-      toast.success(
-        `IA gris: ${s.processed.toLocaleString('es-CL')} procesada(s) · revisión ${s.userReview.toLocaleString('es-CL')} · tentativo IA ${s.tentativeAi.toLocaleString('es-CL')} · rechazo ${s.rejected.toLocaleString('es-CL')}${s.errors ? ` · errores ${s.errors.toLocaleString('es-CL')}` : ''}`,
-      )
-      await refreshScrappingPendingHomologacion()
-    } finally {
-      setHomologIaBusy(false)
-    }
-  }, [homologacionBloqueada, refreshScrappingPendingHomologacion])
 
   /** Hay filas `pending` en scrapping: el paso 2 (similitud) puede actuar sobre ellas. */
   const paso2Destacado = useMemo(() => {
@@ -506,7 +468,7 @@ export function CapturaCadenas2Client() {
         return
       }
       toast.message(
-        'Tablas scrapping y scrapping_pages vaciadas. Los registros de corridas (scrapping_runs) siguen en el historial.',
+        'Datos de captura vaciados. El historial de corridas se mantiene.',
       )
       await reloadRuns()
       await refreshScrappingPendingHomologacion()
@@ -971,7 +933,7 @@ export function CapturaCadenas2Client() {
                 <span className="tabular-nums text-foreground">
                   {barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')}
                 </span>{' '}
-                filas en cola de páginas.
+                páginas en cola.
               </p>
 
               {barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail ?
@@ -1062,8 +1024,8 @@ export function CapturaCadenas2Client() {
                   onClick={() => void startBarridoFreshFromModal()}
                   title={
                     barridoPlanCtx.runningForRetail ?
-                      'Cancela la corrida en curso, vacía scrapping y scrapping_pages, y crea una corrida nueva'
-                    : 'Cancela cualquier corrida en curso, vacía scrapping y scrapping_pages, y crea una corrida nueva'
+                      'Cancela la corrida en curso, limpia los datos capturados y arranca de nuevo'
+                    : 'Cancela cualquier corrida en curso, limpia los datos capturados y arranca de nuevo'
                   }
                 >
                   {barridoPlanActionBusy || fullSweepBusy ?
@@ -1085,7 +1047,7 @@ export function CapturaCadenas2Client() {
                     barridoPlanCtx.anyRunningGlobally
                   }
                   onClick={() => void onPurgeScrappingIdle()}
-                  title="Solo si no hay corridas en curso. Vacía scrapping y scrapping_pages."
+                  title="Solo si no hay corridas en curso. Limpia los datos capturados."
                 >
                   {purgeIdleBusy ?
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
@@ -1100,13 +1062,9 @@ export function CapturaCadenas2Client() {
                 <div className="space-y-2 rounded-md border border-dashed border-border bg-background/80 px-3 py-3">
                   <p className="text-xs font-medium text-foreground">Cierre de la corrida en curso</p>
                   <p className="text-xs text-muted-foreground">
-                    Si no vas a seguir leyendo listados, podés dar por finalizado el scrapping pendiente: cada página
-                    <span className="font-medium"> pending </span> o <span className="font-medium">processing</span>{' '}
-                    pasa a <span className="font-medium">done</span> sin descarga, la corrida queda{' '}
-                    <span className="font-medium">completed</span>, se sella el total de la cola y se actualizan los
-                    picos en la fila del retail (<span className="font-mono">max_pages</span>,{' '}
-                    <span className="font-mono">max_products</span>). Usá esto cuando el navegador ya no está leyendo
-                    la cola (no durante un barrido activo en esta pestaña).
+                    Si no vas a seguir capturando productos, podés dar por finalizada la corrida actual.
+                    Las páginas pendientes se marcarán como completadas sin descargar.
+                    Usá esto cuando ya no estés capturando activamente.
                   </p>
                   <Button
                     type="button"
@@ -1164,12 +1122,10 @@ export function CapturaCadenas2Client() {
           <div>
             <p className="text-sm font-medium text-foreground">Scraper retail (motor Lider)</p>
             <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-              Podés usar <span className="font-medium text-foreground">Detener scrapping</span> para cancelar la cola
+              Podés usar <span className="font-medium text-foreground">Detener scrapping</span> para cancelar la captura
               en curso. Al pulsar <span className="font-medium text-foreground">Barrido</span> se abre un plan: podés
               reanudar una corrida interrumpida, reencolar listados fallidos de la última corrida, arrancar un barrido
-              nuevo (cancela otras corridas en curso, vacía <code className="rounded bg-muted px-1">scrapping</code> y{' '}
-              <code className="rounded bg-muted px-1">scrapping_pages</code> y crea un registro nuevo en{' '}
-              <code className="rounded bg-muted px-1">scrapping_runs</code>) o vaciar tablas si no hay nada en curso.
+              nuevo o vaciar los datos capturados si no hay nada en curso.
               Elegí el retail y revisá el log abajo.
             </p>
           </div>
@@ -1234,8 +1190,7 @@ export function CapturaCadenas2Client() {
           <div className="mt-3 space-y-1">
             <div className="flex justify-between text-[10px] text-muted-foreground">
               <span>
-                Avance: procesadas / total en cola (<span className="font-mono">max_pages</span> no acota ni corta el
-                barrido). La barra no retrocede si la cola crece.
+                Avance: páginas procesadas del total en cola. La barra no retrocede si la cola crece.
               </span>
               <span className="tabular-nums">{fullSweepBusy ? `${progressBarPercent}%` : '—'}</span>
             </div>
@@ -1258,15 +1213,12 @@ export function CapturaCadenas2Client() {
             </div>
             {fullSweepBusy && retailMaxPages > 0 ? (
               <p className="text-[10px] text-muted-foreground">
-                Referencia <span className="font-mono">retail.max_pages</span>: {retailMaxPages} (solo dato; no corta
-                el barrido).
+                Referencia histórica: {retailMaxPages} páginas (informativo, no limita la captura).
               </p>
             ) : null}
             {!fullSweepBusy ? (
               <p className="text-[10px] text-muted-foreground">
-                Los campos <span className="font-mono">max_pages</span> y <span className="font-mono">max_products</span>{' '}
-                en <span className="font-mono">retail</span> son solo referencia (último pico histórico); no cortan el
-                barrido ni fijan cuántas páginas se descargan.
+                Los valores de páginas y productos máximos son solo referencia histórica; no limitan la captura actual.
               </p>
             ) : null}
           </div>
@@ -1274,7 +1226,7 @@ export function CapturaCadenas2Client() {
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           <div className="rounded-md border border-border bg-background/80 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cola (scrapping_pages)</p>
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Cola de páginas</p>
             <p className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
               {queuePagesProcessed} / {queuePagesTotal}
             </p>
@@ -1290,7 +1242,7 @@ export function CapturaCadenas2Client() {
             <p className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
               {scraperRowsTotal.toLocaleString('es-CL')}
             </p>
-            <p className="mt-1 text-xs text-muted-foreground">Filas acumuladas en esta corrida</p>
+            <p className="mt-1 text-xs text-muted-foreground">Productos capturados en esta corrida</p>
           </div>
         </div>
 
@@ -1391,9 +1343,8 @@ export function CapturaCadenas2Client() {
             </>
           ) : (
             <p className="mt-2 text-sm text-muted-foreground">
-              Al terminar un barrido (bien, con error, detención o corte de red) aparece aquí el detalle. Si el servidor
-              seguía con la corrida en <span className="font-mono">running</span>, el mismo texto se guarda en la
-              columna «Mensaje» de la tabla de corridas.
+              Al terminar un barrido (exitoso, con error o detención) aparece aquí el detalle. El mismo resumen
+              se guarda en la columna «Mensaje» del historial de corridas.
             </p>
           )}
         </div>
@@ -1438,9 +1389,8 @@ export function CapturaCadenas2Client() {
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <p className="text-sm font-medium text-foreground">Corridas recientes</p>
         <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-          Últimas 32 filas de <code className="rounded bg-muted px-1">scrapping_runs</code>. La columna Mensaje muestra
-          resúmenes de fallas al cerrar la cola, detención por usuario o el texto guardado si el barrido se interrumpió
-          con la corrida aún en <span className="font-mono">running</span>.
+          Historial de las últimas 32 corridas de captura. La columna Mensaje muestra
+          resúmenes de fallas, detenciones manuales o interrupciones del proceso.
         </p>
         <div className="mt-3 overflow-x-auto rounded-md border border-border">
           <table className="w-full min-w-[760px] border-collapse text-sm">
@@ -1513,13 +1463,9 @@ export function CapturaCadenas2Client() {
           <div>
             <p className="text-sm font-medium text-foreground">Análisis de homologación al catálogo</p>
             <p className="mt-1 max-w-prose text-xs text-muted-foreground">
-              Solo podés ejecutar estos pasos cuando no haya una corrida de scrapping en curso (completada
-              automáticamente o cerrada con «Dar por finalizado…» en el plan del barrido). La tabla{' '}
-              <code className="rounded bg-muted px-1">scrapping</code> se va limpiando paso a paso. El maestro
-              surgió del mismo universo Lider: muchas filas pueden pasar a «nuevo» hasta que el catálogo diverja; en
-              futuros scrapping (otras cadenas) la similitud será más discriminante. Al barrer, los productos que ya
-              tienen vínculo en <span className="font-mono">catalog_retail_links</span> no se vuelven a insertar; podés
-              El paso 1 quita de scrapping lo que ya está en tu catálogo (cadena + ref) antes de homologar por nombre exacto.
+              Estos pasos solo se ejecutan cuando no hay una captura en curso (finalizada automáticamente o cerrada
+              manualmente). Los productos ya vinculados a tu catálogo no se procesan de nuevo.
+              El paso 1 identifica productos que ya están en tu catálogo antes de buscar coincidencias por nombre.
             </p>
           </div>
         </div>
@@ -1536,7 +1482,7 @@ export function CapturaCadenas2Client() {
 
         {!homologacionBloqueada && scrappingPendingHomologacion !== null ?
           <p className="mt-3 text-xs text-muted-foreground tabular-nums">
-            Filas <span className="font-mono">pending</span> en scrapping (para pasos 1–3):{' '}
+            Productos pendientes de procesar:{' '}
             <span className="font-medium text-foreground">
               {scrappingPendingHomologacion.toLocaleString('es-CL')}
             </span>
@@ -1545,29 +1491,35 @@ export function CapturaCadenas2Client() {
 
         {paso2Destacado ?
           <p className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-950 dark:text-sky-100">
-            Hay filas <span className="font-mono">pending</span> en scrapping. Abrí el paso 2 para revisar similitud
-            en una grilla: candidatos por marca, nombre y precio del maestro dentro de ±3000 CLP respecto al precio
-            capturado. Si no corresponde ninguno, marcá «No / nuevo» y la fila pasa al paso 3.
+            Hay productos pendientes de clasificar. Abrí el paso 2 para revisar los candidatos más parecidos
+            por marca, nombre y precio. Si ninguno corresponde, marcá «No / nuevo» para crear un producto nuevo.
           </p>
         : !homologacionBloqueada && scrappingPendingHomologacion === 0 ?
           <p className="mt-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-950 dark:text-emerald-100">
-            No quedan filas <span className="font-mono">pending</span> en scrapping para esta tubería de homologación.
+            Todos los productos capturados fueron procesados. No quedan pendientes.
           </p>
         : null}
 
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="flex flex-col rounded-md border border-border bg-muted/25 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Paso 1 · Listo</p>
-            <p className="mt-1 text-sm font-medium text-foreground">Nombre + marca = maestro</p>
-            <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Primero quita de scrapping lo que ya está en tu catálogo (<span className="font-mono">catalog_retail_links</span>
-              , misma cadena + ref). Luego homologa por nombre y marca exactos al maestro y actualiza precio de
-              referencia. No vuelve a pedirte lo que ya tenías vinculado.
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          {/* ━━━ PASO 1: Coincidencias exactas ━━━ */}
+          <div className="group relative flex flex-col overflow-hidden rounded-xl border border-border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 to-blue-500" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 shadow-md shadow-sky-500/20">
+                <Link2 className="h-4.5 w-4.5 text-white" />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paso 1</p>
+                <p className="text-sm font-bold tracking-tight text-foreground">Coincidencias exactas</p>
+              </div>
+            </div>
+            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
+              Quita de scrapping lo que ya está en tu catálogo y homologa por nombre + marca exactos al maestro.
             </p>
             <Button
               type="button"
               variant="secondary"
-              className="mt-4 h-9 w-full shrink-0"
+              className="mt-4 h-9 w-full shrink-0 gap-2"
               onClick={() => void onApplyExactCatalogMatches()}
               disabled={homologacionBloqueada || exactMatchBusy}
               title={
@@ -1577,115 +1529,109 @@ export function CapturaCadenas2Client() {
               }
             >
               {exactMatchBusy ?
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-              : <Link2 className="mr-2 h-4 w-4" aria-hidden />}
-              Coincidencias exactas
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              : <Link2 className="h-4 w-4" aria-hidden />}
+              Ejecutar paso 1
             </Button>
           </div>
 
+          {/* ━━━ PASO 2: Homologación inteligente ━━━ */}
           <div
-            className={
-              paso2Destacado ?
-                'flex flex-col rounded-md border border-primary/40 bg-primary/5 p-4'
-              : 'flex flex-col rounded-md border border-dashed border-border bg-muted/10 p-4 opacity-90'
-            }
+            className={`group relative flex flex-col overflow-hidden rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${
+              paso2Destacado
+                ? 'border-primary/30 bg-card shadow-primary/5'
+                : 'border-dashed border-border bg-card opacity-90'
+            }`}
           >
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {paso2Destacado ? 'Paso 2 · Disponible' : 'Paso 2 · Sin cola'}
-            </p>
-            <p className="mt-1 text-sm font-medium text-foreground">Homologación inteligente</p>
-            <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Calcula scores base, evalúa zona gris con IA y revisa casos ambiguos.
+            <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary to-violet-500 ${paso2Destacado ? 'opacity-100' : 'opacity-30'}`} />
+            <div className="flex items-center gap-3">
+              <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
+                paso2Destacado
+                  ? 'bg-gradient-to-br from-primary to-violet-600 shadow-primary/25'
+                  : 'bg-muted shadow-none'
+              }`}>
+                <Sparkles className={`h-4.5 w-4.5 ${paso2Destacado ? 'text-white' : 'text-muted-foreground'}`} />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {paso2Destacado ? 'Paso 2 · Disponible' : 'Paso 2 · Sin cola'}
+                </p>
+                <p className="text-sm font-bold tracking-tight text-foreground">Homologación inteligente</p>
+              </div>
+            </div>
+            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
+              Clasificación automática de productos con asistencia de IA y revisión de casos dudosos.
             </p>
 
-            {/* Botón 1: Calcular scores base */}
             <Button
               type="button"
               variant="default"
-              className="mt-4 h-9 w-full"
+              className="mt-4 h-9 w-full gap-2 bg-gradient-to-r from-primary to-violet-600 shadow-md shadow-primary/20 transition-shadow hover:shadow-lg hover:shadow-primary/30"
               disabled={
                 homologacionBloqueada ||
                 exactMatchBusy ||
                 fullSweepBusy ||
                 runsBusy ||
                 scrappingPendingHomologacion === null ||
-                scrappingPendingHomologacion === 0 ||
-                homologDbBusy
+                scrappingPendingHomologacion === 0
               }
-              onClick={() => void onRunHomologDbMotor()}
+              onClick={() => setHomologWizardOpen(true)}
             >
-              {homologDbBusy ?
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-              : <Play className="mr-2 h-4 w-4" aria-hidden />}
-              1. Calcular scores base
+              <Zap className="h-4 w-4" aria-hidden />
+              Iniciar homologación
             </Button>
 
-            {/* Botón 2: IA zona gris (solo si hay casos en zona gris) */}
-            {homologDash && homologDash.grayIaQueued > 0 ?
-              <Button
-                type="button"
-                variant="secondary"
-                className="mt-2 h-9 w-full shrink-0"
-                disabled={
-                  homologacionBloqueada ||
-                  exactMatchBusy ||
-                  fullSweepBusy ||
-                  runsBusy ||
-                  homologIaBusy
-                }
-                onClick={() => void onRunHomologGrayIa()}
-              >
-                {homologIaBusy ?
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                : <Sparkles className="mr-2 h-4 w-4" aria-hidden />}
-                2. Evaluar zona gris con IA ({homologDash.grayIaQueued.toLocaleString('es-CL')})
-              </Button>
-            : null}
-
-            {/* Botón 3: Revisar casos (solo si hay casos para revisión) */}
             {homologDash && homologDash.userReview > 0 ?
               <Button
                 type="button"
                 variant="outline"
-                className="mt-2 h-9 w-full shrink-0"
-                disabled={
-                  homologacionBloqueada ||
-                  exactMatchBusy ||
-                  fullSweepBusy ||
-                  runsBusy
-                }
+                className="mt-2 h-9 w-full shrink-0 gap-2"
+                disabled={homologacionBloqueada}
                 onClick={() => setScrappingSimilarityModalOpen(true)}
               >
-                <LayoutGrid className="mr-2 h-4 w-4" aria-hidden />
-                3. Revisar casos ({homologDash.userReview.toLocaleString('es-CL')})
+                <LayoutGrid className="h-4 w-4" aria-hidden />
+                Revisar casos ({homologDash.userReview.toLocaleString('es-CL')})
               </Button>
             : null}
 
-            {/* Estado cuando no hay nada pendiente */}
             {homologDash && homologDash.pendingAny === 0 ?
               <p className="mt-3 text-center text-xs text-muted-foreground">
                 No hay productos pendientes de homologación.
               </p>
             : null}
 
-            {/* Contadores */}
             {homologDash ?
-              <div className="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[10px] leading-snug text-muted-foreground tabular-nums">
-                <span>Total: {homologDash.pendingAny.toLocaleString('es-CL')}</span>
-                <span>· Gris: {homologDash.grayIaQueued.toLocaleString('es-CL')}</span>
-                <span>· Revisar: {homologDash.userReview.toLocaleString('es-CL')}</span>
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                <span className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-primary/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-primary">
+                  {homologDash.pendingAny.toLocaleString('es-CL')} <span className="font-normal opacity-70">total</span>
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/15 bg-amber-500/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-amber-700">
+                  {homologDash.grayIaQueued.toLocaleString('es-CL')} <span className="font-normal opacity-70">gris</span>
+                </span>
+                <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/15 bg-sky-500/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-sky-700">
+                  {homologDash.userReview.toLocaleString('es-CL')} <span className="font-normal opacity-70">revisar</span>
+                </span>
               </div>
             : null}
           </div>
 
-          <div className="flex flex-col rounded-md border border-dashed border-border bg-muted/10 p-4 opacity-90">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Paso 3 · Próximo</p>
-            <p className="mt-1 text-sm font-medium text-foreground">Nuevos en catálogo</p>
-            <p className="mt-2 flex-1 text-xs leading-relaxed text-muted-foreground">
-              Productos sin homólogo: alta en maestro con sección/categoría (crear o reutilizar taxonomía), realocación
-              manual después si hace falta.
+          {/* ━━━ PASO 3: Nuevos en catálogo ━━━ */}
+          <div className="group relative flex flex-col overflow-hidden rounded-xl border border-dashed border-border bg-card p-5 opacity-90 shadow-sm">
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 to-teal-500 opacity-30" />
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted shadow-none">
+                <PackagePlus className="h-4.5 w-4.5 text-muted-foreground" />
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paso 3 · Próximo</p>
+                <p className="text-sm font-bold tracking-tight text-foreground">Nuevos en catálogo</p>
+              </div>
+            </div>
+            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
+              Productos sin homólogo: alta en maestro con sección y categoría. Taxonomía reutilizable.
             </p>
-            <Button type="button" variant="outline" className="mt-4 h-9 w-full" disabled>
+            <Button type="button" variant="outline" className="mt-4 h-9 w-full gap-2" disabled>
+              <PackagePlus className="h-4 w-4" aria-hidden />
               Próximamente
             </Button>
           </div>
@@ -1704,6 +1650,20 @@ export function CapturaCadenas2Client() {
         : null}
 
       </div>
+
+      <HomologationWizardModal
+        open={homologWizardOpen}
+        onOpenChange={setHomologWizardOpen}
+        pendingCount={scrappingPendingHomologacion ?? 0}
+        grayIaQueued={homologDash?.grayIaQueued ?? 0}
+        onFinished={async () => {
+          await refreshScrappingPendingHomologacion()
+        }}
+        onOpenReview={() => {
+          setHomologWizardOpen(false)
+          setScrappingSimilarityModalOpen(true)
+        }}
+      />
 
       <ScrappingSimilarityReviewModal
         open={scrappingSimilarityModalOpen}

@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Zap, Trash2, Brain, SkipForward } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import type { ScrappingSimilarityPrepSummary } from '@/server/retail/scrapping/scrapping-similarity-bulk-summary'
 
@@ -29,6 +29,9 @@ export type ScrappingSimilarityBulkProgressProps = {
   prepSummaryLoading?: boolean
 }
 
+/* Las animaciones (bulk-shimmer, bulk-fade-up, bulk-count-pop, bulk-pulse-ring)
+   están definidas en globals.css para centralizar estilos. */
+
 function formatElapsedDuration(ms: number): string {
   const sec = Math.floor(ms / 1000)
   const h = Math.floor(sec / 3600)
@@ -37,6 +40,23 @@ function formatElapsedDuration(ms: number): string {
   if (h > 0) return `${h} h ${m} min ${s} s`
   if (m > 0) return `${m} min ${s} s`
   return `${s} s`
+}
+
+function ShimmerProgressBar({ pct, indeterminate }: { pct: number; indeterminate?: boolean }) {
+  return (
+    <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted/60">
+      <div
+        className="h-full rounded-full"
+        style={{
+          background: 'linear-gradient(90deg, hsl(var(--primary)) 0%, hsl(var(--primary) / 0.3) 50%, hsl(var(--primary)) 100%)',
+          backgroundSize: '200% 100%',
+          animation: indeterminate ? 'bulk-shimmer 1.8s ease-in-out infinite' : undefined,
+          width: indeterminate ? '100%' : `${pct}%`,
+          transition: 'width 0.5s ease-out',
+        }}
+      />
+    </div>
+  )
 }
 
 export function ScrappingSimilarityBulkProgress({
@@ -63,156 +83,149 @@ export function ScrappingSimilarityBulkProgress({
   )
 
   useEffect(() => {
-    if (bulkSessionStartedAtMs == null) {
-      setElapsedLabel(null)
-      return
-    }
+    if (bulkSessionStartedAtMs == null) return
     const tick = (): void => {
       setElapsedLabel(formatElapsedDuration(Date.now() - bulkSessionStartedAtMs))
     }
     tick()
     const id = window.setInterval(tick, 1000)
-    return (): void => window.clearInterval(id)
+    return (): void => {
+      window.clearInterval(id)
+      setElapsedLabel(null)
+    }
   }, [bulkSessionStartedAtMs])
   const isPurge = step === 'purge'
-  const denom = total > 0 ? total : Math.max(processed, 1)
+  const effectiveTotal = total > 0 ? Math.max(total, processed) : Math.max(processed, 1)
+  const displayProcessed = Math.min(processed, effectiveTotal)
   const waitingFirstBatch = !isPurge && total > 0 && processed === 0
   const pct =
     isPurge ? (processed > 0 ? 50 : 8)
     : waitingFirstBatch ? 4
-    : Math.min(100, Math.round((processed / denom) * 100))
-  const remaining = Math.max(0, total - processed)
+    : Math.min(100, Math.round((displayProcessed / effectiveTotal) * 100))
+  const remaining = Math.max(0, effectiveTotal - displayProcessed)
 
   return (
     <div
-      className="flex min-h-[min(52vh,520px)] flex-1 flex-col items-center justify-center gap-6 rounded-xl border border-border bg-muted/20 px-6 py-10 dark:bg-muted/10"
+      className="flex min-h-[min(52vh,520px)] flex-1 flex-col items-center justify-center gap-6 rounded-xl border border-border bg-muted/10 px-6 py-10"
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="flex flex-col items-center gap-3 text-center">
-        <div className="flex size-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-          <Loader2 className="size-7 animate-spin" aria-hidden />
+
+      {/* ── Header animado ── */}
+      <div className="flex flex-col items-center gap-4 text-center" style={{ animation: 'bulk-fade-up 0.4s ease-out both' }}>
+        <div className="relative flex size-16 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-violet-600 shadow-lg shadow-primary/25">
+          <div
+            className="absolute inset-0 rounded-2xl bg-primary/40"
+            style={{ animation: 'bulk-pulse-ring 2s ease-in-out infinite' }}
+          />
+          {isPurge
+            ? <Trash2 className="relative size-7 text-white" aria-hidden />
+            : <Zap className="relative size-7 text-white" aria-hidden />
+          }
         </div>
         <div>
-          <h3 className="text-lg font-semibold text-foreground">
-            {isPurge ? 'Limpiando cola duplicada' : 'Homologación automática en curso'}
+          <h3 className="text-lg font-bold tracking-tight text-foreground">
+            {isPurge ? 'Limpiando cola duplicada' : 'Homologación automática'}
           </h3>
-          <p className="mt-1 max-w-lg text-sm text-muted-foreground">
-            {isPurge ?
-              'Quitando filas de scrapping que ya tienen vínculo en el catálogo (misma cadena + referencia). No se tocan maestros ni vínculos.'
-            : 'Procesando en el servidor; la barra se actualiza cada pocos segundos. Si ya corriste esta pasada, puedes ir directo a la grilla.'}
+          <p className="mt-1 max-w-lg text-sm leading-relaxed text-muted-foreground">
+            {isPurge
+              ? 'Quitando filas de scrapping que ya tienen vínculo en el catálogo.'
+              : 'Procesando en el servidor. La barra se actualiza cada pocos segundos.'}
           </p>
         </div>
       </div>
 
+      {/* ── Vista previa motor base ── */}
       {!isPurge ?
-        <div className="w-full max-w-xl rounded-lg border border-border bg-background/90 px-4 py-3 text-left text-sm shadow-sm">
-          <p className="font-semibold text-foreground">Vista previa · motor base (sin aplicar aún)</p>
+        <div
+          className="w-full max-w-xl rounded-xl border border-border bg-card px-5 py-4 text-left shadow-sm"
+          style={{ animation: 'bulk-fade-up 0.4s ease-out 0.1s both' }}
+        >
+          <div className="flex items-center gap-2">
+            <Brain className="h-4 w-4 text-muted-foreground" />
+            <p className="text-sm font-bold tracking-tight text-foreground">Estimación previa</p>
+          </div>
           {prepSummaryLoading ?
-            <p className="mt-2 flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
-              Consultando la base y estimando desglose…
+            <p className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+              Analizando productos pendientes…
             </p>
           : prepSummary ?
             <>
-              <p className="mt-2 tabular-nums text-muted-foreground">
-                <span className="font-medium text-foreground">
+              <p className="mt-2 text-xs tabular-nums text-muted-foreground">
+                <span className="font-bold text-foreground">
                   {prepSummary.totalPending.toLocaleString('es-CL')}
                 </span>{' '}
-                fila(s){' '}
-                <span className="text-muted-foreground">
-                  pending
-                  {prepSummary.rowsAnalyzed > 0 && prepSummary.rowsAnalyzed !== prepSummary.totalPending ?
-                    ` · analizadas para estimación: ${prepSummary.rowsAnalyzed.toLocaleString('es-CL')}`
-                  : null}
-                </span>
+                producto(s) pendientes
+                {prepSummary.rowsAnalyzed > 0 && prepSummary.rowsAnalyzed !== prepSummary.totalPending ?
+                  <span className="text-muted-foreground/70"> · analizados: {prepSummary.rowsAnalyzed.toLocaleString('es-CL')}</span>
+                : null}
               </p>
               {prepSummary.prepSliceError ?
                 <p className="mt-2 text-xs text-amber-800 dark:text-amber-200">{prepSummary.prepSliceError}</p>
               : (
-                <ul className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs tabular-nums sm:grid-cols-3">
-                  <li>
-                    Autovínculo estimado:{' '}
-                    <span className="font-medium text-foreground">
-                      {prepSummary.estimatedAutoLink.toLocaleString('es-CL')}
-                    </span>
-                  </li>
-                  <li>
-                    Producto nuevo estimado:{' '}
-                    <span className="font-medium text-foreground">
-                      {prepSummary.estimatedAutoPendingNew.toLocaleString('es-CL')}
-                    </span>
-                  </li>
-                  <li>
-                    Revisión estimada:{' '}
-                    <span className="font-medium text-foreground">
-                      {prepSummary.estimatedNeedsReview.toLocaleString('es-CL')}
-                    </span>
-                  </li>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-emerald-700">
+                    {prepSummary.estimatedAutoLink.toLocaleString('es-CL')}
+                    <span className="font-normal opacity-70">autovínculo</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-lg border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-amber-700">
+                    {prepSummary.estimatedAutoPendingNew.toLocaleString('es-CL')}
+                    <span className="font-normal opacity-70">nuevo</span>
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-sky-700">
+                    {prepSummary.estimatedNeedsReview.toLocaleString('es-CL')}
+                    <span className="font-normal opacity-70">revisión</span>
+                  </span>
                   {prepSummary.iaEnabled ?
-                    <li className="col-span-2 sm:col-span-3">
-                      Alcance IA (si la pasada sigue activa): hasta{' '}
-                      <span className="font-medium text-foreground">
-                        {prepSummary.estimatedIaInvocations.toLocaleString('es-CL')}
-                      </span>{' '}
-                      fila(s) podrían llamar al modelo · tope por corrida:{' '}
-                      {prepSummary.iaMaxPerRun.toLocaleString('es-CL')}
-                    </li>
+                    <span className="inline-flex items-center gap-1 rounded-lg border border-violet-500/20 bg-violet-500/10 px-2 py-0.5 text-xs font-bold tabular-nums text-violet-700">
+                      {prepSummary.estimatedIaInvocations.toLocaleString('es-CL')}
+                      <span className="font-normal opacity-70">IA est.</span>
+                    </span>
                   : (
-                    <li className="col-span-2 text-muted-foreground sm:col-span-3">IA desactivada o sin API key.</li>
+                    <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      IA desactivada
+                    </span>
                   )}
-                  {prepSummary.fastBaseRpc ?
-                    <li className="col-span-2 text-muted-foreground sm:col-span-3">
-                      Corte en base (máx. score RPC):{' '}
-                      <span className="font-medium text-foreground">
-                        {prepSummary.fastBaseRpc.conservativeNoIaByCompositeCeil.toLocaleString('es-CL')}
-                      </span>{' '}
-                      fila(s) quedan por debajo del piso IA incluso con la cota 0.42×RPC+0.58 · máx. RPC{' '}
-                      {prepSummary.fastBaseRpc.maxTopRpc.toFixed(3)} · mín. RPC{' '}
-                      {prepSummary.fastBaseRpc.minTopRpc.toFixed(3)} · filas puntuadas:{' '}
-                      {prepSummary.fastBaseRpc.rowsScored.toLocaleString('es-CL')}
-                    </li>
-                  : null}
-                </ul>
+                </div>
               )}
-              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">{prepSummary.disclaimer}</p>
+              {prepSummary.fastBaseRpc ?
+                <p className="mt-2 text-[11px] tabular-nums leading-snug text-muted-foreground">
+                  {prepSummary.fastBaseRpc.conservativeNoIaByCompositeCeil.toLocaleString('es-CL')} productos no necesitarán IA
+                  · {prepSummary.fastBaseRpc.rowsScored.toLocaleString('es-CL')} analizados
+                </p>
+              : null}
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground/60">{prepSummary.disclaimer}</p>
             </>
           : (
-            <p className="mt-2 text-xs text-muted-foreground">No hay resumen cargado.</p>
+            <p className="mt-2 text-xs text-muted-foreground">El resumen estará disponible una vez se analicen los productos.</p>
           )}
         </div>
       : null}
 
-      <div className="w-full max-w-xl space-y-2">
+      {/* ── Barra de progreso ── */}
+      <div className="w-full max-w-xl space-y-2" style={{ animation: 'bulk-fade-up 0.4s ease-out 0.15s both' }}>
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm tabular-nums">
-          <span className="font-medium text-foreground">
+          <span className="font-bold text-foreground">
             {isPurge ?
               purgedDuplicates > 0 ?
                 `${purgedDuplicates.toLocaleString('es-CL')} duplicada(s) quitada(s)`
               : 'Revisando scrapping…'
-            : `${processed.toLocaleString('es-CL')} de ${total.toLocaleString('es-CL')}`}
+            : `${displayProcessed.toLocaleString('es-CL')} de ${effectiveTotal.toLocaleString('es-CL')}`}
           </span>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
             {!isPurge && elapsedLabel != null ?
-              <span
-                className="text-muted-foreground"
-                aria-label={`Tiempo transcurrido: ${elapsedLabel}`}
-              >
-                Transcurrido: <span className="font-medium text-foreground">{elapsedLabel}</span>
+              <span className="text-muted-foreground">
+                <span className="font-bold text-foreground">{elapsedLabel}</span>
               </span>
             : null}
             {!isPurge ?
-              <span className="text-muted-foreground">{pct}%</span>
+              <span className="rounded-md bg-primary/10 px-1.5 py-0.5 font-bold text-primary">{pct}%</span>
             : null}
           </div>
         </div>
-        <div className="h-3 overflow-hidden rounded-full bg-muted">
-          <div
-            className="h-full rounded-full bg-primary transition-[width] duration-300 ease-out"
-            style={{ width: `${pct}%` }}
-          />
-        </div>
+        <ShimmerProgressBar pct={pct} indeterminate={waitingFirstBatch || isPurge} />
         <p className="text-center text-xs text-muted-foreground">
           {isPurge ?
             'Paso 1 de 2 · limpieza automática'
@@ -224,29 +237,34 @@ export function ScrappingSimilarityBulkProgress({
         </p>
       </div>
 
+      {/* ── Botón saltar ── */}
       {onSkipToReview && !isPurge ?
-        <Button type="button" variant="outline" onClick={onSkipToReview}>
-          Ir a revisión manual (omitir pasada automática)
+        <Button type="button" variant="outline" onClick={onSkipToReview} className="gap-2">
+          <SkipForward className="h-4 w-4" />
+          Ir a revisión manual
         </Button>
       : null}
 
-      {isPurge ?
-        <div className="grid w-full max-w-xl grid-cols-1 gap-3">
-          <StatCard label="Quitadas de scrapping" value={purgedDuplicates} tone="muted" />
-        </div>
-      : (
-        <div
-          className={`grid w-full max-w-xl gap-3 ${iaHintsStored > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
-        >
-          <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
-          {iaHintsStored > 0 ?
-            <StatCard label="Sugerencias IA guardadas" value={iaHintsStored} tone="sky" />
-          : null}
-          <StatCard label="Producto nuevo" value={autoPendingNew} tone="amber" />
-          <StatCard label="Para revisar" value={leftForReview} tone="sky" />
-          <StatCard label="Errores" value={failed} tone="muted" />
-        </div>
-      )}
+      {/* ── Stat cards ── */}
+      <div style={{ animation: 'bulk-fade-up 0.4s ease-out 0.2s both' }} className="w-full max-w-xl">
+        {isPurge ?
+          <div className="grid grid-cols-1 gap-3">
+            <StatCard label="Quitadas de scrapping" value={purgedDuplicates} tone="muted" />
+          </div>
+        : (
+          <div
+            className={`grid gap-3 ${iaHintsStored > 0 ? 'grid-cols-2 sm:grid-cols-5' : 'grid-cols-2 sm:grid-cols-4'}`}
+          >
+            <StatCard label="Vinculadas" value={autoLinked} tone="emerald" />
+            {iaHintsStored > 0 ?
+              <StatCard label="Hints IA" value={iaHintsStored} tone="violet" />
+            : null}
+            <StatCard label="Nuevo" value={autoPendingNew} tone="amber" />
+            <StatCard label="Revisar" value={leftForReview} tone="sky" />
+            <StatCard label="Errores" value={failed} tone="muted" />
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -254,20 +272,26 @@ export function ScrappingSimilarityBulkProgress({
 function StatCard(props: {
   label: string
   value: number
-  tone: 'emerald' | 'amber' | 'sky' | 'muted'
+  tone: 'emerald' | 'amber' | 'sky' | 'violet' | 'muted'
 }) {
-  const toneClass =
-    props.tone === 'emerald' ? 'text-emerald-800 dark:text-emerald-200'
-    : props.tone === 'amber' ? 'text-amber-800 dark:text-amber-200'
-    : props.tone === 'sky' ? 'text-sky-800 dark:text-sky-200'
-    : 'text-muted-foreground'
+  const toneClasses: Record<typeof props.tone, { card: string; num: string }> = {
+    emerald: { card: 'border-emerald-500/20 bg-emerald-500/5', num: 'text-emerald-700' },
+    amber:   { card: 'border-amber-500/20 bg-amber-500/5',     num: 'text-amber-700' },
+    sky:     { card: 'border-sky-500/20 bg-sky-500/5',         num: 'text-sky-700' },
+    violet:  { card: 'border-violet-500/20 bg-violet-500/5',   num: 'text-violet-700' },
+    muted:   { card: 'border-border bg-muted/30',              num: 'text-muted-foreground' },
+  }
+  const t = toneClasses[props.tone]
 
   return (
-    <div className="rounded-lg border border-border bg-background/80 px-3 py-3 text-center shadow-sm">
-      <p className={`text-xl font-semibold tabular-nums ${toneClass}`}>
+    <div
+      className={`rounded-xl border px-3 py-3 text-center shadow-sm ${t.card}`}
+      style={{ animation: `bulk-count-pop 0.4s ease-out both` }}
+    >
+      <p className={`text-xl font-bold tabular-nums ${t.num}`}>
         {props.value.toLocaleString('es-CL')}
       </p>
-      <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{props.label}</p>
+      <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{props.label}</p>
     </div>
   )
 }

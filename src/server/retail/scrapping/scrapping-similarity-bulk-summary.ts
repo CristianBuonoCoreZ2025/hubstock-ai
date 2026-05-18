@@ -201,7 +201,7 @@ export async function computeScrappingSimilarityPrepSummary(
     usedPrepSliceRpc: false,
     prepSliceError: null,
     disclaimer:
-      'Estimación según motor base y candidatos RPC (sin atajos de alias/vínculo previo). El proceso final puede diferir levemente.',
+      'Estos valores son una estimación previa. Los resultados finales pueden variar ligeramente.',
   })
 
   if (totalPending === 0) {
@@ -328,9 +328,9 @@ export async function computeScrappingSimilarityPrepSummary(
         prepSliceError,
         fastBaseRpc,
         disclaimer:
-          'Estimación según motor base y candidatos RPC (sin atajos de alias/vínculo previo). El proceso final puede diferir levemente. Las llamadas IA reales quedan acotadas por RETAIL_IA_HOMOLOG_MAX_PER_RUN.' +
+          'Estos valores son una estimación previa. Los resultados finales pueden variar ligeramente.' +
           (fastBaseRpc ?
-            ' El contador «sin IA por techo de score» usa la cota 0.42×score_RPC+0.58 sobre el máximo RPC; el compuesto real puede ser menor, así que es conservador.'
+            ' Algunos productos podrían no requerir evaluación con IA si su coincidencia es suficientemente alta.'
           : ''),
       },
     }
@@ -351,7 +351,7 @@ export async function computeScrappingSimilarityPrepSummary(
         usedPrepSliceRpc,
         prepSliceError,
         disclaimer:
-          'No se pudo calcular el desglose (¿migración `scrapping_similarity_prep_candidates_for_ids` aplicada?). Solo el total pending es fiable.',
+          'No se pudo calcular el desglose completo. Solo el total de productos pendientes es confiable.',
       },
     }
   }
