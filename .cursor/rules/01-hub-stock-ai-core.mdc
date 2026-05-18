@@ -41,6 +41,25 @@ El sistema separa estas áreas:
 14. Mantener UI profesional, limpia, rápida y consistente.
 15. No degradar menú, modo claro, modo oscuro, layout principal ni estilos existentes.
 
+## Regla BEVECOHO / Base Primero
+
+**B**elleza | **E**ficiencia | **V**elocidad | **E**xactitud | **C**onsistencia | **O**rganización | **H**omogeneidad
+
+### Principio
+La base de datos siempre resuelve todo atómicamente. El usuario aprieta un botón → el frontend hace una sola llamada → el servidor lee TODO de la base de una vez → ejecuta batch inserts/updates masivos → devuelve resumen final.
+
+### SIEMPRE
+- `SELECT * FROM ... WHERE condition` (sin LIMIT)
+- `INSERT INTO ... VALUES (...), (...), (...)` (batch masivo)
+- `UPDATE ... WHERE id IN (...)` o UPSERT batch
+- Un solo request frontend → servidor → resumen
+
+### NUNCA
+- Chunks frontend-servidor ni polling por batches
+- Paginación de escrituras controlada por el frontend
+- Insert/update uno por uno
+- "Leer 50, procesar 50, leer 50 más"
+
 ## Antes de modificar código
 
 El agente debe indicar:

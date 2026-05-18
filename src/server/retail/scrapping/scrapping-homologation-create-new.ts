@@ -17,6 +17,7 @@ import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { resolveCatalogCategoryIdForScrappingRow } from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import logger from '@/lib/logger'
+import { logError } from '@/lib/db-logger'
 
 /* ── Tipos ── */
 
@@ -581,6 +582,12 @@ export async function processHomologationCreateNewAll(
     ).select('id')
     if (error) {
       logger.error({ err: error.message }, '[create-new] error batch insert catalog_products')
+      await logError(admin, {
+        module: '[create-new]',
+        message: 'Error batch insert catalog_products',
+        context: { code: error.code, detail: error.message, count: newJobs.length },
+        screen: 'create-new-products-modal',
+      })
       return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
     }
     insertedIds = ((data ?? []) as { id: string }[]).map(r => r.id)
