@@ -107,7 +107,7 @@ function inferImageUrlFromProductUrl(productUrl: string | null): string | null {
  */
 export async function processHomologationCreateNewBatch(
   admin: SupabaseClient,
-  input: { afterId?: string | null; batchSize?: number },
+  input: { afterId?: string | null; batchSize?: number; fallbackCategoryId?: string | null },
 ): Promise<{ ok: true; result: CreateNewProductsBatchResult } | { ok: false; error: string }> {
   const limit = Math.min(Math.max(input.batchSize ?? 10, 1), 50)
 
@@ -119,7 +119,7 @@ export async function processHomologationCreateNewBatch(
 
   let q = admin
     .from('scrapping')
-    .select('id, retailer, external_ref, product_url, product_name, brand, price, sections, categories, catalog_match_status')
+    .select('id, retailer, external_ref, product_url, product_name, brand, price, sections, categories, image_url, catalog_match_status')
     .eq('catalog_match_status', 'pending_new')
     .order('id', { ascending: true })
     .limit(limit)
@@ -141,6 +141,7 @@ export async function processHomologationCreateNewBatch(
     price: number | string | null
     sections: string | null
     categories: string | null
+    image_url: string | null
   }>
 
   const stats: CreateNewProductsSummary = {
@@ -172,16 +173,15 @@ export async function processHomologationCreateNewBatch(
         sectionId = (catRow as { section_id: string } | null)?.section_id ?? null
       }
 
-      // Si no encontró taxonomía, usar primera categoría disponible
+      // Si no encontró taxonomía: usar override del usuario o primera categoría disponible
       let finalCategoryId = categoryId
       let finalSectionId = sectionId
       if (!finalCategoryId || !finalSectionId) {
-        const { data: fallback } = await admin
-          .from('categories')
-          .select('id, section_id')
-          .order('sort_order', { ascending: true })
-          .limit(1)
-          .maybeSingle()
+        const overrideCatId = input.fallbackCategoryId?.trim() || null
+        const fbQ = overrideCatId ?
+          admin.from('categories').select('id, section_id').eq('id', overrideCatId).maybeSingle()
+        : admin.from('categories').select('id, section_id').order('sort_order', { ascending: true }).limit(1).maybeSingle()
+        const { data: fallback } = await fbQ
         if (fallback) {
           finalCategoryId = finalCategoryId ?? (fallback as { id: string }).id
           finalSectionId = finalSectionId ?? (fallback as { section_id: string }).section_id
@@ -275,8 +275,8 @@ export async function processHomologationCreateNewBatch(
         }
       }
 
-      // 6. Intentar descargar imagen
-      const imageUrl = inferImageUrlFromProductUrl(row.product_url)
+      // 6. Intentar descargar imagen (primero desde image_url capturado, luego inferir desde product_url)
+      const imageUrl = row.image_url?.trim() || inferImageUrlFromProductUrl(row.product_url)
       if (imageUrl) {
         const img = await downloadAndUploadProductImage(admin, catalogProductId, imageUrl)
         if (img.ok) {

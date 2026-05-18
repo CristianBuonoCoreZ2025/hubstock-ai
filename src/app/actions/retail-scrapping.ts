@@ -112,6 +112,7 @@ type ScrappingUpsertRow = {
   listing_url: string
   sections: string | null
   categories: string | null
+  image_url: string | null
   extracted_at: string
 }
 
@@ -144,7 +145,7 @@ async function upsertScrappingChunkForRun(
     .upsert(slice as never, { onConflict: 'run_id,retailer,external_ref' })
   if (!fullErr) return { error: null }
   if (!isPostgrestUnknownColumnError(fullErr)) return { error: fullErr }
-  const lite = slice.map(({ sections: _sec, categories: _cat, ...row }) => row)
+  const lite = slice.map(({ sections, categories, image_url, ...rest }) => { void sections; void categories; void image_url; return rest })
   const { error: liteErr } = await admin
     .from('scrapping')
     .upsert(lite as never, { onConflict: 'run_id,retailer,external_ref' })
@@ -1204,6 +1205,7 @@ export async function processLiderScrappingRunPageAction(input: {
         listing_url: page.page_url,
         sections: pathDerived.sections,
         categories: pathDerived.categories,
+        image_url: r.image_url ?? null,
         extracted_at: extractedAt,
       }))
 
@@ -1616,6 +1618,7 @@ export async function runScrappingHomologationGrayIaBatchAction(input: {
 export async function runScrappingHomologationCreateNewBatchAction(input: {
   afterId?: string | null
   batchSize?: number
+  fallbackCategoryId?: string | null
 }): Promise<
   { ok: true; result: CreateNewProductsBatchResult } | { ok: false; error: string }
 > {
@@ -1626,6 +1629,34 @@ export async function runScrappingHomologationCreateNewBatchAction(input: {
   revalidatePath('/captura-cadenas-2')
   revalidatePath('/catalogo')
   return r
+}
+
+export type CatalogSectionWithCategories = {
+  sectionId: string
+  sectionName: string
+  categories: { id: string; name: string }[]
+}
+
+/** Lista secciones y categorías del catálogo (para selector manual en Paso 3). */
+export async function getCatalogSectionsWithCategoriesAction(): Promise<
+  { ok: true; sections: CatalogSectionWithCategories[] } | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+  const [secRes, catRes] = await Promise.all([
+    editor.admin.from('sections').select('id, name').order('sort_order', { ascending: true }),
+    editor.admin.from('categories').select('id, name, section_id').order('sort_order', { ascending: true }),
+  ])
+  if (secRes.error || catRes.error) return { ok: false, error: 'No se pudo cargar la taxonomía.' }
+  type SecRow = { id: string; name: string }
+  type CatRow = { id: string; name: string; section_id: string }
+  const cats = (catRes.data ?? []) as CatRow[]
+  const sections: CatalogSectionWithCategories[] = ((secRes.data ?? []) as SecRow[]).map((s) => ({
+    sectionId: s.id,
+    sectionName: s.name,
+    categories: cats.filter((c) => c.section_id === s.id).map((c) => ({ id: c.id, name: c.name })),
+  })).filter((s) => s.categories.length > 0)
+  return { ok: true, sections }
 }
 
 /** Feedback usuario (penalty_delta negativo penaliza casos similares en corridas futuras del motor DB). */
@@ -1639,15 +1670,15 @@ export async function recordHomologationUserFeedbackAction(input: {
   return recordHomologationUserFeedbackRpc(editor.admin, input)
 }
 
-/** Totales para UI: pending global, cola IA gris, revisión humana USER_REVIEW. */
+/** Totales para UI: pending global, cola IA gris, revisión humana USER_REVIEW, pending_new. */
 export async function getScrappingHomologationDashboardAction(): Promise<
-  | { ok: true; pendingAny: number; grayIaQueued: number; userReview: number }
+  | { ok: true; pendingAny: number; grayIaQueued: number; userReview: number; pendingNew: number }
   | { ok: false; error: string }
 > {
-  const gate = await assertNoRunningScrappingForHomologation()
-  if (!gate.ok) return { ok: false, error: gate.error }
-  const a = gate.admin
-  const [p1, p2, p3] = await Promise.all([
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+  const a = editor.admin
+  const [p1, p2, p3, p4] = await Promise.all([
     a.from('scrapping').select('id', { count: 'exact', head: true }).eq('catalog_match_status', 'pending'),
     a
       .from('scrapping')
@@ -1655,8 +1686,9 @@ export async function getScrappingHomologationDashboardAction(): Promise<
       .eq('homolog_final_status', 'GRAY_IA_QUEUED')
       .eq('ai_required', true),
     a.from('scrapping').select('id', { count: 'exact', head: true }).eq('homolog_final_status', 'USER_REVIEW'),
+    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('catalog_match_status', 'pending_new'),
   ])
-  if (p1.error || p2.error || p3.error) {
+  if (p1.error || p2.error || p3.error || p4.error) {
     return { ok: false, error: 'No se pudo leer el estado de homologación.' }
   }
   return {
@@ -1664,6 +1696,7 @@ export async function getScrappingHomologationDashboardAction(): Promise<
     pendingAny: p1.count ?? 0,
     grayIaQueued: p2.count ?? 0,
     userReview: p3.count ?? 0,
+    pendingNew: p4.count ?? 0,
   }
 }
 

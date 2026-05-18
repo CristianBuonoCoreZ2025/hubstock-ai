@@ -9,6 +9,7 @@ export type RetailSnapshotRow = {
   category_hint: string | null
   brand_hint: string | null
   description_hint: string | null
+  image_url: string | null
   match_method: string
 }
 
@@ -123,10 +124,19 @@ export function mapVtexProductToSnapshot(
 
   const items = product.items
   let descriptionHint: string | null = null
+  let imageUrl: string | null = null
   if (Array.isArray(items) && items.length > 0) {
     const it = asRecord(items[0])
     const iname = it && typeof it.name === 'string' ? it.name.trim() : ''
     if (iname && iname !== title) descriptionHint = iname
+    const imgs = it?.images
+    if (Array.isArray(imgs) && imgs.length > 0) {
+      const firstImg = asRecord(imgs[0])
+      const raw = firstImg?.imageUrl ?? firstImg?.ImageUrl
+      if (typeof raw === 'string' && raw.trim().startsWith('http')) {
+        imageUrl = raw.trim()
+      }
+    }
   }
 
   const folded = foldPrivateLabelBrand(rawBrand, title, categoryHint)
@@ -140,6 +150,7 @@ export function mapVtexProductToSnapshot(
     category_hint: categoryHint,
     brand_hint: folded.brand,
     description_hint: descriptionHint,
+    image_url: imageUrl,
     match_method: ctx.matchMethod,
   }
 }

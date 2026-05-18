@@ -20,8 +20,11 @@ import {
 import {
   applyScrappingExactCatalogMatchesAction,
   forceFinalizeScrappingRunForRetailAction,
+  getCatalogSectionsWithCategoriesAction,
   getScrappingHomologacionPendingCountAction,
   getScrappingHomologationDashboardAction,
+  runScrappingHomologationCreateNewBatchAction,
+  type CatalogSectionWithCategories,
   type ScrappingExactCatalogMatchStats,
 } from '@/app/actions/retail-scrapping'
 import type { RetailTargetRow, ScrappingRunRow } from '@/types/retail-scrapping-ui'
@@ -32,6 +35,7 @@ import type {
 } from '@/types/retail-scrapping-barrido-api'
 import { ScrappingSimilarityReviewModal } from '@/app/(app)/captura-cadenas-2/scrapping-similarity-review-modal'
 import { HomologationWizardModal } from '@/app/(app)/captura-cadenas-2/homologation-wizard-modal'
+import { CreateNewProductsModal } from '@/app/(app)/captura-cadenas-2/create-new-products-modal'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -261,7 +265,11 @@ export function CapturaCadenas2Client() {
     pendingAny: number
     grayIaQueued: number
     userReview: number
+    pendingNew: number
   } | null>(null)
+  const [createNewBusy, setCreateNewBusy] = useState(false)
+  const [createNewResult, setCreateNewResult] = useState<string | null>(null)
+  const [createNewModalOpen, setCreateNewModalOpen] = useState(false)
   const [homologWizardOpen, setHomologWizardOpen] = useState(false)
   const [forceFinalizeBusy, setForceFinalizeBusy] = useState(false)
 
@@ -283,6 +291,7 @@ export function CapturaCadenas2Client() {
         pendingAny: d.pendingAny,
         grayIaQueued: d.grayIaQueued,
         userReview: d.userReview,
+        pendingNew: d.pendingNew,
       })
     }
   }, [])
@@ -546,6 +555,61 @@ export function CapturaCadenas2Client() {
       await refreshScrappingPendingHomologacion()
     } finally {
       setForceFinalizeBusy(false)
+    }
+  }
+
+  async function loadCatalogSections() {
+    if (catalogSections.length > 0) return
+    const r = await getCatalogSectionsWithCategoriesAction()
+    if (r.ok) setCatalogSections(r.sections)
+  }
+
+  async function handleCreateNewBatch() {
+    if (createNewBusy || homologacionBloqueada) return
+    setCreateNewBusy(true)
+    setCreateNewResult(null)
+    try {
+      let afterId: string | null = null
+      let totalCreated = 0
+      let totalProcessed = 0
+      let totalSkipped = 0
+      let hasMore = true
+      const batchSize = 10
+      const fallbackCategoryId = createNewFallbackCatId.trim() && createNewFallbackCatId !== '__auto__' ? createNewFallbackCatId.trim() : null
+
+      while (hasMore) {
+        const r = await runScrappingHomologationCreateNewBatchAction({ afterId, batchSize, fallbackCategoryId })
+        if (!r.ok) {
+          toast.error(r.error)
+          return
+        }
+        totalCreated += r.result.stats.created
+        totalProcessed += r.result.stats.processed
+        totalSkipped += r.result.stats.skipped
+        hasMore = r.result.hasMore
+        afterId = r.result.lastId
+
+        if (hasMore) {
+          setCreateNewResult(
+            `Procesados ${totalProcessed.toLocaleString('es-CL')} · Creados ${totalCreated.toLocaleString('es-CL')}...`,
+          )
+        }
+      }
+
+      const skippedNote = totalSkipped > 0 ? ` (${totalSkipped.toLocaleString('es-CL')} sin categoría)` : ''
+      const msg =
+        totalCreated > 0 ?
+          `${totalCreated.toLocaleString('es-CL')} producto(s) nuevo(s) creado(s)${skippedNote}.`
+        : totalProcessed > 0 ?
+          `Ninguno creado. ${totalProcessed.toLocaleString('es-CL')} procesados${skippedNote}. Elegí una categoría de respaldo y reintentá.`
+        : 'No había productos pendientes para crear.'
+
+      if (totalCreated > 0) toast.success(msg)
+      else toast.warning(msg)
+      setCreateNewResult(msg)
+      await refreshScrappingPendingHomologacion()
+    } finally {
+      setCreateNewBusy(false)
     }
   }
 
@@ -1594,45 +1658,149 @@ export function CapturaCadenas2Client() {
               </Button>
             : null}
 
-            {homologDash && homologDash.pendingAny === 0 ?
+            {homologDash && homologDash.pendingAny === 0 && homologDash.userReview === 0 && homologDash.pendingNew === 0 ?
               <p className="mt-3 text-center text-xs text-muted-foreground">
-                No hay productos pendientes de homologación.
+                Todos los productos están procesados.
+              </p>
+            : homologDash && homologDash.pendingAny === 0 && (homologDash.userReview > 0 || homologDash.pendingNew > 0) ?
+              <p className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+                {homologDash.userReview > 0 && homologDash.pendingNew > 0 ?
+                  `Hay ${homologDash.userReview} para revisar manualmente y ${homologDash.pendingNew} para crear como nuevos.`
+                : homologDash.userReview > 0 ?
+                  `Hay ${homologDash.userReview} producto(s) esperando revisión manual. Usá «Revisar casos» para clasificarlos.`
+                : `Hay ${homologDash.pendingNew} producto(s) listos para crear en catálogo. Usá el Paso 3.`
+                }
               </p>
             : null}
 
             {homologDash ?
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 <span className="inline-flex items-center gap-1 rounded-md border border-primary/15 bg-primary/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-primary">
-                  {homologDash.pendingAny.toLocaleString('es-CL')} <span className="font-normal opacity-70">total</span>
+                  {homologDash.pendingAny.toLocaleString('es-CL')} <span className="font-normal opacity-70">pending</span>
                 </span>
                 <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/15 bg-amber-500/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-amber-700">
-                  {homologDash.grayIaQueued.toLocaleString('es-CL')} <span className="font-normal opacity-70">gris</span>
+                  {homologDash.grayIaQueued.toLocaleString('es-CL')} <span className="font-normal opacity-70">gris IA</span>
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/15 bg-sky-500/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-sky-700">
+                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                  homologDash.userReview > 0
+                    ? 'border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                    : 'border-sky-500/15 bg-sky-500/5 text-sky-700'
+                }`}>
                   {homologDash.userReview.toLocaleString('es-CL')} <span className="font-normal opacity-70">revisar</span>
+                </span>
+                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
+                  homologDash.pendingNew > 0
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700'
+                }`}>
+                  {homologDash.pendingNew.toLocaleString('es-CL')} <span className="font-normal opacity-70">nuevos</span>
                 </span>
               </div>
             : null}
           </div>
 
           {/* ━━━ PASO 3: Nuevos en catálogo ━━━ */}
-          <div className="group relative flex flex-col overflow-hidden rounded-xl border border-dashed border-border bg-card p-5 opacity-90 shadow-sm">
-            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 to-teal-500 opacity-30" />
+          <div className={`group relative flex flex-col overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all ${
+            (homologDash?.pendingNew ?? 0) > 0
+              ? 'border-emerald-500/30 opacity-100'
+              : 'border-dashed border-border opacity-90'
+          }`}>
+            <div className={`absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-emerald-400 to-teal-500 ${
+              (homologDash?.pendingNew ?? 0) > 0 ? 'opacity-100' : 'opacity-30'
+            }`} />
             <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted shadow-none">
-                <PackagePlus className="h-4.5 w-4.5 text-muted-foreground" />
+              <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
+                (homologDash?.pendingNew ?? 0) > 0
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-600 shadow-emerald-500/25'
+                  : 'bg-muted shadow-none'
+              }`}>
+                <PackagePlus className={`h-4.5 w-4.5 ${
+                  (homologDash?.pendingNew ?? 0) > 0 ? 'text-white' : 'text-muted-foreground'
+                }`} />
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paso 3 · Próximo</p>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {(homologDash?.pendingNew ?? 0) > 0 ? 'Paso 3 · Disponible' : 'Paso 3 · Sin cola'}
+                </p>
                 <p className="text-sm font-bold tracking-tight text-foreground">Nuevos en catálogo</p>
               </div>
             </div>
             <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
               Productos sin homólogo: alta en maestro con sección y categoría. Taxonomía reutilizable.
             </p>
-            <Button type="button" variant="outline" className="mt-4 h-9 w-full gap-2" disabled>
-              <PackagePlus className="h-4 w-4" aria-hidden />
-              Próximamente
+
+            {homologDash?.pendingNew !== undefined && homologDash.pendingNew > 0 ?
+              <p className="mt-2 text-xs tabular-nums text-emerald-700 dark:text-emerald-300">
+                {homologDash.pendingNew.toLocaleString('es-CL')} pendiente(s)
+              </p>
+            : homologDash?.pendingNew !== undefined ?
+              <p className="mt-2 text-xs tabular-nums text-muted-foreground">Sin productos pendientes</p>
+            : null}
+
+            {/* Selector de categoría fallback — visible cuando hay pendingNew */}
+            {(homologDash?.pendingNew ?? 0) > 0 ?
+              <div className="mt-3 space-y-1">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Categoría de respaldo (opcional)
+                </p>
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                  Si la taxonomía del retailer no resuelve automáticamente, los productos se crearán bajo esta categoría.
+                </p>
+                <Select
+                  value={createNewFallbackCatId}
+                  onValueChange={setCreateNewFallbackCatId}
+                  onOpenChange={(open) => { if (open) void loadCatalogSections() }}
+                >
+                  <SelectTrigger className="h-8 w-full text-xs">
+                    <SelectValue placeholder="Auto (recomendado)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__auto__" className="text-xs text-muted-foreground">Auto (recomendado)</SelectItem>
+                    {catalogSections.map((sec) => (
+                      <div key={sec.sectionId}>
+                        <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {sec.sectionName}
+                        </div>
+                        {sec.categories.map((cat) => (
+                          <SelectItem key={cat.id} value={cat.id} className="pl-4 text-xs">
+                            {cat.name}
+                          </SelectItem>
+                        ))}
+                      </div>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            : null}
+
+            {createNewResult ?
+              <p className="mt-3 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">{createNewResult}</p>
+            : null}
+
+            <Button
+              type="button"
+              variant="default"
+              className={`mt-4 h-9 w-full gap-2 ${
+                (homologDash?.pendingNew ?? 0) > 0
+                  ? 'bg-gradient-to-r from-emerald-600 to-teal-600 shadow-md shadow-emerald-500/20 transition-shadow hover:shadow-lg hover:shadow-emerald-500/30'
+                  : ''
+              }`}
+              disabled={
+                createNewBusy ||
+                homologacionBloqueada ||
+                homologDash === null ||
+                (homologDash?.pendingNew ?? 0) === 0
+              }
+              onClick={() => void handleCreateNewBatch()}
+            >
+              {createNewBusy ?
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+              : <PackagePlus className="h-4 w-4" aria-hidden />}
+              {createNewBusy ?
+                'Creando productos...'
+              : (homologDash?.pendingNew ?? 0) > 0 ?
+                `Crear ${homologDash!.pendingNew.toLocaleString('es-CL')} producto(s) nuevos`
+              : 'Sin pendientes'}
             </Button>
           </div>
         </div>

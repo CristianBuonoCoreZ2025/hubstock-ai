@@ -293,6 +293,13 @@ python scripts/import_retail_snapshots.py --retailer jumbo --smart-resolve --cre
 - **Rotación round-robin** de API keys OpenRouter con fallback automático ante rate limits (`OPENROUTER_API_KEYS`).
 - **Limpieza** de imports sin usar y corrección de tipados TypeScript.
 
+### Homologación — Paso 3: Nuevos en catálogo (Mayo 2026)
+- **Creación automática de productos maestros** desde filas `pending_new` de `scrapping`.
+- Batch de 10 productos por llamada con progreso en UI.
+- Resuelve taxonomía (sección/categoría) desde los datos del retailer; fallback a categoría por defecto.
+- Crea vínculo en `catalog_retail_links`, alias normalizado, e intenta descargar imagen a Storage.
+- Botón funcional en `/captura-cadenas-2` reemplazando el placeholder "Próximamente".
+
 ### Estabilidad de Stock y Movimientos
 - Bitácora `stock_movements` como fuente de verdad; compensación automática si falla el insert del movimiento.
 - Idempotencia en boletas (`purchase_receipt_item:<line_id>`) para evitar doble ingreso.
