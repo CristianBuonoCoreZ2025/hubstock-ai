@@ -1232,8 +1232,8 @@ Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marc
                   {/* Warning si hay running en otro retail */}
                   {barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail && (
                     <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
-                      Hay una corrida en curso en otro retail. Detené el scrapping antes de iniciar un barrido nuevo,
-                      reencolar fallidas o vaciar tablas desde acá.
+                      Hay una corrida en curso en otro retail. Detené el scrapping antes de iniciar un barrido nuevo
+                      o vaciar tablas desde acá.
                     </p>
                   )}
 
@@ -1250,74 +1250,87 @@ Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marc
                     <p className="text-muted-foreground">No hay corridas previas para este retail.</p>
                   )}
 
-                  {/* Acciones en horizontal */}
-                  <div className="grid grid-cols-3 gap-3">
-                    {/* Reencolar */}
-                    {barridoPlanCtx.latestRun && barridoPlanCtx.latestRun.failedPages > 0 ? (
-                      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-3 text-center">
-                        <p className="text-xs font-medium text-foreground">{barridoPlanCtx.latestRun.failedPages} fallidas</p>
-                        <Button
-                          type="button"
-                          className="btn-warn btn-lg"
-                          disabled={barridoPlanActionBusy || (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)}
-                          onClick={() => void requeueFailedAndResumeFromModal()}
-                        >
-                          {barridoPlanActionBusy ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                          ) : (
-                            <Play className="mr-2 h-4 w-4" aria-hidden />
+                  {/* Acciones disponibles solo si la última corrida está concluida */}
+                  {(() => {
+                    const isConcluded =
+                      !barridoPlanCtx.latestRun ||
+                      barridoPlanCtx.latestRun.status === 'completed' ||
+                      barridoPlanCtx.latestRun.status === 'cancelled'
+                    return (
+                      <div className="grid grid-cols-3 gap-3">
+                        {/* Nuevo barrido */}
+                        <div className="space-y-2 rounded-md border border-border bg-muted/20 px-2 py-3 text-center">
+                          <p className="text-xs font-medium text-foreground">Nuevo barrido</p>
+                          <Button
+                            type="button"
+                            className="btn-run btn-lg"
+                            disabled={
+                              !isConcluded ||
+                              barridoPlanActionBusy ||
+                              (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)
+                            }
+                            onClick={() => void startBarridoFreshFromModal()}
+                          >
+                            {barridoPlanActionBusy ? (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                            ) : (
+                              <Play className="mr-2 h-4 w-4" aria-hidden />
+                            )}
+                            Nuevo
+                          </Button>
+                          {!isConcluded && (
+                            <p className="text-[10px] text-amber-700 dark:text-amber-300 mt-1">
+                              Concluí la corrida activa antes de iniciar uno nuevo.
+                            </p>
                           )}
-                          Continuar
-                        </Button>
-                      </div>
-                    ) : (
-                      <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
-                        <p className="text-xs text-muted-foreground">Sin fallidas</p>
-                      </div>
-                    )}
+                        </div>
 
-                    {/* Nuevo barrido */}
-                    <div className="space-y-2 rounded-md border border-border bg-muted/20 px-2 py-3 text-center">
-                      <p className="text-xs font-medium text-foreground">Nuevo barrido</p>
-                      <Button
-                        type="button"
-                        className="btn-run btn-lg"
-                        disabled={barridoPlanActionBusy || (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)}
-                        onClick={() => void startBarridoFreshFromModal()}
-                      >
-                        {barridoPlanActionBusy ? (
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                        {/* Limpiar */}
+                        {barridoPlanCtx.globalScrappingPages > 0 ? (
+                          <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-3 text-center">
+                            <p className="text-xs font-medium text-foreground">({barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')})</p>
+                            <Button
+                              type="button"
+                              className="btn-danger btn-lg"
+                              disabled={
+                                !isConcluded ||
+                                purgeIdleBusy ||
+                                barridoPlanActionBusy ||
+                                barridoPlanCtx.anyRunningGlobally
+                              }
+                              onClick={() => void onPurgeScrappingIdle()}
+                            >
+                              {purgeIdleBusy ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                              ) : (
+                                <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                              )}
+                              Limpieza
+                            </Button>
+                            {!isConcluded && (
+                              <p className="text-[10px] text-amber-700 dark:text-amber-300 mt-1">
+                                Concluí la corrida activa antes de limpiar.
+                              </p>
+                            )}
+                          </div>
                         ) : (
-                          <Play className="mr-2 h-4 w-4" aria-hidden />
+                          <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
+                            <p className="text-xs text-muted-foreground">Sin datos</p>
+                          </div>
                         )}
-                        Nuevo
-                      </Button>
-                    </div>
 
-                    {/* Limpiar */}
-                    {barridoPlanCtx.globalScrappingPages > 0 ? (
-                      <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-3 text-center">
-                        <p className="text-xs font-medium text-foreground">({barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')})</p>
-                        <Button
-                          type="button"
-                          className="btn-danger btn-lg"
-                          disabled={purgeIdleBusy || barridoPlanActionBusy || barridoPlanCtx.anyRunningGlobally}
-                          onClick={() => void onPurgeScrappingIdle()}
-                        >
-                          {purgeIdleBusy ? (
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                          ) : (
-                            <Trash2 className="mr-2 h-4 w-4" aria-hidden />
-                          )}
-                          Limpieza
-                        </Button>
+                        {/* Estado cuando no está concluida */}
+                        {!isConcluded && barridoPlanCtx.latestRun && (
+                          <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-3 text-center">
+                            <p className="text-xs font-medium text-amber-800 dark:text-amber-200">Corrida activa</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              La última corrida está en estado <strong>{barridoPlanCtx.latestRun.status}</strong>. No se puede iniciar nuevo ni limpiar hasta concluirla (completada, cancelada o forzada).
+                            </p>
+                          </div>
+                        )}
                       </div>
-                    ) : (
-                      <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
-                        <p className="text-xs text-muted-foreground">Sin datos</p>
-                      </div>
-                    )}
-                  </div>
+                    )
+                  })()}
                 </div>
               )}
             </div>
@@ -1353,9 +1366,13 @@ Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marc
             <p className="text-sm font-medium text-foreground">Scraper retail (motor Lider)</p>
             <p className="mt-1 text-sm text-muted-foreground">
               Durante un barrido activo aparecerá <span className="font-medium text-foreground">Detener scrapping</span>.
-              Al pulsar <span className="font-medium text-foreground">Barrido</span> se abre un plan: puedes
-              reanudar una corrida interrumpida, reencolar listados fallidos de la última corrida, iniciar un barrido
-              nuevo o vaciar los datos capturados si no hay nada en curso.
+              Al pulsar <span className="font-medium text-foreground">Barrido</span> se abre el plan de corrida:
+              si hay una corrida en curso podés <span className="font-medium text-foreground">Continuar</span>,
+              <span className="font-medium text-foreground">Detener</span> o
+              <span className="font-medium text-foreground">Concluir forzado</span> (irreversible).
+              Una vez concluida (completada, cancelada o forzada) podés iniciar un
+              <span className="font-medium text-foreground">Nuevo</span> barrido o
+              <span className="font-medium text-foreground">Limpiar</span> los datos capturados.
               Elige el retail en el modal de Barrido.
             </p>
           </div>
