@@ -30,9 +30,14 @@ export async function POST(request: Request) {
 
   // Detectar si el cliente aborta la conexión
   const abortSignal = request.signal
+  const diagEnabled = request.headers.get('x-app-diagnostic-log') === '1'
+  const start = Date.now()
 
   try {
     const result = await processLiderScrappingRunPageAction({ runId, abortSignal })
+    if (diagEnabled) {
+      (result as any).__diagnostic = { durationMs: Date.now() - start, operation: 'processLiderScrappingRunPageAction', runId }
+    }
     return NextResponse.json(result)
   } catch (e) {
     if (abortSignal?.aborted) {

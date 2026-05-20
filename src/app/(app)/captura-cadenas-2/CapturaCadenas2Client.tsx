@@ -5,6 +5,7 @@ import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Spa
 import { toast } from 'sonner'
 import {
   barridoApiBarridoContext,
+  barridoApiInit,
   barridoApiListRetails,
   barridoApiListRuns,
   barridoApiPersistOutcome,
@@ -230,7 +231,7 @@ function scrappingRunStatusLabel(status: string, totalPages?: number | null): st
 
 export function CapturaCadenas2Client() {
   const [runs, setRuns] = useState<ScrappingRunRow[]>([])
-  const [runsBusy, setRunsBusy] = useState(false)
+  const [runsBusy, setRunsBusy] = useState(true)
 
   const [retails, setRetails] = useState<RetailTargetRow[]>([])
   const [retailsBusy, setRetailsBusy] = useState(true)
@@ -370,17 +371,38 @@ export function CapturaCadenas2Client() {
     })
   }, [])
 
+  const reloadInit = useCallback(async () => {
+    setRetailsBusy(true)
+    setRunsBusy(true)
+    const logId = requestLogger.startLog('api', 'barridoApiInit')
+    const res = await barridoApiInit()
+    setRetailsBusy(false)
+    setRunsBusy(false)
+    if (!res.ok) {
+      requestLogger.endLog(logId, 'error', undefined, res.error)
+      toast.error(res.error)
+      return
+    }
+    requestLogger.endLog(logId, 'success', { retailsCount: res.retails.length, runsCount: res.runs.length })
+    setRetails(res.retails)
+    setRuns(res.runs)
+    setSelectedRetailId((prev) => {
+      if (prev && res.retails.some((r) => r.id === prev)) return prev
+      return res.retails[0]?.id ?? ''
+    })
+  }, [])
+
   // Carga inicial de datos - usa flag para evitar warnings
   const initializedRef = useRef(false)
   useEffect(() => {
     if (initializedRef.current) return
     initializedRef.current = true
     // Limpiar logs anteriores al cargar la página
-    requestLogger.logUI('CapturaCadenas2 - Página cargada, cargando retails')
-    // Solo retails al inicio: tabla pequeña, rapida. El resto (runs, dashboard)
-    // se carga bajo demanda cuando el usuario abre el modal o interactua.
+    requestLogger.logUI('CapturaCadenas2 - Página cargada, cargando retails y corridas')
+    // Cargar retails + runs en una sola llamada combinada para evitar serverless tax doble.
+    // El dashboard de homologacion se carga bajo demanda.
     requestAnimationFrame(() => {
-      void reloadRetails()
+      void reloadInit()
     })
   }, []) // Solo ejecutar una vez al montar - funciones son estables
 
@@ -1547,7 +1569,7 @@ export function CapturaCadenas2Client() {
               ) : runs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                    No hay corridas cargadas. El historial se actualiza automáticamente al iniciar o detener una captura.
+                    No hay corridas registradas.
                   </td>
                 </tr>
               ) : (

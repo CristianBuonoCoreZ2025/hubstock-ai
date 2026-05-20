@@ -2,20 +2,22 @@
 
 import { useEffect, useState, useRef } from 'react'
 import { requestLogger, type LogEntry } from '@/lib/request-logger'
-import { X, Trash2, Download, Clock, AlertCircle, CheckCircle, Loader2, MousePointer, Database, Globe, Terminal } from 'lucide-react'
+import { X, Trash2, Download, Clock, AlertCircle, CheckCircle, Loader2, MousePointer, Database, Globe, Terminal, Activity, Repeat, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 export function RequestLogViewer() {
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [isOpen, setIsOpen] = useState(true)
-  const [filter, setFilter] = useState<LogEntry['type'] | 'all'>('all')
+  const [view, setView] = useState<'chronological' | 'methods' | 'duplicates' | 'slow' | 'errors'>('chronological')
   const scrollRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [session, setSession] = useState(requestLogger.getSession())
 
   useEffect(() => {
     const unsubscribe = requestLogger.subscribe((newLogs) => {
       setLogs(newLogs)
+      setSession(requestLogger.getSession())
       if (autoScroll && scrollRef.current) {
         scrollRef.current.scrollTop = 0
       }
@@ -23,7 +25,15 @@ export function RequestLogViewer() {
     return unsubscribe
   }, [autoScroll])
 
-  const filteredLogs = filter === 'all' ? logs : logs.filter(l => l.type === filter)
+  const filteredLogs = (() => {
+    switch (view) {
+      case 'chronological': return logs
+      case 'methods': return logs.filter(l => l.type === 'method' || l.type === 'click' || l.type === 'modal' || l.type === 'poll' || l.type === 'ui')
+      case 'duplicates': return logs.filter(l => l.isDuplicate)
+      case 'slow': return logs.filter(l => (l.duration || 0) > 1000)
+      case 'errors': return logs.filter(l => l.status === 'error')
+    }
+  })()
 
   const getTypeIcon = (type: LogEntry['type']) => {
     switch (type) {
@@ -32,6 +42,10 @@ export function RequestLogViewer() {
       case 'click': return <MousePointer className="h-3 w-3" />
       case 'error': return <AlertCircle className="h-3 w-3" />
       case 'ui': return <Terminal className="h-3 w-3" />
+      case 'method': return <Activity className="h-3 w-3" />
+      case 'page': return <Zap className="h-3 w-3" />
+      case 'modal': return <MousePointer className="h-3 w-3" />
+      case 'poll': return <Repeat className="h-3 w-3" />
     }
   }
 
@@ -50,15 +64,21 @@ export function RequestLogViewer() {
       case 'click': return 'bg-orange-200 text-orange-900'
       case 'error': return 'bg-red-200 text-red-900'
       case 'ui': return 'bg-gray-200 text-gray-900'
+      case 'method': return 'bg-emerald-200 text-emerald-900'
+      case 'page': return 'bg-yellow-200 text-yellow-900'
+      case 'modal': return 'bg-pink-200 text-pink-900'
+      case 'poll': return 'bg-cyan-200 text-cyan-900'
     }
   }
 
   const downloadLogs = () => {
-    const blob = new Blob([requestLogger.exportToJSON()], { type: 'application/json' })
+    const route = session?.route?.replace(/^\//, '').replace(/\//g, '_') || 'global'
+    const date = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')
+    const blob = new Blob([requestLogger.exportSessionToJSON()], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `stockcasa-diagnostico-${new Date().toISOString()}.json`
+    a.download = `diagnostic-log__${route}__${date}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -101,7 +121,7 @@ export function RequestLogViewer() {
       <div className="flex items-center justify-between p-2 border-b bg-white rounded-t-lg shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <Clock className="h-4 w-4 text-gray-500 shrink-0" />
-          <span className="font-semibold text-sm truncate">Log de diagnóstico</span>
+          <span className="font-semibold text-sm truncate">Log de diagnostico</span>
           <div className="flex items-center gap-1 text-[10px]">
             <span className="px-1.5 py-0.5 rounded bg-gray-200">{stats.total}</span>
             <span className="px-1.5 py-0.5 rounded border text-yellow-600">{stats.pending}</span>
@@ -124,37 +144,48 @@ export function RequestLogViewer() {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* View tabs */}
       <div className="flex items-center gap-1 p-2 border-b bg-slate-100">
-        {(['all', 'api', 'db', 'click', 'error', 'ui'] as const).map((f) => (
+        {([
+          { key: 'chronological' as const, label: 'Cronologico' },
+          { key: 'methods' as const, label: 'Metodos' },
+          { key: 'duplicates' as const, label: 'Dup' },
+          { key: 'slow' as const, label: 'Lentos' },
+          { key: 'errors' as const, label: 'Errores' },
+        ]).map((v) => (
           <Button
-            key={f}
-            variant={filter === f ? 'secondary' : 'ghost'}
+            key={v.key}
+            variant={view === v.key ? 'secondary' : 'ghost'}
             size="sm"
-            className="h-6 text-xs capitalize"
-            onClick={() => setFilter(f)}
+            className="h-6 text-[10px] capitalize px-1.5"
+            onClick={() => setView(v.key)}
           >
-            {f === 'all' ? 'Todos' : f}
+            {v.label}
           </Button>
         ))}
         <div className="flex-1" />
-        <label className="flex items-center gap-1 text-xs cursor-pointer">
+        <label className="flex items-center gap-1 text-[10px] cursor-pointer">
           <input
             type="checkbox"
             checked={autoScroll}
             onChange={(e) => setAutoScroll(e.target.checked)}
             className="rounded"
           />
-          Auto-scroll
+          Auto
         </label>
       </div>
+      {session && (
+        <div className="px-2 py-1 text-[10px] bg-slate-200 text-slate-700 border-b truncate" title={session.route}>
+          {session.route} &middot; {session.eventCount} eventos &middot; {session.errorCount} errores &middot; {session.slowCount} lentos &middot; {session.duplicateCount} dup
+        </div>
+      )}
 
       {/* Log List */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         <div className="divide-y">
           {filteredLogs.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground">
-              No hay logs registrados aún
+              No hay logs registrados aun
             </div>
           ) : (
             filteredLogs.map((log) => (
@@ -195,6 +226,11 @@ export function RequestLogViewer() {
                         </span>
                       )}
                     </div>
+                    {log.isDuplicate && log.sessionCallCount && log.sessionCallCount > 1 && (
+                      <div className="text-orange-600 text-[10px] mt-0.5">
+                        Duplicado x{log.sessionCallCount}
+                      </div>
+                    )}
                     {log.error && (
                       <div className="text-red-700 mt-1 bg-red-100 p-1 rounded">
                         {log.error}

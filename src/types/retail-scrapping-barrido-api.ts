@@ -45,6 +45,11 @@ export type BarridoListRetailsResponse =
   | { ok: true; retails: RetailTargetRow[] }
   | { ok: false; error: string }
 
+/** Init combinado: retails + runs en una sola llamada. */
+export type BarridoInitResponse =
+  | { ok: true; retails: RetailTargetRow[]; runs: ScrappingRunRow[] }
+  | { ok: false; error: string }
+
 export type BarridoStopResponse = { ok: true } | { ok: false; error: string }
 
 export type BarridoPersistOutcomeResponse = { ok: true; updated: boolean } | { ok: false; error: string }

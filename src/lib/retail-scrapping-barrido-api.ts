@@ -1,5 +1,7 @@
+import { requestLogger } from '@/lib/request-logger'
 import type {
   BarridoContextResponse,
+  BarridoInitResponse,
   BarridoListRetailsResponse,
   BarridoListRunsResponse,
   BarridoPersistOutcomeResponse,
@@ -16,9 +18,12 @@ import type {
 const BASE = '/api/retail-scrapping'
 
 async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
+  const logId = requestLogger.startLog('api', `POST ${path}`, body, undefined, requestLogger.getSessionTraceId())
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (requestLogger.getEnabled()) headers['x-app-diagnostic-log'] = '1'
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     credentials: 'same-origin',
     body: JSON.stringify(body ?? {}),
     signal,
@@ -27,25 +32,34 @@ async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): P
   try {
     data = await res.json()
   } catch {
+    requestLogger.endLog(logId, 'error', undefined, 'Respuesta no valida del servidor.')
     return { ok: false, error: 'Respuesta no válida del servidor.' } as T
   }
   if (!res.ok && (data == null || typeof data !== 'object')) {
+    requestLogger.endLog(logId, 'error', undefined, `Error de red (${res.status})`)
     return { ok: false, error: `Error de red (${res.status})` } as T
   }
+  requestLogger.endLog(logId, 'success', data)
   return data as T
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin' })
+  const logId = requestLogger.startLog('api', `GET ${path}`, undefined, undefined, requestLogger.getSessionTraceId())
+  const headers: Record<string, string> = {}
+  if (requestLogger.getEnabled()) headers['x-app-diagnostic-log'] = '1'
+  const res = await fetch(`${BASE}${path}`, { credentials: 'same-origin', headers })
   let data: unknown
   try {
     data = await res.json()
   } catch {
+    requestLogger.endLog(logId, 'error', undefined, 'Respuesta no valida del servidor.')
     return { ok: false, error: 'Respuesta no válida del servidor.' } as T
   }
   if (!res.ok && (data == null || typeof data !== 'object')) {
+    requestLogger.endLog(logId, 'error', undefined, `Error de red (${res.status})`)
     return { ok: false, error: `Error de red (${res.status})` } as T
   }
+  requestLogger.endLog(logId, 'success', data)
   return data as T
 }
 
@@ -55,6 +69,10 @@ export async function barridoApiListRuns(): Promise<BarridoListRunsResponse> {
 
 export async function barridoApiListRetails(): Promise<BarridoListRetailsResponse> {
   return getJson<BarridoListRetailsResponse>('/retails')
+}
+
+export async function barridoApiInit(): Promise<BarridoInitResponse> {
+  return getJson<BarridoInitResponse>('/init')
 }
 
 export async function barridoApiStop(): Promise<BarridoStopResponse> {

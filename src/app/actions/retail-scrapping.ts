@@ -1461,6 +1461,32 @@ export async function listScrappingRunsAction(): Promise<
   }
 }
 
+/** Init combinado: retails + runs en una sola llamada para evitar serverless tax doble. */
+export async function getScrappingInitAction(): Promise<
+  | { ok: true; retails: RetailTargetRow[]; runs: ScrappingRunRow[] }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+  try {
+    const [{ data: retailsData, error: retailsErr }, { data: runsData, error: runsErr }] = await Promise.all([
+      editor.admin.rpc('list_retail_for_scrapping'),
+      editor.admin.rpc('list_scrapping_runs', { p_limit: 32 } as any),
+    ])
+    if (retailsErr) throw retailsErr
+    if (runsErr) throw runsErr
+    return {
+      ok: true,
+      retails: (retailsData ?? []) as RetailTargetRow[],
+      runs: (runsData ?? []) as ScrappingRunRow[],
+    }
+  } catch (e) {
+    const realError = e instanceof Error ? e.message : (typeof e === 'object' && e !== null ? JSON.stringify(e) : String(e))
+    console.error('[getScrappingInitAction] ERROR REAL:', realError)
+    return { ok: false, error: 'DB Error: ' + realError }
+  }
+}
+
 /** Si la corrida sigue `running`, la cancela y guarda `error_message` (cierre anómalo desde el cliente). */
 export async function persistScrappingRunBarridoOutcomeIfRunningAction(input: {
   runId: string

@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { RequestLogViewer } from '@/components/request-log-viewer'
-import { requestLogger } from '@/lib/request-logger'
+import { requestLogger, installFetchInterceptor, uninstallFetchInterceptor } from '@/lib/request-logger'
 import type { ProfileOption } from '@/lib/profile/context'
 import {
   mobileBottomNavItems,
@@ -108,6 +108,16 @@ export default function AppShell({
   useEffect(() => {
     return requestLogger.subscribeEnabled((enabled) => setDiagLogEnabled(enabled))
   }, [])
+
+  // Sesion de diagnostico por ruta: limpiar al cambiar de pagina
+  useEffect(() => {
+    if (pathname) {
+      requestLogger.startPageSession(pathname + (searchParams.toString() ? '?' + searchParams.toString() : ''))
+    }
+    return () => {
+      requestLogger.endPageSession()
+    }
+  }, [pathname, searchParams])
 
   return (
     <div className="grid min-h-screen w-full md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr]">
