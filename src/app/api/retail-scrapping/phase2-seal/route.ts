@@ -26,7 +26,8 @@ export async function POST(request: Request) {
     )
   }
   try {
-    const result = await discoverPhase2AppendAndSealLiderScrappingPagesAction({ runId, retailId })
+    const abortSignal = request.signal
+    const result = await discoverPhase2AppendAndSealLiderScrappingPagesAction({ runId, retailId, abortSignal })
     return NextResponse.json(result)
   } catch (e) {
     console.error('[api/retail-scrapping/phase2-seal]', e)

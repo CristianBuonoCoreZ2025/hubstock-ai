@@ -36,7 +36,6 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { requestLogger, withLogging } from '@/lib/request-logger'
-import { RequestLogViewer } from '@/components/request-log-viewer'
 import {
   Dialog,
   DialogContent,
@@ -231,7 +230,7 @@ function scrappingRunStatusLabel(status: string, totalPages?: number | null): st
 
 export function CapturaCadenas2Client() {
   const [runs, setRuns] = useState<ScrappingRunRow[]>([])
-  const [runsBusy, setRunsBusy] = useState(true)
+  const [runsBusy, setRunsBusy] = useState(false)
 
   const [retails, setRetails] = useState<RetailTargetRow[]>([])
   const [retailsBusy, setRetailsBusy] = useState(true)
@@ -242,6 +241,7 @@ export function CapturaCadenas2Client() {
   const [sweepStartedAt, setSweepStartedAt] = useState<string | null>(null)
   const [currentRetailLabel, setCurrentRetailLabel] = useState<string>('')
   const syncRef = useRef<{ stop: boolean; abortController: AbortController } | null>(null)
+  const stopInFlightRef = useRef(false)
 
   const [queuePagesTotal, setQueuePagesTotal] = useState(0)
   const [queuePagesProcessed, setQueuePagesProcessed] = useState(0)
@@ -298,7 +298,7 @@ export function CapturaCadenas2Client() {
   const lastDashboardCallRef = useRef(0)
   const refreshScrappingPendingHomologacion = useCallback(async () => {
     const now = Date.now()
-    if (now - lastDashboardCallRef.current < 2000) {
+    if (now - lastDashboardCallRef.current < 15000) {
       requestLogger.logUI('getScrappingHomologationDashboardAction - skipped (llamada reciente)')
       return
     }
@@ -340,7 +340,7 @@ export function CapturaCadenas2Client() {
     return retails.some((r) => r.id === selectedRetailId) ? selectedRetailId : undefined
   }, [selectedRetailId, retails])
 
-  const reloadRuns = useCallback(async () => {
+  const reloadRuns = useCallback(async (): Promise<ScrappingRunRow[]> => {
     setRunsBusy(true)
     const logId = requestLogger.startLog('api', 'barridoApiListRuns')
     const res = await barridoApiListRuns()
@@ -348,10 +348,11 @@ export function CapturaCadenas2Client() {
     if (!res.ok) {
       requestLogger.endLog(logId, 'error', undefined, res.error)
       toast.error(res.error)
-      return
+      return []
     }
     requestLogger.endLog(logId, 'success', { runsCount: res.runs.length })
     setRuns(res.runs)
+    return res.runs
   }, [])
 
   const reloadRetails = useCallback(async () => {
@@ -375,13 +376,11 @@ export function CapturaCadenas2Client() {
     if (initializedRef.current) return
     initializedRef.current = true
     // Limpiar logs anteriores al cargar la página
-    requestLogger.clear()
-    requestLogger.logUI('CapturaCadenas2 - Página cargada, iniciando carga de datos')
-    // Cargar datos iniciales sin causar cascading renders
+    requestLogger.logUI('CapturaCadenas2 - Página cargada, cargando retails')
+    // Solo retails al inicio: tabla pequeña, rapida. El resto (runs, dashboard)
+    // se carga bajo demanda cuando el usuario abre el modal o interactua.
     requestAnimationFrame(() => {
-      void reloadRuns()
       void reloadRetails()
-      void refreshScrappingPendingHomologacion()
     })
   }, []) // Solo ejecutar una vez al montar - funciones son estables
 
@@ -450,7 +449,8 @@ export function CapturaCadenas2Client() {
   ])
 
   async function onDetenerScrapping() {
-    if (!canStopScrapping || stopBusy) return
+    if (!canStopScrapping || stopBusy || stopInFlightRef.current) return
+    stopInFlightRef.current = true
     setStopBusy(true)
     
     // 1. Abortar llamadas HTTP en curso y detener workers
@@ -467,6 +467,9 @@ export function CapturaCadenas2Client() {
     setCurrentRetailLabel('')
     toast.message('Deteniendo scrapping…')
     
+    const runningRun = runs.find((r) => r.status === 'running')
+    console.info('[STOP] Solicitud de detención', { runId: runningRun?.id ?? null, previousStatus: runningRun?.status ?? null })
+
     // 3. Notificar al backend (fire and forget, no bloquea UI)
     const logId = requestLogger.startLog('api', 'barridoApiStop')
     try {
@@ -482,6 +485,7 @@ export function CapturaCadenas2Client() {
       requestLogger.endLog(logId, 'error', undefined, e instanceof Error ? e.message : String(e))
     } finally {
       setStopBusy(false)
+      stopInFlightRef.current = false
     }
   }
 
@@ -813,7 +817,7 @@ export function CapturaCadenas2Client() {
       const phase2Promise = barridoApiPhase2Seal({
         runId: prepared.runId,
         retailId: selectedRetailId,
-      })
+      }, sync.abortController.signal).catch(() => ({ ok: false as const, error: 'Fase 2 cancelada por el usuario.' } as BarridoPhase2SealResponse))
 
       const runWorker = async () => {
         while (!sync.stop) {
@@ -958,25 +962,20 @@ export function CapturaCadenas2Client() {
           }
         }
 
-        await reloadRuns()
-        await reloadRetails()
+        const freshRuns = await reloadRuns()
         if (typeof resolvedScrappingRowTotal === 'number') {
           setScraperRowsTotal(resolvedScrappingRowTotal)
         }
 
-        persistedRun = undefined
-        const listAfter = await barridoApiListRuns()
-        if (listAfter.ok) {
-          const rowAfter = listAfter.runs.find((x) => x.id === sweepRunId)
-          if (rowAfter) {
-            persistedRun = {
-              status: rowAfter.status,
-              error_message: rowAfter.error_message,
-              total_pages: rowAfter.total_pages ?? null,
-              pages_ok: rowAfter.pages_ok ?? 0,
-              pages_failed: rowAfter.pages_failed ?? 0,
-              rows_inserted: rowAfter.rows_inserted,
-            }
+        const rowAfter = freshRuns.find((x) => x.id === sweepRunId)
+        if (rowAfter) {
+          persistedRun = {
+            status: rowAfter.status,
+            error_message: rowAfter.error_message,
+            total_pages: rowAfter.total_pages ?? null,
+            pages_ok: rowAfter.pages_ok ?? 0,
+            pages_failed: rowAfter.pages_failed ?? 0,
+            rows_inserted: rowAfter.rows_inserted,
           }
         }
 
@@ -1548,7 +1547,7 @@ export function CapturaCadenas2Client() {
               ) : runs.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-3 py-6 text-center text-muted-foreground">
-                    No hay corridas registradas.
+                    No hay corridas cargadas. El historial se actualiza automáticamente al iniciar o detener una captura.
                   </td>
                 </tr>
               ) : (
@@ -1869,7 +1868,6 @@ export function CapturaCadenas2Client() {
         }}
       />
 
-      <RequestLogViewer />
     </div>
   )
 }

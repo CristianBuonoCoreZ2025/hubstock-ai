@@ -58,7 +58,7 @@ export function RequestLogViewer() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `captura-cadenas-logs-${new Date().toISOString()}.json`
+    a.download = `stockcasa-diagnostico-${new Date().toISOString()}.json`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -101,7 +101,7 @@ export function RequestLogViewer() {
       <div className="flex items-center justify-between p-2 border-b bg-white rounded-t-lg shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <Clock className="h-4 w-4 text-gray-500 shrink-0" />
-          <span className="font-semibold text-sm truncate">Request Logs</span>
+          <span className="font-semibold text-sm truncate">Log de diagnóstico</span>
           <div className="flex items-center gap-1 text-[10px]">
             <span className="px-1.5 py-0.5 rounded bg-gray-200">{stats.total}</span>
             <span className="px-1.5 py-0.5 rounded border text-yellow-600">{stats.pending}</span>
@@ -189,6 +189,11 @@ export function RequestLogViewer() {
                       <span className="text-gray-400">
                         {new Date(log.timestamp).toLocaleTimeString('es-CL', { hour12: false })}
                       </span>
+                      {log.pathname && (
+                        <span className="text-gray-400 truncate max-w-[120px]" title={log.pathname}>
+                          {log.pathname}
+                        </span>
+                      )}
                     </div>
                     {log.error && (
                       <div className="text-red-700 mt-1 bg-red-100 p-1 rounded">

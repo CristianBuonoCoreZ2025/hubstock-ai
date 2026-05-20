@@ -5,6 +5,7 @@ import { getProfileContext } from '@/lib/profile/context'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import { ProfileForm } from './ProfileForm'
 import { SignOutPanel } from './SignOutPanel'
+import DiagnosticLogToggle from './DiagnosticLogToggle'
 
 export default async function SettingsPage() {
   const { activeProfileId } = await getProfileContext()
@@ -55,6 +56,8 @@ export default async function SettingsPage() {
       </section>
 
       <ProfileForm name={name} description={description} canEdit={canEdit} />
+
+      <DiagnosticLogToggle />
 
       <SignOutPanel />
 

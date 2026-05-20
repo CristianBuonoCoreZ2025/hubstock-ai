@@ -536,6 +536,7 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
 export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input: {
   runId: string
   retailId: string
+  abortSignal?: AbortSignal
 }): Promise<
   | {
       ok: true
@@ -556,6 +557,14 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
   if (!runId || !retailId) {
     return { ok: false, error: 'Faltan el identificador de la ejecución o del retail.' }
   }
+
+  const checkAborted = () => {
+    if (input.abortSignal?.aborted) {
+      console.info('[phase2-seal] Abort detectado', { runId })
+      throw new Error('Proceso cancelado por el cliente.')
+    }
+  }
+  checkAborted()
 
   try {
     const { data: retail, error: rErr } = await editor.admin
@@ -615,6 +624,7 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
       toInsert = []
     } else {
       // Lider: descubrimiento completo del catálogo
+      checkAborted()
       const fullSeeds = await buildLiderFullCatalogPageSeeds(baseUrl)
 
       run = await fetchScrappingRunById(editor.admin, runId)
@@ -662,6 +672,7 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
       return { ok: false, error: 'La ejecución se detuvo antes de guardar la ampliación de la cola.' }
     }
 
+    checkAborted()
     if (toInsert.length > 0) {
       const { error: pqErr } = await insertScrappingPageRows(editor.admin, runId, retailerKey, toInsert)
       if (pqErr) {
@@ -843,7 +854,7 @@ export async function resumeLiderScrappingBarridoAction(input: {
       return { ok: false, error: 'Esa ejecución ya no está en curso; no se puede reanudar desde aquí.' }
     }
 
-    await resetStaleScrappingPagesProcessing(editor.admin, runId)
+  await resetStaleScrappingPagesProcessing(editor.admin, runId)
     revalidatePath('/captura-cadenas-2')
     return {
       ok: true,
@@ -1071,6 +1082,7 @@ export async function processLiderScrappingRunPageAction(input: {
   // Helper para verificar si el cliente abortó
   const checkAborted = () => {
     if (input.abortSignal?.aborted) {
+      console.info('[process-page] Abort detectado', { runId })
       throw new Error('Proceso cancelado por el cliente.')
     }
   }
@@ -1126,6 +1138,7 @@ export async function processLiderScrappingRunPageAction(input: {
 
   const listingPathConfig = await loadRetailListingPathConfig(editor.admin, run.retail_id)
 
+  checkAborted()
   await resetStaleScrappingPagesProcessing(editor.admin, runId)
 
   const tallies0 = await countScrappingPages(editor.admin, runId)
@@ -1243,6 +1256,7 @@ export async function processLiderScrappingRunPageAction(input: {
   const extractedAt = new Date().toISOString()
 
   try {
+    checkAborted() // Verificar antes de capturar la página
     checkAborted() // Verificar antes de fetch a Lider
     const cap = await withTimeout(captureRetailPage(page.retailer, page.page_url), 2500)
     if (!cap.ok) {
@@ -1351,8 +1365,9 @@ export async function processLiderScrappingRunPageAction(input: {
   }
 
   /** Conteo en BD (válido con varios workers en paralelo; no sumar sobre `rows_inserted` leído al inicio). */
-  const rowsCountForRun =
-    (await selectScrappingRowCountForRun(editor.admin, runId)) ?? Number(run.rows_inserted ?? 0)
+  const rowsCountForRun = waveDone
+    ? (await selectScrappingRowCountForRun(editor.admin, runId)) ?? Number(run.rows_inserted ?? 0)
+    : Number(run.rows_inserted ?? 0)
 
   let benchOut = benchStart
   const runBeforeBench = await fetchScrappingRunById(editor.admin, runId)
@@ -1776,33 +1791,29 @@ export async function recordHomologationUserFeedbackAction(input: {
   return recordHomologationUserFeedbackRpc(editor.admin, input)
 }
 
-/** Totales para UI: pending global, cola IA gris, revisión humana USER_REVIEW, pending_new. */
+/** Totales para UI: pending global, cola IA gris, revision humana USER_REVIEW, pending_new.
+ * Usa RPC scrapping_homologation_dashboard para resolver 4 conteos en una sola query.
+ */
 export async function getScrappingHomologationDashboardAction(): Promise<
   | { ok: true; pendingAny: number; grayIaQueued: number; userReview: number; pendingNew: number }
   | { ok: false; error: string }
 > {
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
-  const a = editor.admin
-  const [p1, p2, p3, p4] = await Promise.all([
-    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('catalog_match_status', 'pending'),
-    a
-      .from('scrapping')
-      .select('id', { count: 'exact', head: true })
-      .eq('homolog_final_status', 'GRAY_IA_QUEUED')
-      .eq('ai_required', true),
-    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('homolog_final_status', 'USER_REVIEW'),
-    a.from('scrapping').select('id', { count: 'exact', head: true }).eq('catalog_match_status', 'pending_new'),
-  ])
-  if (p1.error || p2.error || p3.error || p4.error) {
-    return { ok: false, error: 'No se pudo leer el estado de homologación.' }
+
+  const { data, error } = await editor.admin.rpc('scrapping_homologation_dashboard')
+  const rawData = data as unknown
+  if (error || !rawData || !Array.isArray(rawData) || rawData.length === 0) {
+    return { ok: false, error: 'No se pudo leer el estado de homologacion.' }
   }
+
+  const row = rawData[0] as Record<string, unknown>
   return {
     ok: true,
-    pendingAny: p1.count ?? 0,
-    grayIaQueued: p2.count ?? 0,
-    userReview: p3.count ?? 0,
-    pendingNew: p4.count ?? 0,
+    pendingAny: Number(row.pending_any ?? 0),
+    grayIaQueued: Number(row.gray_ia_queued ?? 0),
+    userReview: Number(row.user_review ?? 0),
+    pendingNew: Number(row.pending_new ?? 0),
   }
 }
 

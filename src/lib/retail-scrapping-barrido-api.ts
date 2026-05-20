@@ -72,11 +72,14 @@ export async function barridoApiPhase1Enqueue(input: {
   return postJson<BarridoPhase1EnqueueResponse>('/phase1-enqueue', input)
 }
 
-export async function barridoApiPhase2Seal(input: {
-  runId: string
-  retailId: string
-}): Promise<BarridoPhase2SealResponse> {
-  return postJson<BarridoPhase2SealResponse>('/phase2-seal', input)
+export async function barridoApiPhase2Seal(
+  input: {
+    runId: string
+    retailId: string
+  },
+  signal?: AbortSignal,
+): Promise<BarridoPhase2SealResponse> {
+  return postJson<BarridoPhase2SealResponse>('/phase2-seal', input, signal)
 }
 
 export async function barridoApiPersistOutcome(input: {
