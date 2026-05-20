@@ -649,10 +649,11 @@ export function CapturaCadenas2Client() {
     const effectiveRetailId = modalRetailId || selectedRetailId
     if (!effectiveRetailId || forceFinalizeBusy || fullSweepBusy || barridoPlanActionBusy) return
     const confirmed = window.confirm(
-      '¿Cerrar esta corrida forzosamente?
-
-Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marcarán como completadas sin descargar. No se podrá retomar el barrido después.',
+      '¿Cerrar esta corrida forzosamente?\n\nEsta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marcarán como completadas sin descargar. No se podrá retomar el barrido después.',
     )
+    if (!confirmed) return
+    if (!confirmed) return
+    if (!confirmed) return
     if (!confirmed) return
     setForceFinalizeBusy(true)
     try {
@@ -1219,7 +1220,7 @@ Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marc
 
                   <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
                     <AlertTriangle className="inline mr-1 h-3 w-3" aria-hidden />
-                    <strong>Advertencia:</strong> "Concluir forzado" marca todas las páginas pendientes o en proceso como completadas sin descargar. No se podrá retomar el barrido después. Es irreversible.
+                    <strong>Advertencia:</strong> &ldquo;Concluir forzado&rdquo; marca todas las páginas pendientes o en proceso como completadas sin descargar. No se podrá retomar el barrido después. Es irreversible.
                   </div>
 
                   <p className="text-[10px] text-blue-700 dark:text-blue-300 text-center">
