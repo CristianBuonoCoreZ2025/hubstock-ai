@@ -96,6 +96,7 @@ import {
   normalizeLiderStorefrontUrl,
 } from '@/server/retail/capture/lider-catalog-plan'
 import { discoverVtexScrappingUrlsPhase1 } from '@/server/retail/capture/vtex-catalog-plan'
+import { discoverJumboScrappingUrlsPhase1 } from '@/server/retail/capture/jumbo-catalog-plan'
 import {
   captureRetailPage,
   computeNextRetailPageUrl,
@@ -283,6 +284,7 @@ export async function prepareLiderScrappingRunAction(input: {
   | {
       ok: true
       runId: string
+      retailId: string
       retailName: string
       retailMaxPages: number
       retailMaxProducts: number
@@ -338,6 +340,7 @@ export async function prepareLiderScrappingRunAction(input: {
     return {
       ok: true,
       runId: ins.id,
+      retailId: row.id,
       retailName: row.name,
       retailMaxPages: Math.max(0, Number(row.max_pages ?? 0)),
       retailMaxProducts: Math.max(0, Number(row.max_products ?? 0)),
@@ -423,11 +426,30 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
       return { ok: false, error: 'La ejecución ya no está en curso; no se puede armar la cola.' }
     }
 
+    const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
     let seeds: Array<{ page_url: string; page_index: number }>
 
-    if (isVtexRetailer(row.name)) {
-      // Jumbo o Central Mayorista: usar plan VTEX
-      const vtexResult = await discoverVtexScrappingUrlsPhase1(row.name as 'jumbo' | 'central_mayorista', {
+    if (retailerKey === 'jumbo') {
+      // Jumbo: descubrimiento de secciones principales (como /despensa, /despensa?page=2)
+      const jumboResult = await discoverJumboScrappingUrlsPhase1(baseUrl)
+      if (!jumboResult.ok) {
+        await editor.admin
+          .from('scrapping_runs')
+          .update({
+            status: 'cancelled',
+            finished_at: new Date().toISOString(),
+            total_pages: 0,
+            error_message: jumboResult.error,
+          } as never)
+          .eq('id', runId)
+          .eq('status', 'running' as never)
+        revalidatePath('/captura-cadenas-2')
+        return { ok: false, error: jumboResult.error }
+      }
+      seeds = jumboResult.seeds.map((s) => ({ page_url: s.page_url, page_index: s.page_index }))
+    } else if (isVtexRetailer(row.name)) {
+      // Central Mayorista: usar plan VTEX (API search)
+      const vtexResult = await discoverVtexScrappingUrlsPhase1(retailerKey as 'central_mayorista', {
         pagesPerQuery: 3,
         pageSize: 20,
       })
@@ -471,8 +493,6 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
         error: 'No se pudo armar la cola inicial de URLs. Reintenta más tarde.',
       }
     }
-
-    const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
 
     const runBeforeInsert = await fetchScrappingRunById(editor.admin, runId)
     if (!runBeforeInsert || runBeforeInsert.status !== 'running') {
@@ -681,11 +701,17 @@ export async function stopLiderScrappingAction(): Promise<{ ok: true } | { ok: f
   if (!editor.ok) return { ok: false, error: editor.error }
   try {
     const { error } = await cancelAllRunningScrappingRuns(editor.admin)
-    if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+    if (error) {
+      const realError = error instanceof Error ? error.message : JSON.stringify(error)
+      console.error('[stopLiderScrappingAction] ERROR:', realError)
+      return { ok: false, error: `DB Error: ${realError}` }
+    }
     revalidatePath('/captura-cadenas-2')
     return { ok: true }
   } catch (e) {
-    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+    const realError = e instanceof Error ? e.message : String(e)
+    console.error('[stopLiderScrappingAction] ERROR:', realError)
+    return { ok: false, error: `DB Error: ${realError}` }
   }
 }
 
@@ -723,44 +749,50 @@ export async function getLiderScrappingBarridoContextAction(input: {
   if (!retailId) return { ok: false, error: 'Falta el retail.' }
 
   try {
-    const runningN = await countRunningScrappingRuns(editor.admin)
-    const prodN = await countScrappingProductRowsGlobal(editor.admin)
-    const pageN = await countScrappingPageRowsGlobal(editor.admin)
-    const anyRunningGlobally = runningN > 0
+    // Una sola consulta SQL con CTEs para obtener todo de una vez
+    const { data, error } = await editor.admin.rpc('get_barrido_context', {
+      p_retail_id: retailId,
+    } as any)
+    if (error) throw error
 
-    const runningRun = await fetchRunningScrappingRunForRetail(editor.admin, retailId)
-    let runningForRetail: LiderBarridoContextOk['runningForRetail'] = null
-    if (runningRun) {
-      const t = await countScrappingPages(editor.admin, runningRun.id)
-      runningForRetail = {
-        runId: runningRun.id,
-        startedAt: runningRun.started_at,
-        pending: t.pending,
-        processing: t.processing,
-        failed: t.failed,
-        done: t.done,
-        total: t.total,
-        totalPages: runningRun.total_pages ?? null,
+    const row = data?.[0] ?? data
+    if (!row) {
+      return {
+        ok: true,
+        anyRunningGlobally: false,
+        globalScrappingProducts: 0,
+        globalScrappingPages: 0,
+        runningForRetail: null,
+        latestRun: null,
       }
     }
 
-    const latest = await fetchLatestScrappingRunForRetail(editor.admin, retailId)
-    let latestRun: LiderBarridoContextOk['latestRun'] = null
-    if (latest) {
-      const t2 = await countScrappingPages(editor.admin, latest.id)
-      latestRun = {
-        runId: latest.id,
-        status: latest.status,
-        startedAt: latest.started_at,
-        failedPages: t2.failed,
-      }
-    }
+    const r = row as any
+    const anyRunningGlobally = (r.running_count ?? 0) > 0
+
+    const runningForRetail: LiderBarridoContextOk['runningForRetail'] = r.running_run_id ? {
+      runId: r.running_run_id,
+      startedAt: r.running_run_started_at,
+      pending: r.running_pending ?? 0,
+      processing: r.running_processing ?? 0,
+      failed: r.running_failed ?? 0,
+      done: r.running_done ?? 0,
+      total: r.running_total ?? 0,
+      totalPages: r.running_total_pages ?? null,
+    } : null
+
+    const latestRun: LiderBarridoContextOk['latestRun'] = r.latest_run_id ? {
+      runId: r.latest_run_id,
+      status: r.latest_run_status,
+      startedAt: r.latest_run_started_at,
+      failedPages: r.latest_failed ?? 0,
+    } : null
 
     return {
       ok: true,
       anyRunningGlobally,
-      globalScrappingProducts: Math.max(0, prodN),
-      globalScrappingPages: Math.max(0, pageN),
+      globalScrappingProducts: Math.max(0, r.product_count ?? 0),
+      globalScrappingPages: Math.max(0, r.page_count ?? 0),
       runningForRetail,
       latestRun,
     }
@@ -777,6 +809,7 @@ export async function resumeLiderScrappingBarridoAction(input: {
   | {
       ok: true
       runId: string
+      retailId: string
       retailName: string
       retailMaxPages: number
       retailMaxProducts: number
@@ -815,6 +848,7 @@ export async function resumeLiderScrappingBarridoAction(input: {
     return {
       ok: true,
       runId,
+      retailId: row.id,
       retailName: row.name,
       retailMaxPages: Math.max(0, Number(row.max_pages ?? 0)),
       retailMaxProducts: Math.max(0, Number(row.max_products ?? 0)),
@@ -853,6 +887,7 @@ export async function requeueFailedPagesOnLatestRunForRetailAction(input: {
       ok: true
       runId: string
       requeued: number
+      retailId: string
       retailName: string
       retailMaxPages: number
       retailMaxProducts: number
@@ -894,6 +929,7 @@ export async function requeueFailedPagesOnLatestRunForRetailAction(input: {
       ok: true,
       runId: latest.id,
       requeued,
+      retailId: row.id,
       retailName: row.name,
       retailMaxPages: Math.max(0, Number(row.max_pages ?? 0)),
       retailMaxProducts: Math.max(0, Number(row.max_products ?? 0)),
@@ -994,6 +1030,7 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
 /** Procesa la siguiente página pendiente de la cola scrapping (una petición HTTP de listado). */
 export async function processLiderScrappingRunPageAction(input: {
   runId: string
+  abortSignal?: AbortSignal
 }): Promise<
   | {
       ok: true
@@ -1031,6 +1068,24 @@ export async function processLiderScrappingRunPageAction(input: {
     }
   | { ok: false; error: string }
 > {
+  // Helper para verificar si el cliente abortó
+  const checkAborted = () => {
+    if (input.abortSignal?.aborted) {
+      throw new Error('Proceso cancelado por el cliente.')
+    }
+  }
+
+  // Helper para timeout de 2 segundos
+  const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout: operación excedió 2 segundos')), ms)
+      )
+    ])
+  }
+
+  checkAborted() // Verificar al inicio
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
 
@@ -1188,7 +1243,8 @@ export async function processLiderScrappingRunPageAction(input: {
   const extractedAt = new Date().toISOString()
 
   try {
-    const cap = await captureRetailPage(page.retailer, page.page_url)
+    checkAborted() // Verificar antes de fetch a Lider
+    const cap = await withTimeout(captureRetailPage(page.retailer, page.page_url), 2500)
     if (!cap.ok) {
       pageError = cap.error
     } else {
@@ -1213,20 +1269,21 @@ export async function processLiderScrappingRunPageAction(input: {
       }))
 
       if (rows.length > 0) {
-        const { kept: rowsFiltered, skipped: skippedLinked } = await filterScrappingUpsertRowsWithoutExistingRetailLinks(
-          editor.admin,
-          page.retailer,
-          rows,
+        checkAborted()
+        const { kept: rowsFiltered, skipped: skippedLinked } = await withTimeout(
+          filterScrappingUpsertRowsWithoutExistingRetailLinks(editor.admin, page.retailer, rows),
+          1500
         )
         if (skippedLinked > 0) {
           console.info(
             `[scrapping] página ${page.page_index}: omitidos ${skippedLinked} producto(s) ya homologados (vínculo en catalog_retail_links).`,
           )
         }
-        const chunk = 300
+        const chunk = 50
         for (let i = 0; i < rowsFiltered.length; i += chunk) {
+          checkAborted() // Verificar antes de cada chunk de insert
           const slice = rowsFiltered.slice(i, i + chunk) as ScrappingUpsertRow[]
-          const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
+          const { error: upErr } = await withTimeout(upsertScrappingChunkForRun(editor.admin, slice), 1000)
           if (upErr) {
             lastPersistErr = upErr
             pageError = getUserFriendlyErrorMessage(upErr, 'generic')
@@ -1239,9 +1296,10 @@ export async function processLiderScrappingRunPageAction(input: {
       }
 
       if (!pageError) {
+        checkAborted()
         const nextUrl = computeNextRetailPageUrl(page.page_url, page.retailer, cap.data.rawProductCount)
         if (nextUrl) {
-          const app = await appendScrappingPage(editor.admin, runId, page.retailer, nextUrl)
+          const app = await withTimeout(appendScrappingPage(editor.admin, runId, page.retailer, nextUrl), 1000)
           if (app.error) {
             expandError = getUserFriendlyErrorMessage(app.error, 'generic')
           }
@@ -1249,6 +1307,7 @@ export async function processLiderScrappingRunPageAction(input: {
       }
     }
 
+    checkAborted() // Verificar antes de actualizar estado de página
     const persistedPageMessage =
       pageError != null ?
         scrappingPagePersistErrorText(pageError, page.page_url, lastPersistErr)
@@ -1263,6 +1322,10 @@ export async function processLiderScrappingRunPageAction(input: {
       error_message: persistedPageMessage,
     })
   } catch (e) {
+    // Si es error de aborto, no marcar la página como failed
+    if (input.abortSignal?.aborted || e instanceof Error && e.message.includes('cancelado')) {
+      throw e // Re-lanzar para que se maneje arriba
+    }
     pageError = getUserFriendlyErrorMessage(e, 'generic')
     await finalizeScrappingPage(editor.admin, page.id, {
       status: 'failed',
@@ -1356,8 +1419,9 @@ export async function listRetailTargetsAction(): Promise<
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
   try {
-    const retails = await listRetailTargets(editor.admin)
-    return { ok: true, retails }
+    const { data, error } = await editor.admin.rpc('list_retail_for_scrapping')
+    if (error) throw error
+    return { ok: true, retails: (data ?? []) as RetailTargetRow[] }
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
   }
@@ -1370,10 +1434,15 @@ export async function listScrappingRunsAction(): Promise<
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
   try {
-    const runs = await listRecentScrappingRuns(editor.admin, 32)
-    return { ok: true, runs }
+    const { data, error } = await editor.admin.rpc('list_scrapping_runs', {
+      p_limit: 32,
+    } as any)
+    if (error) throw error
+    return { ok: true, runs: (data ?? []) as ScrappingRunRow[] }
   } catch (e) {
-    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+    const realError = e instanceof Error ? e.message : (typeof e === 'object' && e !== null ? JSON.stringify(e) : String(e))
+    console.error('[listScrappingRunsAction] ERROR REAL:', realError)
+    return { ok: false, error: `DB Error: ${realError}` }
   }
 }
 

@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Sparkles, PackagePlus } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Sparkles, PackagePlus, X } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   barridoApiBarridoContext,
@@ -20,7 +20,6 @@ import {
 import {
   applyScrappingExactCatalogMatchesAction,
   forceFinalizeScrappingRunForRetailAction,
-  getScrappingHomologacionPendingCountAction,
   getScrappingHomologationDashboardAction,
   type ScrappingExactCatalogMatchStats,
 } from '@/app/actions/retail-scrapping'
@@ -35,6 +34,9 @@ import { HomologationWizardModal } from '@/app/(app)/captura-cadenas-2/homologat
 import { CreateNewProductsModal } from '@/app/(app)/captura-cadenas-2/create-new-products-modal'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
+import { cn } from '@/lib/utils'
+import { requestLogger, withLogging } from '@/lib/request-logger'
+import { RequestLogViewer } from '@/components/request-log-viewer'
 import {
   Dialog,
   DialogContent,
@@ -105,7 +107,7 @@ function outcomeLabel(o: CapturaCadenas2SweepDiagnostic['outcome']): string {
     case 'sin_inicio':
       return 'No se pudo iniciar el barrido'
     case 'salida_sin_cierre':
-      return 'Salida antes de tiempo (revisá pendientes y estado en base)'
+      return 'Salida antes de tiempo (revisa pendientes y estado en base)'
     default:
       return o
   }
@@ -152,7 +154,7 @@ function buildSweepDiagnostic(input: {
 
   let outcome: CapturaCadenas2SweepDiagnostic['outcome'] = 'salida_sin_cierre'
   let outcomeHint =
-    'El bucle terminó sin marcar cierre explícito. Revisá pendientes en base, tiempo máximo del servidor o pestaña en segundo plano.'
+    'El bucle terminó sin marcar cierre explícito. Revisa pendientes en base, tiempo máximo del servidor o pestaña en segundo plano.'
 
   if (input.startError) {
     outcome = 'sin_inicio'
@@ -160,7 +162,7 @@ function buildSweepDiagnostic(input: {
   } else if (input.browserError) {
     outcome = 'corte_navegador_o_red'
     outcomeHint =
-      'Falló la llamada desde el navegador (red, pestaña cerrada, suspensión del dispositivo o límite de tiempo del proveedor de hosting). Si usás Vercel u otro serverless, revisá maxDuration y el plan.'
+      'Falló la llamada desde el navegador (red, pestaña cerrada, suspensión del dispositivo o límite de tiempo del proveedor de hosting). Si usas Vercel u otro serverless, revisa maxDuration y el plan.'
   } else if (input.actionError) {
     outcome = 'error_servidor'
     outcomeHint = input.actionError
@@ -239,6 +241,7 @@ export function CapturaCadenas2Client() {
   const [stopBusy, setStopBusy] = useState(false)
   const [sweepStartedAt, setSweepStartedAt] = useState<string | null>(null)
   const [currentRetailLabel, setCurrentRetailLabel] = useState<string>('')
+  const syncRef = useRef<{ stop: boolean; abortController: AbortController } | null>(null)
 
   const [queuePagesTotal, setQueuePagesTotal] = useState(0)
   const [queuePagesProcessed, setQueuePagesProcessed] = useState(0)
@@ -253,6 +256,7 @@ export function CapturaCadenas2Client() {
   const [barridoPlanLoading, setBarridoPlanLoading] = useState(false)
   const [barridoPlanCtx, setBarridoPlanCtx] = useState<BarridoContextResponse | null>(null)
   const [barridoPlanActionBusy, setBarridoPlanActionBusy] = useState(false)
+  const [modalRetailId, setModalRetailId] = useState<string>('')
   const [purgeIdleBusy, setPurgeIdleBusy] = useState(false)
   const [exactMatchBusy, setExactMatchBusy] = useState(false)
   const [exactMatchLast, setExactMatchLast] = useState<ScrappingExactCatalogMatchStats | null>(null)
@@ -270,20 +274,41 @@ export function CapturaCadenas2Client() {
   const [homologWizardOpen, setHomologWizardOpen] = useState(false)
   const [forceFinalizeBusy, setForceFinalizeBusy] = useState(false)
 
+  /** 
+   * Detener scrapping solo cuando hay una sesión activa (fullSweepBusy) 
+   * o una corrida running del retail seleccionado actualmente.
+   * Evita mostrar el botón activo por corridas "huérfanas" de otros retails o sesiones previas.
+   */
   const canStopScrapping = useMemo(() => {
-    return fullSweepBusy || runs.some((r) => r.status === 'running')
-  }, [fullSweepBusy, runs])
+    // Si hay un barrido activo en esta sesión, siempre permitir detener
+    if (fullSweepBusy) return true
+    
+    // Si no hay retail seleccionado, no permitir detener
+    if (!selectedRetailId) return false
+    
+    // Solo permitir detener si hay una corrida running del retail seleccionado
+    return runs.some((r) => r.status === 'running' && r.retail_id === selectedRetailId)
+  }, [fullSweepBusy, runs, selectedRetailId])
 
   /** Homologación solo con scrapping cerrado (sin corrida `running` en base; sin barrido activo en esta sesión). */
   const homologacionBloqueada = useMemo(() => {
     return runsBusy || fullSweepBusy || runs.some((r) => r.status === 'running')
   }, [runsBusy, fullSweepBusy, runs])
 
+  const lastDashboardCallRef = useRef(0)
   const refreshScrappingPendingHomologacion = useCallback(async () => {
-    const r = await getScrappingHomologacionPendingCountAction()
-    if (r.ok) setScrappingPendingHomologacion(r.pendingCount)
+    const now = Date.now()
+    if (now - lastDashboardCallRef.current < 2000) {
+      requestLogger.logUI('getScrappingHomologationDashboardAction - skipped (llamada reciente)')
+      return
+    }
+    lastDashboardCallRef.current = now
+    
+    const logId = requestLogger.startLog('api', 'getScrappingHomologationDashboardAction')
     const d = await getScrappingHomologationDashboardAction()
+    requestLogger.endLog(logId, d.ok ? 'success' : 'error', d.ok ? { pendingAny: d.pendingAny, grayIaQueued: d.grayIaQueued, userReview: d.userReview, pendingNew: d.pendingNew } : undefined, d.ok ? undefined : d.error)
     if (d.ok) {
+      setScrappingPendingHomologacion(d.pendingAny)
       setHomologDash({
         pendingAny: d.pendingAny,
         grayIaQueued: d.grayIaQueued,
@@ -317,18 +342,21 @@ export function CapturaCadenas2Client() {
 
   const reloadRuns = useCallback(async () => {
     setRunsBusy(true)
+    const logId = requestLogger.startLog('api', 'barridoApiListRuns')
     const res = await barridoApiListRuns()
     setRunsBusy(false)
     if (!res.ok) {
+      requestLogger.endLog(logId, 'error', undefined, res.error)
       toast.error(res.error)
       return
     }
+    requestLogger.endLog(logId, 'success', { runsCount: res.runs.length })
     setRuns(res.runs)
   }, [])
 
   const reloadRetails = useCallback(async () => {
     setRetailsBusy(true)
-    const res = await barridoApiListRetails()
+    const res = await withLogging('api', 'barridoApiListRetails', () => barridoApiListRetails())
     setRetailsBusy(false)
     if (!res.ok) {
       toast.error(res.error)
@@ -341,30 +369,35 @@ export function CapturaCadenas2Client() {
     })
   }, [])
 
+  // Carga inicial de datos - usa flag para evitar warnings
+  const initializedRef = useRef(false)
   useEffect(() => {
-    void reloadRuns()
-    void reloadRetails()
-  }, [reloadRuns, reloadRetails])
-
-  useEffect(() => {
-    void refreshScrappingPendingHomologacion()
-  }, [refreshScrappingPendingHomologacion, homologacionBloqueada])
+    if (initializedRef.current) return
+    initializedRef.current = true
+    // Limpiar logs anteriores al cargar la página
+    requestLogger.clear()
+    requestLogger.logUI('CapturaCadenas2 - Página cargada, iniciando carga de datos')
+    // Cargar datos iniciales sin causar cascading renders
+    requestAnimationFrame(() => {
+      void reloadRuns()
+      void reloadRetails()
+      void refreshScrappingPendingHomologacion()
+    })
+  }, []) // Solo ejecutar una vez al montar - funciones son estables
 
   /** Porcentaje de barra: solo cola real (max_pages no acota); monótono para no retroceder si crece la cola. */
   const [progressBarPercent, setProgressBarPercent] = useState(0)
 
   useEffect(() => {
-    if (!fullSweepBusy) {
-      setProgressBarPercent(0)
-      return
-    }
-    if (queuePagesTotal <= 0) {
-      setProgressBarPercent(0)
-      return
-    }
-    const denom = Math.max(queuePagesTotal, 1)
-    const raw = Math.min(100, Math.round((queuePagesProcessed / denom) * 100))
-    setProgressBarPercent((prev) => Math.max(prev, raw))
+    requestAnimationFrame(() => {
+      if (!fullSweepBusy || queuePagesTotal <= 0) {
+        setProgressBarPercent(0)
+      } else {
+        const denom = Math.max(queuePagesTotal, 1)
+        const raw = Math.min(100, Math.round((queuePagesProcessed / denom) * 100))
+        setProgressBarPercent((prev) => Math.max(prev, raw))
+      }
+    })
   }, [fullSweepBusy, queuePagesTotal, queuePagesProcessed])
 
   function resetMetricBoxesOnly() {
@@ -419,16 +452,34 @@ export function CapturaCadenas2Client() {
   async function onDetenerScrapping() {
     if (!canStopScrapping || stopBusy) return
     setStopBusy(true)
+    
+    // 1. Abortar llamadas HTTP en curso y detener workers
+    if (syncRef.current) {
+      syncRef.current.stop = true
+      syncRef.current.abortController?.abort()
+      syncRef.current = null
+    }
+    
+    // 2. Resetear UI inmediatamente sin esperar workers
+    resetMetricBoxesOnly()
+    setFullSweepBusy(false)
+    setSweepStartedAt(null)
+    setCurrentRetailLabel('')
+    toast.message('Deteniendo scrapping…')
+    
+    // 3. Notificar al backend (fire and forget, no bloquea UI)
+    const logId = requestLogger.startLog('api', 'barridoApiStop')
     try {
       const res = await barridoApiStop()
+      requestLogger.endLog(logId, res.ok ? 'success' : 'error', res.ok ? { stopped: true } : undefined, res.ok ? undefined : res.error)
       if (!res.ok) {
         toast.error(res.error)
-        return
-      }
-      if (!fullSweepBusy) {
-        toast.message('Scrapping detenido. Las corridas en curso quedaron canceladas.')
+      } else {
+        toast.success('Scrapping detenido.')
       }
       await reloadRuns()
+    } catch (e) {
+      requestLogger.endLog(logId, 'error', undefined, e instanceof Error ? e.message : String(e))
     } finally {
       setStopBusy(false)
     }
@@ -436,28 +487,64 @@ export function CapturaCadenas2Client() {
 
   type BarridoPreparedOkLocal = {
     runId: string
+    retailId: string
     retailName: string
     retailMaxPages: number
     retailMaxProducts: number
   }
 
   async function openBarridoPlanModal() {
-    if (fullSweepBusy) return
-    if (!selectedRetailId) {
-      toast.error('Seleccioná un retail antes de ejecutar el barrido.')
-      return
+    // Asegurar que los retails estén cargados antes de abrir el modal
+    let currentRetails = retails
+    if (retails.length === 0 && !retailsBusy) {
+      const res = await barridoApiListRetails()
+      if (res.ok && res.retails.length > 0) {
+        currentRetails = res.retails
+        setRetails(res.retails)
+      }
     }
+    
+    // Inicializar el retail del modal - usar seleccionado o el primero disponible
+    const initialModalRetail = selectedRetailId || currentRetails[0]?.id || ''
+    setModalRetailId(initialModalRetail)
     setBarridoPlanOpen(true)
     setBarridoPlanLoading(true)
     setBarridoPlanCtx(null)
-    const ctx = await barridoApiBarridoContext(selectedRetailId)
-    setBarridoPlanLoading(false)
-    if (!ctx.ok) {
-      toast.error(ctx.error)
-      setBarridoPlanOpen(false)
+    
+    // Si hay un retail seleccionado, cargar el contexto inmediatamente
+    if (initialModalRetail) {
+      const ctx = await withLogging('api', 'barridoApiBarridoContext', () => barridoApiBarridoContext(initialModalRetail), { retailId: initialModalRetail })
+      setBarridoPlanLoading(false)
+      if (!ctx.ok) {
+        toast.error(ctx.error)
+        return
+      }
+      setBarridoPlanCtx(ctx)
+    } else {
+      setBarridoPlanLoading(false)
+    }
+  }
+
+  async function loadBarridoContextForModal(retailId: string) {
+    if (!retailId) {
+      setBarridoPlanCtx(null)
       return
     }
-    setBarridoPlanCtx(ctx)
+    setBarridoPlanLoading(true)
+    try {
+      const ctx = await withLogging('api', 'barridoApiBarridoContext', () => barridoApiBarridoContext(retailId), { retailId })
+      if (!ctx.ok) {
+        toast.error(ctx.error)
+        setBarridoPlanCtx(null)
+        return
+      }
+      setBarridoPlanCtx(ctx)
+    } catch (e) {
+      toast.error('Error al cargar el contexto del retail')
+      setBarridoPlanCtx(null)
+    } finally {
+      setBarridoPlanLoading(false)
+    }
   }
 
   async function onPurgeScrappingIdle() {
@@ -473,11 +560,13 @@ export function CapturaCadenas2Client() {
         toast.error(r.error)
         return
       }
-      toast.message(
-        'Datos de captura vaciados. El historial de corridas se mantiene.',
-      )
+      toast.success('Datos de captura vaciados. El historial de corridas se mantiene.')
       await reloadRuns()
       await refreshScrappingPendingHomologacion()
+      // Cerrar el modal y limpiar el contexto para forzar selección de retail nuevamente
+      setBarridoPlanOpen(false)
+      setBarridoPlanCtx(null)
+      setModalRetailId('')
     } finally {
       setPurgeIdleBusy(false)
     }
@@ -530,10 +619,11 @@ export function CapturaCadenas2Client() {
   }
 
   async function onForceFinalizeScrappingFromModal() {
-    if (!selectedRetailId || forceFinalizeBusy || fullSweepBusy || barridoPlanActionBusy) return
+    const effectiveRetailId = modalRetailId || selectedRetailId
+    if (!effectiveRetailId || forceFinalizeBusy || fullSweepBusy || barridoPlanActionBusy) return
     setForceFinalizeBusy(true)
     try {
-      const r = await forceFinalizeScrappingRunForRetailAction({ retailId: selectedRetailId })
+      const r = await forceFinalizeScrappingRunForRetailAction({ retailId: effectiveRetailId })
       if (!r.ok) {
         toast.error(r.error)
         return
@@ -557,11 +647,15 @@ export function CapturaCadenas2Client() {
 
 
   async function startBarridoFreshFromModal() {
-    if (!selectedRetailId) return
-    const retailLabelAtStart = retails.find((x) => x.id === selectedRetailId)?.name ?? ''
+    const effectiveRetailId = modalRetailId || selectedRetailId
+    if (!effectiveRetailId) {
+      toast.error('Seleccioná un retail para iniciar el barrido.')
+      return
+    }
+    const retailLabelAtStart = retails.find((x) => x.id === effectiveRetailId)?.name ?? ''
     setBarridoPlanActionBusy(true)
     try {
-      const prepared = await barridoApiPrepareRun(selectedRetailId)
+      const prepared = await barridoApiPrepareRun(effectiveRetailId)
       if (!prepared.ok) {
         toast.error(prepared.error)
         return
@@ -573,11 +667,15 @@ export function CapturaCadenas2Client() {
   }
 
   async function resumeBarridoFromModal(runId: string) {
-    if (!selectedRetailId) return
-    const retailLabelAtStart = retails.find((x) => x.id === selectedRetailId)?.name ?? ''
+    const effectiveRetailId = modalRetailId || selectedRetailId
+    if (!effectiveRetailId) {
+      toast.error('Seleccioná un retail para continuar el barrido.')
+      return
+    }
+    const retailLabelAtStart = retails.find((x) => x.id === effectiveRetailId)?.name ?? ''
     setBarridoPlanActionBusy(true)
     try {
-      const prepared = await barridoApiResumeBarrido({ runId, retailId: selectedRetailId })
+      const prepared = await barridoApiResumeBarrido({ runId, retailId: effectiveRetailId })
       if (!prepared.ok) {
         toast.error(prepared.error)
         return
@@ -589,11 +687,15 @@ export function CapturaCadenas2Client() {
   }
 
   async function requeueFailedAndResumeFromModal() {
-    if (!selectedRetailId) return
-    const retailLabelAtStart = retails.find((x) => x.id === selectedRetailId)?.name ?? ''
+    const effectiveRetailId = modalRetailId || selectedRetailId
+    if (!effectiveRetailId) {
+      toast.error('Seleccioná un retail para reencolar fallidas.')
+      return
+    }
+    const retailLabelAtStart = retails.find((x) => x.id === effectiveRetailId)?.name ?? ''
     setBarridoPlanActionBusy(true)
     try {
-      const prepared = await barridoApiRequeueFailedLatest(selectedRetailId)
+      const prepared = await barridoApiRequeueFailedLatest(effectiveRetailId)
       if (!prepared.ok) {
         toast.error(prepared.error)
         return
@@ -602,6 +704,7 @@ export function CapturaCadenas2Client() {
       await executeBarridoWithPrepared(
         {
           runId: prepared.runId,
+          retailId: prepared.retailId,
           retailName: prepared.retailName,
           retailMaxPages: prepared.retailMaxPages,
           retailMaxProducts: prepared.retailMaxProducts,
@@ -619,10 +722,11 @@ export function CapturaCadenas2Client() {
     retailLabelAtStart: string,
     isFreshRun: boolean,
   ) {
-    setBarridoPlanOpen(false)
+    // Mantener modal abierto y cambiar a vista de ejecución
     setFullSweepBusy(true)
     resetMetricBoxesOnly()
     setSweepStartedAt(new Date().toISOString())
+    const barridoLogId = requestLogger.startLog('api', 'executeBarrido', { runId: prepared.runId, retail: retailLabelAtStart, fresh: isFreshRun })
 
     let sweepRunId: string | null = null
     let resolvedScrappingRowTotal: number | undefined
@@ -669,7 +773,7 @@ export function CapturaCadenas2Client() {
 
       const phase1 = await barridoApiPhase1Enqueue({
         runId: prepared.runId,
-        retailId: selectedRetailId,
+        retailId: prepared.retailId,
       })
       if (!phase1.ok) {
         actionError = phase1.error
@@ -685,13 +789,15 @@ export function CapturaCadenas2Client() {
 
       const parallelLiderWorkers = Math.min(6, Math.max(2, Math.ceil(phase1.phase1Pages / 200)))
 
+      // Mensaje más descriptivo sobre el estado
       toast.message(
         phase1.alreadyPhase1 ?
-          `Cola ya tenía listados: ${phase1.phase1Pages} · ${phase1.retailName} · ${parallelLiderWorkers} lecturas en paralelo (ampliación en segundo plano si aplica).`
-        : `Cola inicial: ${phase1.phase1Pages} listado(s) · ${phase1.retailName} · ${parallelLiderWorkers} lecturas en paralelo mientras se completa el descubrimiento.`,
+          `Retomando: ${phase1.phase1Pages} listados · ${parallelLiderWorkers} workers en paralelo. El modal se puede cerrar, el barrido continúa en segundo plano.`
+        : `Iniciando: ${phase1.phase1Pages} listados · ${parallelLiderWorkers} workers en paralelo. El modal se puede cerrar, el barrido continúa en segundo plano.`,
       )
 
       type ProcessPageOk = Extract<ProcessLiderScrappingRunPageResult, { ok: true }>
+      const abortController = new AbortController()
       const sync = {
         stop: false,
         error: undefined as string | undefined,
@@ -700,7 +806,9 @@ export function CapturaCadenas2Client() {
         /** Evita toasts duplicados cuando varios workers reciben `done` casi a la vez. */
         finishedUi: false,
         lastOk: undefined as ProcessPageOk | undefined,
+        abortController,
       }
+      syncRef.current = sync
 
       const phase2Promise = barridoApiPhase2Seal({
         runId: prepared.runId,
@@ -711,8 +819,12 @@ export function CapturaCadenas2Client() {
         while (!sync.stop) {
           let res: ProcessLiderScrappingRunPageResult
           try {
-            res = await barridoApiProcessRunPage(prepared.runId)
+            res = await barridoApiProcessRunPage(prepared.runId, sync.abortController.signal)
           } catch (e) {
+            if (e instanceof Error && e.name === 'AbortError') {
+              sync.stop = true
+              return
+            }
             sync.browserErr = e instanceof Error ? e.message : String(e)
             sync.stop = true
             return
@@ -896,6 +1008,13 @@ export function CapturaCadenas2Client() {
         )
       }
 
+      requestLogger.endLog(barridoLogId, actionError || browserError || startError ? 'error' : 'success', {
+        runId: sweepRunId,
+        pagesProcessed: lastOk?.queuePagesProcessed,
+        pagesTotal: lastOk?.queuePagesTotal,
+        error: actionError || browserError || startError || undefined,
+      })
+      syncRef.current = null
       setSweepStartedAt(null)
       setFullSweepBusy(false)
     }
@@ -917,204 +1036,235 @@ export function CapturaCadenas2Client() {
         <DialogContent className="modal-lg">
           <DialogHeader>
             <DialogTitle>Plan del barrido</DialogTitle>
-            {selectedRetailName ?
+            {selectedRetailName && !modalRetailId ?
               <DialogDescription>
                 Retail: <span className="font-medium text-foreground">{selectedRetailName}</span>
               </DialogDescription>
-            : <DialogDescription>Elegí cómo continuar con la corrida de scrapping.</DialogDescription>}
+            : <DialogDescription>Elige cómo continuar con la corrida de scrapping.</DialogDescription>}
           </DialogHeader>
 
-          {barridoPlanLoading ?
-            <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
-              <Loader2 className="h-5 w-5 shrink-0 animate-spin" aria-hidden />
-              Consultando estado de la cola y corridas…
-            </div>
-          : barridoPlanCtx && barridoPlanCtx.ok ?
-            <div className="space-y-4 text-sm">
-              <p className="text-muted-foreground">
-                Datos en tablas de scrapping (toda la cuenta):{' '}
-                <span className="tabular-nums text-foreground">
-                  {barridoPlanCtx.globalScrappingProducts.toLocaleString('es-CL')}
-                </span>{' '}
-                productos ·{' '}
-                <span className="tabular-nums text-foreground">
-                  {barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')}
-                </span>{' '}
-                páginas en cola.
-              </p>
-
-              {barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail ?
-                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-950 dark:text-amber-100">
-                  Hay una corrida en curso en otro retail. Detené el scrapping antes de iniciar un barrido nuevo,
-                  reencolar fallidas o vaciar tablas desde acá.
-                </p>
-              : null}
-
-              {barridoPlanCtx.runningForRetail ?
-                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-foreground">
-                  <p className="font-medium">Corrida en curso para este retail</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Pendientes: {barridoPlanCtx.runningForRetail.pending} · En proceso:{' '}
-                    {barridoPlanCtx.runningForRetail.processing} · Fallidas: {barridoPlanCtx.runningForRetail.failed} ·
-                    Listas: {barridoPlanCtx.runningForRetail.done} · Total cola: {barridoPlanCtx.runningForRetail.total}
-                    {barridoPlanCtx.runningForRetail.totalPages != null ?
-                      <>
-                        {' '}
-                        · total_pages en corrida: {barridoPlanCtx.runningForRetail.totalPages}
-                      </>
-                    : null}
-                  </p>
-                </div>
-              : barridoPlanCtx.latestRun ?
-                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-foreground">
-                  <p className="font-medium">Última corrida registrada</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Estado: {barridoPlanCtx.latestRun.status} · Fallidas en cola:{' '}
-                    {barridoPlanCtx.latestRun.failedPages}
-                  </p>
-                </div>
-              : (
-                <p className="text-muted-foreground">No hay corridas previas para este retail.</p>
+          {/* Selector de retail dentro del modal */}
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="modal-retail-select">Retail a consultar</Label>
+              {barridoPlanLoading && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Cargando…
+                </span>
               )}
+            </div>
+            <Select
+              value={modalRetailId}
+              onValueChange={(value) => {
+                setModalRetailId(value)
+                void loadBarridoContextForModal(value)
+              }}
+              disabled={barridoPlanActionBusy || fullSweepBusy || retailsBusy}
+            >
+              <SelectTrigger id="modal-retail-select" className="w-full">
+                <SelectValue placeholder={retailsBusy ? 'Cargando retails…' : 'Elige un retail'} />
+              </SelectTrigger>
+              <SelectContent>
+                {retails.map((r) => (
+                  <SelectItem key={r.id} value={r.id}>
+                    {r.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-              <div className="flex flex-wrap gap-3">
-                {barridoPlanCtx.runningForRetail ?
+          {barridoPlanCtx && barridoPlanCtx.ok ?
+            <div className="space-y-4 text-sm">
+              {/* === MODO EJECUCIÓN: solo dashboard + detener === */}
+              {fullSweepBusy || barridoPlanCtx?.runningForRetail ? (
+                <div className="space-y-4">
+                  {/* Header */}
+                  <div className="flex items-center gap-2 text-sm font-medium text-blue-900 dark:text-blue-100">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
+                    Barrido en ejecución · {currentRetailLabel || 'Cargando…'}
+                  </div>
+
+                  {/* Dashboard visual */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{queuePagesTotal.toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Páginas total</p>
+                    </div>
+                    <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{scraperRowsTotal.toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Productos</p>
+                    </div>
+                    <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{Math.max(0, queuePagesTotal - queuePagesProcessed).toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Restantes</p>
+                    </div>
+                    <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{queuePagesOk.toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Ok</p>
+                    </div>
+                    <div className="rounded-md border border-red-500/20 bg-red-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-red-600 dark:text-red-400">{queuePagesFailed.toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400">Fallidas</p>
+                    </div>
+                    <div className="rounded-md border border-slate-500/20 bg-slate-500/5 px-2 py-3 text-center">
+                      <p className="text-2xl font-bold text-slate-600 dark:text-slate-400">{Math.max(0, queuePagesProcessed).toLocaleString('es-CL')}</p>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-600 dark:text-slate-400">Procesadas</p>
+                    </div>
+                  </div>
+
+                  {/* Barra de progreso */}
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-xs text-blue-800 dark:text-blue-200">
+                      <span>{queuePagesProcessed.toLocaleString('es-CL')} de {queuePagesTotal.toLocaleString('es-CL')}</span>
+                      <span>{queuePagesTotal > 0 ? Math.round((queuePagesProcessed / queuePagesTotal) * 100) : 0}%</span>
+                    </div>
+                    <div className="h-3 w-full overflow-hidden rounded-full bg-blue-200 dark:bg-blue-900">
+                      <div
+                        className="h-full rounded-full bg-blue-600 transition-[width] duration-300 ease-out"
+                        style={{ width: queuePagesTotal > 0 ? `${Math.min(100, (queuePagesProcessed / queuePagesTotal) * 100)}%` : '0%' }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Botón Detener */}
                   <Button
                     type="button"
-                    className={`btn-run ${TOOLBAR_BTN}`}
-                    disabled={barridoPlanActionBusy || fullSweepBusy}
+                    className="btn-danger btn-lg w-full"
+                    disabled={stopBusy}
                     onClick={() => {
-                      const r = barridoPlanCtx.runningForRetail
-                      if (r) void resumeBarridoFromModal(r.runId)
+                      requestLogger.logClick('Detener scrapping (desde modal)')
+                      void onDetenerScrapping()
                     }}
                   >
-                    {barridoPlanActionBusy || fullSweepBusy ?
+                    {stopBusy ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                    : (
-                      <Play className="mr-2 h-4 w-4" aria-hidden />
+                    ) : (
+                      <Square className="mr-2 h-4 w-4" aria-hidden />
                     )}
-                    Continuar barrido
+                    Detener scrapping
                   </Button>
-                : null}
 
-                {barridoPlanCtx.latestRun && barridoPlanCtx.latestRun.failedPages > 0 ?
-                  <Button
-                    type="button"
-                    className={`btn-warn ${TOOLBAR_BTN}`}
-                    disabled={
-                      barridoPlanActionBusy ||
-                      fullSweepBusy ||
-                      (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)
-                    }
-                    onClick={() => void requeueFailedAndResumeFromModal()}
-                    title="Vuelve a poner en cola las páginas fallidas de la última corrida y sigue leyendo"
-                  >
-                    {barridoPlanActionBusy || fullSweepBusy ?
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                    : (
-                      <Play className="mr-2 h-4 w-4" aria-hidden />
-                    )}
-                    Reencolar fallidas
-                  </Button>
-                : null}
-
-                <Button
-                  type="button"
-                  className={`${
-                    barridoPlanCtx.runningForRetail ? 'btn-warn' : 'btn-run'
-                  } ${TOOLBAR_BTN}`}
-                  disabled={
-                    barridoPlanActionBusy ||
-                    fullSweepBusy ||
-                    (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)
-                  }
-                  onClick={() => void startBarridoFreshFromModal()}
-                  title={
-                    barridoPlanCtx.runningForRetail ?
-                      'Cancela la corrida en curso, limpia los datos capturados y arranca de nuevo'
-                    : 'Cancela cualquier corrida en curso, limpia los datos capturados y arranca de nuevo'
-                  }
-                >
-                  {barridoPlanActionBusy || fullSweepBusy ?
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                  : (
-                    <Play className="mr-2 h-4 w-4" aria-hidden />
-                  )}
-                  {barridoPlanCtx.runningForRetail ? 'Empezar de cero' : 'Barrido nuevo'}
-                </Button>
-
-                <Button
-                  type="button"
-                  className={`btn-danger ${TOOLBAR_BTN}`}
-                  disabled={
-                    purgeIdleBusy ||
-                    barridoPlanActionBusy ||
-                    fullSweepBusy ||
-                    barridoPlanCtx.anyRunningGlobally
-                  }
-                  onClick={() => void onPurgeScrappingIdle()}
-                  title="Solo si no hay corridas en curso. Limpia los datos capturados."
-                >
-                  {purgeIdleBusy ?
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                  : (
-                    <Trash2 className="mr-2 h-4 w-4" aria-hidden />
-                  )}
-                  Limpiar tablas
-                </Button>
-              </div>
-
-              {barridoPlanCtx.runningForRetail ?
-                <div className="space-y-2 rounded-md border border-dashed border-border bg-background/80 px-3 py-3">
-                  <p className="text-xs font-medium text-foreground">Cierre de la corrida en curso</p>
-                  <p className="text-xs text-muted-foreground">
-                    Si no vas a seguir capturando productos, podés dar por finalizada la corrida actual.
-                    Las páginas pendientes se marcarán como completadas sin descargar.
-                    Usá esto cuando ya no estés capturando activamente.
+                  <p className="text-[10px] text-blue-700 dark:text-blue-300 text-center">
+                    El barrido continúa en segundo plano si cerrás este modal.
                   </p>
-                  <Button
-                    type="button"
-                    className={`btn-amber ${TOOLBAR_BTN}`}
-                    disabled={
-                      forceFinalizeBusy ||
-                      fullSweepBusy ||
-                      barridoPlanActionBusy ||
-                      purgeIdleBusy
-                    }
-                    title={
-                      fullSweepBusy ?
-                        'Esperá a que termine el barrido en esta sesión o usá Detener scrapping antes de cerrar forzado.'
-                      : 'Marca pendientes como listos sin leer y cierra la corrida'
-                    }
-                    onClick={() => void onForceFinalizeScrappingFromModal()}
-                  >
-                    {forceFinalizeBusy ?
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                    : (
-                      <CircleCheck className="mr-2 h-4 w-4" aria-hidden />
-                    )}
-                    Dar por finalizado el scrapping pendiente
-                  </Button>
                 </div>
-              : null}
+              ) : (
+                /* === MODO CONFIGURACIÓN: opciones según estado === */
+                <div className="space-y-4">
+                  {/* Warning si hay running en otro retail */}
+                  {barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail && (
+                    <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
+                      Hay una corrida en curso en otro retail. Detené el scrapping antes de iniciar un barrido nuevo,
+                      reencolar fallidas o vaciar tablas desde acá.
+                    </p>
+                  )}
 
-              <p className="text-xs text-muted-foreground">
-                Cuando la cola termine sin cancelación, los datos quedan en la base; las reglas de negocio y procesos
-                posteriores se ejecutan fuera de esta pantalla.
-              </p>
+                  {/* Info última corrida */}
+                  {barridoPlanCtx.latestRun ? (
+                    <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
+                      <p className="font-medium">Última corrida registrada</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Estado: {barridoPlanCtx.latestRun.status} · Fallidas en cola:{' '}
+                        {barridoPlanCtx.latestRun.failedPages}
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-muted-foreground">No hay corridas previas para este retail.</p>
+                  )}
+
+                  {/* Acciones en horizontal */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {/* Reencolar */}
+                    {barridoPlanCtx.latestRun && barridoPlanCtx.latestRun.failedPages > 0 ? (
+                      <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-3 text-center">
+                        <p className="text-xs font-medium text-foreground">{barridoPlanCtx.latestRun.failedPages} fallidas</p>
+                        <Button
+                          type="button"
+                          className="btn-warn btn-lg"
+                          disabled={barridoPlanActionBusy || (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)}
+                          onClick={() => void requeueFailedAndResumeFromModal()}
+                        >
+                          {barridoPlanActionBusy ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Play className="mr-2 h-4 w-4" aria-hidden />
+                          )}
+                          Continuar
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
+                        <p className="text-xs text-muted-foreground">Sin fallidas</p>
+                      </div>
+                    )}
+
+                    {/* Nuevo barrido */}
+                    <div className="space-y-2 rounded-md border border-border bg-muted/20 px-2 py-3 text-center">
+                      <p className="text-xs font-medium text-foreground">Nuevo barrido</p>
+                      <Button
+                        type="button"
+                        className="btn-run btn-lg"
+                        disabled={barridoPlanActionBusy || (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)}
+                        onClick={() => void startBarridoFreshFromModal()}
+                      >
+                        {barridoPlanActionBusy ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Play className="mr-2 h-4 w-4" aria-hidden />
+                        )}
+                        Nuevo
+                      </Button>
+                    </div>
+
+                    {/* Limpiar */}
+                    {barridoPlanCtx.globalScrappingPages > 0 ? (
+                      <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-3 text-center">
+                        <p className="text-xs font-medium text-foreground">({barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')})</p>
+                        <Button
+                          type="button"
+                          className="btn-danger btn-lg"
+                          disabled={purgeIdleBusy || barridoPlanActionBusy || barridoPlanCtx.anyRunningGlobally}
+                          onClick={() => void onPurgeScrappingIdle()}
+                        >
+                          {purgeIdleBusy ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                          )}
+                          Limpieza
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
+                        <p className="text-xs text-muted-foreground">Sin datos</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          : !barridoPlanLoading && (!barridoPlanCtx || !barridoPlanCtx.ok) ?
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              {!modalRetailId ?
+                <p>Selecciona un retail arriba para ver las opciones disponibles.</p>
+              :
+                <p>No se pudo cargar el contexto del retail. Intenta seleccionar otro retail o recarga la página.</p>
+              }
             </div>
           : null}
 
-          <DialogFooter className="sm:justify-start">
+          <DialogFooter className="sm:justify-end">
             <Button
               type="button"
-              className={`btn-close ${TOOLBAR_BTN}`}
-              disabled={barridoPlanActionBusy || forceFinalizeBusy}
+              className="btn-save btn-sm"
               onClick={() => {
                 setBarridoPlanOpen(false)
                 setBarridoPlanCtx(null)
               }}
             >
+              <X className="mr-1 h-4 w-4" aria-hidden />
               Cerrar
             </Button>
           </DialogFooter>
@@ -1123,14 +1273,14 @@ export function CapturaCadenas2Client() {
 
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground">Scraper retail (motor Lider)</p>
-            <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-              Podés usar <span className="font-medium text-foreground">Detener scrapping</span> para cancelar la captura
-              en curso. Al pulsar <span className="font-medium text-foreground">Barrido</span> se abre un plan: podés
-              reanudar una corrida interrumpida, reencolar listados fallidos de la última corrida, arrancar un barrido
+            <p className="mt-1 text-sm text-muted-foreground">
+              Durante un barrido activo aparecerá <span className="font-medium text-foreground">Detener scrapping</span>.
+              Al pulsar <span className="font-medium text-foreground">Barrido</span> se abre un plan: puedes
+              reanudar una corrida interrumpida, reencolar listados fallidos de la última corrida, iniciar un barrido
               nuevo o vaciar los datos capturados si no hay nada en curso.
-              Elegí el retail y revisá el log abajo.
+              Elige el retail en el modal de Barrido.
             </p>
           </div>
           <span
@@ -1144,88 +1294,54 @@ export function CapturaCadenas2Client() {
           </span>
         </div>
 
-        <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="min-w-[220px] flex-1 space-y-2">
-            <Label htmlFor="retail-scrape-select">Retail a consultar</Label>
-            <Select
-              value={retailSelectValue}
-              onValueChange={setSelectedRetailId}
-              disabled={fullSweepBusy || barridoPlanActionBusy || retailsBusy || retails.length === 0}
-            >
-              <SelectTrigger id="retail-scrape-select" className="w-full">
-                <SelectValue placeholder={retailsBusy ? 'Cargando retails…' : 'Elegí un retail'} />
-              </SelectTrigger>
-              <SelectContent>
-                {retails.map((r) => (
-                  <SelectItem key={r.id} value={r.id}>
-                    {r.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {retails.length > 0 && selectedRetailId ? (
-              <p className="text-[11px] text-muted-foreground">
-                Origen:{' '}
-                <span className="font-mono text-foreground">
-                  {retails.find((x) => x.id === selectedRetailId)?.base_url ?? '—'}
-                </span>
-                {(retails.find((x) => x.id === selectedRetailId)?.max_pages ?? 0) > 0 ?
-                  <>
-                    {' '}
-                    · referencia retail: {retails.find((x) => x.id === selectedRetailId)?.max_pages} págs /{' '}
-                    {(retails.find((x) => x.id === selectedRetailId)?.max_products ?? 0).toLocaleString('es-CL')} prod
-                    {' '}(no limita el barrido)
-                  </>
-                : null}
+        <div className="mt-4">
+          <div className="rounded-md border border-border bg-muted/40 px-3 py-2.5">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Log</p>
+            <p className="mt-1 wrap-break-word font-mono text-xs leading-relaxed text-muted-foreground">{logReference}</p>
+            <p className="mt-1 wrap-break-word font-mono text-xs leading-relaxed text-foreground">{logCurrent}</p>
+            {referenceRun?.error_message && !fullSweepBusy ? (
+              <p className="mt-1 font-mono text-[11px] text-amber-700 dark:text-amber-300">
+                Aviso: {referenceRun.error_message}
               </p>
             ) : null}
           </div>
         </div>
 
-        <div className="mt-4 rounded-md border border-border bg-muted/40 px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Log</p>
-          <p className="mt-1 wrap-break-word font-mono text-xs leading-relaxed text-muted-foreground">{logReference}</p>
-          <p className="mt-2 wrap-break-word font-mono text-xs leading-relaxed text-foreground">{logCurrent}</p>
-          {referenceRun?.error_message && !fullSweepBusy ? (
-            <p className="mt-2 font-mono text-[11px] text-amber-700 dark:text-amber-300">
-              Aviso en última referencia: {referenceRun.error_message}
+        {/* Barra de progreso - full width */}
+        <div className="mt-4 space-y-1">
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>
+              Avance: páginas procesadas del total en cola. La barra no retrocede si la cola crece.
+            </span>
+            <span className="tabular-nums">{fullSweepBusy ? `${progressBarPercent}%` : '—'}</span>
+          </div>
+          <div
+            className={`h-2 w-full overflow-hidden rounded-full bg-muted ${fullSweepBusy ? '' : 'opacity-50'}`}
+            role={fullSweepBusy ? 'progressbar' : undefined}
+            aria-valuenow={fullSweepBusy ? progressBarPercent : undefined}
+            aria-valuemin={fullSweepBusy ? 0 : undefined}
+            aria-valuemax={fullSweepBusy ? 100 : undefined}
+            aria-label={
+              fullSweepBusy ?
+                'Avance del barrido según páginas procesadas respecto al total de la cola'
+              : 'Barra inactiva: solo muestra avance durante un barrido en curso'
+            }
+          >
+            <div
+              className={`h-full rounded-full bg-primary transition-[width] duration-300 ease-out ${fullSweepBusy ? '' : 'w-0'}`}
+              style={{ width: fullSweepBusy ? `${progressBarPercent}%` : '0%' }}
+            />
+          </div>
+          {fullSweepBusy && retailMaxPages > 0 ? (
+            <p className="text-[10px] text-muted-foreground">
+              Referencia histórica: {retailMaxPages} páginas (informativo, no limita la captura).
             </p>
           ) : null}
-          <div className="mt-3 space-y-1">
-            <div className="flex justify-between text-[10px] text-muted-foreground">
-              <span>
-                Avance: páginas procesadas del total en cola. La barra no retrocede si la cola crece.
-              </span>
-              <span className="tabular-nums">{fullSweepBusy ? `${progressBarPercent}%` : '—'}</span>
-            </div>
-            <div
-              className={`h-2 w-full overflow-hidden rounded-full bg-muted ${fullSweepBusy ? '' : 'opacity-50'}`}
-              role={fullSweepBusy ? 'progressbar' : undefined}
-              aria-valuenow={fullSweepBusy ? progressBarPercent : undefined}
-              aria-valuemin={fullSweepBusy ? 0 : undefined}
-              aria-valuemax={fullSweepBusy ? 100 : undefined}
-              aria-label={
-                fullSweepBusy ?
-                  'Avance del barrido según páginas procesadas respecto al total de la cola; max_pages no acota el barrido; el indicador no retrocede si crece la cola'
-                : 'Barra inactiva: solo muestra avance durante un barrido en curso'
-              }
-            >
-              <div
-                className={`h-full rounded-full bg-primary transition-[width] duration-300 ease-out ${fullSweepBusy ? '' : 'w-0'}`}
-                style={{ width: fullSweepBusy ? `${progressBarPercent}%` : '0%' }}
-              />
-            </div>
-            {fullSweepBusy && retailMaxPages > 0 ? (
-              <p className="text-[10px] text-muted-foreground">
-                Referencia histórica: {retailMaxPages} páginas (informativo, no limita la captura).
-              </p>
-            ) : null}
-            {!fullSweepBusy ? (
-              <p className="text-[10px] text-muted-foreground">
-                Los valores de páginas y productos máximos son solo referencia histórica; no limitan la captura actual.
-              </p>
-            ) : null}
-          </div>
+          {!fullSweepBusy ? (
+            <p className="text-[10px] text-muted-foreground">
+              Los valores de páginas y productos máximos son solo referencia histórica.
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
@@ -1355,35 +1471,50 @@ export function CapturaCadenas2Client() {
 
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {runsBusy ? <p className="text-sm text-muted-foreground">Cargando corridas…</p> : null}
+          
+          {/* Mostrar warning si hay corrida running en otro retail */}
+          {!runsBusy && runs.some((r) => r.status === 'running' && r.retail_id !== selectedRetailId) && (
+            <span className="inline-flex items-center rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-800 dark:text-amber-200">
+              Hay scrapping en curso en otro retail
+            </span>
+          )}
+          
+          {/* Solo mostrar botón Detener cuando hay algo que detener */}
+          {(canStopScrapping || stopBusy) && (
+            <Button
+              type="button"
+              className="btn-danger btn-sm"
+              onClick={() => {
+                requestLogger.logClick('Detener scrapping')
+                void onDetenerScrapping()
+              }}
+              disabled={!canStopScrapping || stopBusy || runsBusy}
+              title="Cancela la corrida en curso y marca las páginas pendientes como fallidas"
+              aria-label="Detener scrapping"
+            >
+              {stopBusy ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+              ) : (
+                <Square className="mr-2 h-4 w-4" aria-hidden />
+              )}
+              Detener scrapping
+            </Button>
+          )}
           <Button
             type="button"
-            className={`btn-danger ${TOOLBAR_BTN}`}
-            onClick={() => void onDetenerScrapping()}
-            disabled={!canStopScrapping || stopBusy || runsBusy}
-            title="Cancela corridas en estado «running» y marca la cola pendiente o en proceso como fallida"
-            aria-label="Detener scrapping"
-          >
-            {stopBusy ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-            ) : (
-              <Square className="mr-2 h-4 w-4" aria-hidden />
-            )}
-            Detener scrapping
-          </Button>
-          <Button
-            type="button"
-            className={`btn-run ${TOOLBAR_BTN}`}
-            onClick={() => void openBarridoPlanModal()}
-            disabled={
-              fullSweepBusy || barridoPlanActionBusy || runsBusy || retailsBusy || !selectedRetailId
-            }
+            className="btn-run btn-sm"
+            onClick={() => {
+              requestLogger.logClick('Barrido - Abrir Modal Plan')
+              void openBarridoPlanModal()
+            }}
+            disabled={retailsBusy}
           >
             {fullSweepBusy ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
             ) : (
               <Play className="mr-2 h-4 w-4" aria-hidden />
             )}
-            Barrido
+            {fullSweepBusy ? 'Ver barrido' : 'Barrido'}
           </Button>
         </div>
 
@@ -1391,7 +1522,7 @@ export function CapturaCadenas2Client() {
 
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <p className="text-sm font-medium text-foreground">Corridas recientes</p>
-        <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+        <p className="mt-1 text-xs text-muted-foreground">
           Historial de las últimas 32 corridas de captura. La columna Mensaje muestra
           resúmenes de fallas, detenciones manuales o interrupciones del proceso.
         </p>
@@ -1463,9 +1594,9 @@ export function CapturaCadenas2Client() {
 
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
+          <div className="flex-1 min-w-0">
             <p className="text-sm font-medium text-foreground">Análisis de homologación al catálogo</p>
-            <p className="mt-1 max-w-prose text-xs text-muted-foreground">
+            <p className="mt-1 text-xs text-muted-foreground">
               Estos pasos solo se ejecutan cuando no hay una captura en curso (finalizada automáticamente o cerrada
               manualmente). Los productos ya vinculados a tu catálogo no se procesan de nuevo.
               El paso 1 identifica productos que ya están en tu catálogo antes de buscar coincidencias por nombre.
@@ -1522,7 +1653,7 @@ export function CapturaCadenas2Client() {
             <Button
               type="button"
               variant="default"
-              className="btn-sky mt-auto h-9 w-full shrink-0 gap-2"
+              className="btn-sky mt-auto btn-lg shrink-0"
               onClick={() => void onApplyExactCatalogMatches()}
               disabled={homologacionBloqueada || exactMatchBusy}
               title={
@@ -1606,7 +1737,7 @@ export function CapturaCadenas2Client() {
               <Button
                 type="button"
                 variant="default"
-                className="btn-violet mt-auto h-9 w-full gap-2"
+                className="btn-violet mt-auto btn-lg"
                 disabled={
                   homologacionBloqueada ||
                   exactMatchBusy ||
@@ -1673,7 +1804,7 @@ export function CapturaCadenas2Client() {
             <Button
               type="button"
               variant="default"
-              className="btn-emerald mt-auto h-9 w-full gap-2"
+              className="btn-emerald mt-auto btn-lg"
               disabled={
                 createNewBusy ||
                 homologacionBloqueada ||
@@ -1737,6 +1868,8 @@ export function CapturaCadenas2Client() {
           await refreshScrappingPendingHomologacion()
         }}
       />
+
+      <RequestLogViewer />
     </div>
   )
 }

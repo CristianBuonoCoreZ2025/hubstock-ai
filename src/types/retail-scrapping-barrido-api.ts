@@ -9,6 +9,7 @@ export type BarridoPrepareRunResponse =
   | {
       ok: true
       runId: string
+      retailId: string
       retailName: string
       retailMaxPages: number
       retailMaxProducts: number
@@ -100,6 +101,7 @@ export type BarridoRequeueFailedResponse =
       ok: true
       runId: string
       requeued: number
+      retailId: string
       retailName: string
       retailMaxPages: number
       retailMaxProducts: number

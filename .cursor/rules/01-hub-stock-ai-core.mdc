@@ -38,8 +38,9 @@ El sistema separa estas áreas:
 11. No crear toggles de prueba visibles al usuario final.
 12. No reemplazar arquitectura existente sin revisar archivos relacionados.
 13. No crear abstracciones nuevas si ya existe un patrón en el proyecto.
-14. Mantener UI profesional, limpia, rápida y consistente.
-15. No degradar menú, modo claro, modo oscuro, layout principal ni estilos existentes.
+14. UI profesional, limpia, rápida y consistente.
+15. No degradar menú, modo claro/oscuro, layout ni estilos existentes.
+16. **Usar todo el ancho**: priorizar disposición horizontal (flex/grid). Evitar pilas verticales y espacio vacío a la derecha.
 
 ## Principio de Trazabilidad
 

@@ -18,6 +18,10 @@ import { resolveCatalogCategoryIdForScrappingRow } from '@/server/retail/scrappi
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import logger from '@/lib/logger'
 import { logError } from '@/lib/db-logger'
+import {
+  normalizeLiderSectionKeyStrong,
+  normalizeLiderCategoryKeyStrong,
+} from '@/lib/lider-taxonomy-section-heuristics'
 
 /* ── Tipos ── */
 
@@ -186,26 +190,53 @@ export async function processHomologationCreateNewBatch(
   // Caché de sort_order por category_id: arranca en -1, se incrementa localmente sin re-query
   const sortOrderCache = new Map<string, number>()
 
-  // Resolver taxonomía para todas las filas en paralelo (resolveCatalogCategoryIdForScrappingRow ya cachea internamente)
-  const resolvedCategoryIds = await Promise.all(
-    list.map(row => resolveCatalogCategoryIdForScrappingRow(admin, {
-      retailer: row.retailer,
-      sections: row.sections,
-      categories: row.categories,
-    }))
-  )
-
-  // Caché de taxonomía por clave de fila
+  /* ── Precargar TODA la taxonomía en 2 queries (BEVECOHO: nunca query por query) ── */
   const taxonomyCache = new Map<string, string | null>()
-  for (let i = 0; i < list.length; i++) {
-    const row = list[i]
-    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
-    if (!taxonomyCache.has(key)) {
-      taxonomyCache.set(key, resolvedCategoryIds[i] ?? null)
-    }
+
+  // 1) Cargar todas las secciones Lider linked de una vez
+  const { data: allLiderSecs } = await admin
+    .from('retail_taxonomy_lider_sections')
+    .select('id, section_id, normalized_external_section')
+    .eq('retailer', 'lider')
+    .eq('status', 'linked')
+
+  const secByNorm = new Map<string, { id: string; section_id: string }>()
+  for (const s of (allLiderSecs ?? []) as { id: string; section_id: string; normalized_external_section: string }[]) {
+    secByNorm.set(s.normalized_external_section, { id: s.id, section_id: s.section_id })
   }
 
-  const uniqueCategoryIds = [...new Set(resolvedCategoryIds.filter((id): id is string => id !== null))]
+  // 2) Cargar todos los mappings Lider linked de una vez
+  const { data: allMappings } = await admin
+    .from('retail_taxonomy_mappings')
+    .select('lider_section_id, normalized_external_category, category_id, section_id')
+    .eq('retailer', 'lider')
+    .eq('status', 'linked')
+
+  const mapKey = (liderSectionId: string, normCat: string) => `${liderSectionId}|${normCat}`
+  const mapByKey = new Map<string, string>()
+  for (const m of (allMappings ?? []) as { lider_section_id: string; normalized_external_category: string; category_id: string; section_id: string }[]) {
+    mapByKey.set(mapKey(m.lider_section_id, m.normalized_external_category), m.category_id)
+  }
+
+  // Resolver taxonomía en memoria (0 queries adicionales)
+  for (const row of list) {
+    const key = `${row.retailer}|${row.sections ?? ''}|${row.categories ?? ''}`
+    if (taxonomyCache.has(key)) continue
+
+    const ns = normalizeLiderSectionKeyStrong(row.sections ?? '')
+    const nc = normalizeLiderCategoryKeyStrong(row.categories ?? '')
+    if (!ns || !nc) { taxonomyCache.set(key, null); continue }
+
+    const sec = secByNorm.get(ns)
+    if (!sec) { taxonomyCache.set(key, null); continue }
+
+    const catId = mapByKey.get(mapKey(sec.id, nc))
+    if (!catId || sec.section_id !== sec.section_id) { taxonomyCache.set(key, null); continue }
+
+    taxonomyCache.set(key, catId)
+  }
+
+  const uniqueCategoryIds = [...new Set([...taxonomyCache.values()].filter((id): id is string => id !== null))]
 
   // Precachear section_id para todas las categorías encontradas (una query con .in)
   if (uniqueCategoryIds.length > 0) {

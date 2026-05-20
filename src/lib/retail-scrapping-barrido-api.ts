@@ -15,12 +15,13 @@ import type {
 
 const BASE = '/api/retail-scrapping'
 
-async function postJson<T>(path: string, body: unknown): Promise<T> {
+async function postJson<T>(path: string, body: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
     body: JSON.stringify(body ?? {}),
+    signal,
   })
   let data: unknown
   try {
@@ -85,8 +86,8 @@ export async function barridoApiPersistOutcome(input: {
   return postJson<BarridoPersistOutcomeResponse>('/persist-outcome', input)
 }
 
-export async function barridoApiProcessRunPage(runId: string): Promise<ProcessLiderScrappingRunPageResult> {
-  return postJson<ProcessLiderScrappingRunPageResult>('/process-run-page', { runId })
+export async function barridoApiProcessRunPage(runId: string, signal?: AbortSignal): Promise<ProcessLiderScrappingRunPageResult> {
+  return postJson<ProcessLiderScrappingRunPageResult>('/process-run-page', { runId }, signal)
 }
 
 export async function barridoApiBarridoContext(retailId: string): Promise<BarridoContextResponse> {

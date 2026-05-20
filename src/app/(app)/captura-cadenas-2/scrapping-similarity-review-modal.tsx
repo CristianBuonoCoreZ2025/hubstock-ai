@@ -208,7 +208,7 @@ export function ScrappingSimilarityReviewModal({
 
     if (errorRows > 0) {
       toast.error(
-        `No se pudieron cargar candidatos en ${errorRows.toLocaleString('es-CL')} fila(s). Podés seguir revisando el resto.`,
+        `No se pudieron cargar candidatos en ${errorRows.toLocaleString('es-CL')} fila(s). Puedes seguir revisando el resto.`,
       )
     }
   }, [])
@@ -245,7 +245,7 @@ export function ScrappingSimilarityReviewModal({
   const finishBulkSession = useCallback(
     async (acc: SimilarityBulkProgressState) => {
       if (bulkAbortRef.current) {
-        toast.message('Pasada automática omitida. Revisá y confirmá en la grilla.')
+        toast.message('Pasada automática omitida. Revisa y confirma en la grilla.')
         setPhase('review')
         await loadPage(0)
         return
@@ -504,7 +504,7 @@ export function ScrappingSimilarityReviewModal({
 
   async function onApplyAllPending() {
     if (pendingTotal === 0) {
-      toast.error('No hay homologaciones en cola. Revisá filas o marcá «Producto nuevo».')
+      toast.error('No hay homologaciones en cola. Revisa filas o marca «Producto nuevo».')
       return
     }
 
@@ -580,7 +580,7 @@ export function ScrappingSimilarityReviewModal({
       const failedTotal = linkFailedIds.size + rejectFailedIds.size
       if (failedTotal > 0) {
         toast.warning(
-          `${failedTotal.toLocaleString('es-CL')} fila(s) no se pudieron. Revisá y volvé a intentar.`,
+          `${failedTotal.toLocaleString('es-CL')} fila(s) no se pudieron. Revisa y vuelve a intentar.`,
         )
       }
 
@@ -637,9 +637,9 @@ export function ScrappingSimilarityReviewModal({
             Revisión de similitud
           </DialogTitle>
           <DialogDescription className="text-xs leading-relaxed">
-            {phase === 'bulk' ? 'Pasada automática en curso. Pods saltarte a revisión manual cuando quieras.'
+            {phase === 'bulk' ? 'Pasada automática en curso. Puedes saltar a revisión manual cuando quieras.'
             : phase === 'empty' ? 'Clasificación completada sin filas pendientes.'
-            : 'Grilla de filas en revisión humana. Homologá candidatos, elegí otro maestro o marcá producto nuevo.'}
+            : 'Grilla de filas en revisión humana. Homologa candidatos, elige otro maestro o marca producto nuevo.'}
           </DialogDescription>
         </div>
       </div>

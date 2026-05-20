@@ -1,7 +1,8 @@
 /**
  * Adaptador de captura unificado: decide qué estrategia usar según el retailer.
  * - Lider: usa lider-capture.ts (HTML Next.js embebido)
- * - Jumbo/Central Mayorista: usa vtex-capture.ts (API VTEX)
+ * - Jumbo: usa jumbo-html-capture.ts (HTML scraping de categorías)
+ * - Central Mayorista: usa vtex-capture.ts (API VTEX)
  */
 
 import type { RetailerCode } from '@/server/retail-capture/retailer-registry'
@@ -25,6 +26,11 @@ import {
   isVtexIntelligentSearchUrl,
   nextVtexIntelligentSearchPageUrl,
 } from '@/server/retail/capture/vtex-catalog-plan'
+import {
+  captureJumboHtmlPage,
+  isJumboHtmlCategoryUrl,
+  type JumboPageSeed,
+} from '@/server/retail/capture/jumbo-html-capture'
 
 export type CaptureResult =
   | {
@@ -72,17 +78,74 @@ export function isVtexRetailer(retailer: string): boolean {
 /**
  * Captura una página según el tipo de retail.
  * Para Lider: seed es string (URL directa)
- * Para VTEX: seed es VtexPageSeed
+ * Para Jumbo: seed es JumboPageSeed (HTML scraping)
+ * Para Central Mayorista: seed es VtexPageSeed (API VTEX)
  */
 export async function captureRetailPage(
   retailer: string,
-  seed: string | VtexPageSeed,
+  seed: string | VtexPageSeed | JumboPageSeed,
 ): Promise<CaptureResult> {
+  const retailerKey = retailer.toLowerCase().trim()
+  
+  // Jumbo: detectar si es URL de categoría HTML o API VTEX
+  if (retailerKey === 'jumbo') {
+    const url = typeof seed === 'string' ? seed : seed.page_url
+    
+    // Si es URL de categoría HTML (/despensa), usar scraping HTML
+    if (isJumboHtmlCategoryUrl(url)) {
+      const sectionSlug = new URL(url).pathname.replace(/^\//, '').replace(/\?.*/, '')
+      const result = await captureJumboHtmlPage(url, sectionSlug)
+      if (!result.ok) return result
+      
+      return {
+        ok: true,
+        data: {
+          snapshots: result.data.stagingRows.map((r) => ({
+            external_ref: r.external_ref,
+            source_url: r.source_url,
+            title: r.title,
+            brand: r.brand,
+            price: r.price ?? 0,
+            unit_price: Number(r.unit_price ?? r.price ?? 0),
+            category_hint: r.category_hint,
+            description_hint: r.description_hint,
+            image_url: r.image_url,
+          })),
+          rawProductCount: result.data.rawProductCount,
+        },
+      }
+    }
+    
+    // Si es API VTEX, usar captura VTEX
+    const vtexSeed: VtexPageSeed =
+      typeof seed === 'string' ? { page_url: seed, page_index: 0, endpoint_type: 'intelligent_search' } : (seed as VtexPageSeed)
+    const result = await captureVtexRetailPage(vtexSeed, 'jumbo')
+    if (!result.ok) return result
+
+    return {
+      ok: true,
+      data: {
+        snapshots: result.data.stagingRows.map((r) => ({
+          external_ref: r.external_ref,
+          source_url: r.source_url,
+          title: r.title,
+          brand: r.brand,
+          price: r.price ?? 0,
+          unit_price: Number(r.unit_price ?? r.price ?? 0),
+          category_hint: r.category_hint,
+          description_hint: r.description_hint,
+          image_url: r.image_url,
+        })),
+        rawProductCount: result.data.rawProductCount,
+      },
+    }
+  }
+
   const type = getRetailerCaptureType(retailer)
 
   if (type === 'vtex') {
     const vtexSeed: VtexPageSeed =
-      typeof seed === 'string' ? { page_url: seed, page_index: 0, endpoint_type: 'intelligent_search' } : seed
+      typeof seed === 'string' ? { page_url: seed, page_index: 0, endpoint_type: 'intelligent_search' } : (seed as VtexPageSeed)
     const result = await captureVtexRetailPage(vtexSeed, retailer as 'jumbo' | 'central_mayorista')
     if (!result.ok) return result
 

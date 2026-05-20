@@ -96,7 +96,7 @@
   }
 
   .app-page-header {
-    @apply flex max-w-2xl flex-col gap-1.5;
+    @apply flex flex-col gap-1.5;
   }
 
   .app-page-title {

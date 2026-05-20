@@ -28,10 +28,19 @@ export async function POST(request: Request) {
     )
   }
 
+  // Detectar si el cliente aborta la conexión
+  const abortSignal = request.signal
+
   try {
-    const result = await processLiderScrappingRunPageAction({ runId })
+    const result = await processLiderScrappingRunPageAction({ runId, abortSignal })
     return NextResponse.json(result)
   } catch (e) {
+    if (abortSignal?.aborted) {
+      return NextResponse.json(
+        { ok: false as const, error: 'Proceso cancelado por el cliente.', cancelled: true },
+        { status: 499 }, // Client Closed Request
+      )
+    }
     console.error('[api/retail-scrapping/process-run-page]', e)
     return NextResponse.json(
       { ok: false as const, error: 'No logramos completar la acción. Intenta nuevamente.' },
