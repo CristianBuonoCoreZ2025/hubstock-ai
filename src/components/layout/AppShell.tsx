@@ -109,6 +109,15 @@ export default function AppShell({
     return requestLogger.subscribeEnabled((enabled) => setDiagLogEnabled(enabled))
   }, [])
 
+  // Instalar interceptor global de fetch cuando el log esta activo
+  useEffect(() => {
+    if (diagLogEnabled) {
+      installFetchInterceptor()
+    } else {
+      uninstallFetchInterceptor()
+    }
+  }, [diagLogEnabled])
+
   // Sesion de diagnostico por ruta: limpiar al cambiar de pagina
   useEffect(() => {
     if (pathname) {

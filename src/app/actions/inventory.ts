@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { getProfileContext } from '@/lib/profile/context'
 import { revalidatePath } from 'next/cache'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
+import { withServerActionDiagnostic } from '@/lib/server-action-diagnostic'
 import { createCatalogProductRow, type CatalogProductInput } from '@/app/actions/catalog'
 
 export async function getProducts() {
@@ -403,6 +404,7 @@ export async function deleteProduct(id: string) {
 }
 
 export async function consumeProduct(productId: string, quantity: number) {
+  const startMs = Date.now()
   const { activeProfileId } = await getProfileContext()
   if (!activeProfileId) {
     return { error: 'Necesitas un perfil activo para descontar stock.' }

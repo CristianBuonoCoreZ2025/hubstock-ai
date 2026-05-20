@@ -167,7 +167,52 @@ Extender el log de diagnostico global para que funcione como un F12 interno enfo
 - Reducir `reloadRuns()` a solo inicio y final del barrido.
 - Migrar coordinacion de workers a un backend job/queue (Inngest, Vercel Cron, etc.).
 
-### Recomendaciones no aplicadas (riesgo mayor)
+---
+
+## 2026-05-20 (continuacion) - Interceptor global de fetch para trazabilidad en TODA la app
+
+### Objetivo
+Asegurar que el log de diagnostico funcione como F12 interno en **todas las paginas**, no solo en captura-cadenas-2.
+
+### Causa raiz de la limitacion percibida
+El log estaba montado globalmente y con sesiones por ruta, pero solo captura-cadenas-2 tenia instrumentacion explicita (`barridoApi*` wrappers con `requestLogger.startLog`). Las demas paginas (dashboard, catalogo, inventario, etc.) usan `fetch` directo o Supabase client sin trazas, quedando "invisibles" en el log.
+
+### Solucion aplicada
+**Interceptor global de `fetch`** (`request-logger.ts`):
+- `installFetchInterceptor()` / `uninstallFetchInterceptor()`: monkey-patch de `window.fetch` para capturar **todas** las llamadas HTTP.
+- Se activa automaticamente cuando el log esta encendido (via `useEffect` en `AppShell.tsx`).
+- Se desactiva cuando el log se apaga.
+- Cada fetch interceptado registra: metodo, URL, duracion, status, error si aplica.
+- No modifica comportamiento ni respuestas.
+- Sanitiza headers y body automaticamente.
+
+**Montaje global confirmado:**
+- Panel en `AppShell.tsx` linea 226: `{diagLogEnabled && <RequestLogViewer />}`.
+- **NO hay panel duplicado** en `captura-cadenas-2` (verificado: `CapturaCadenas2Client.tsx` no importa `RequestLogViewer`).
+- Configuracion en `/settings` con `DiagnosticLogToggle` aplica a toda la app (guarda en `localStorage`).
+
+**Sesiones por ruta confirmadas:**
+- `AppShell.tsx` tiene `useEffect` en `[pathname, searchParams]` que:
+  - Llama `requestLogger.startPageSession(pathname)` al entrar.
+  - Llama `requestLogger.endPageSession()` al salir (cleanup).
+  - Limpia logs previos automaticamente.
+
+### Resultado
+- **Todas las paginas** generan `page_enter` y `page_leave`.
+- **Todas las llamadas HTTP** (`fetch`) quedan trazadas automaticamente: dashboard, catalogo, inventario, settings, captura-cadenas-2, etc.
+- **Captura-cadenas-2** mantiene sus trazas especificas (barridoApi wrappers + metodos instrumentados).
+- **Sin duplicacion**: barridoApi usa `requestLogger.startLog` manual; el interceptor global tambien captura el mismo fetch. Se ven dos entradas por llamada (una del wrapper explicito, otra del interceptor). Esto es intencional: la del wrapper tiene metadata rica (runId, retailId); la del interceptor es la red pura.
+
+### Archivos modificados
+- `src/lib/request-logger.ts` (interceptor global de fetch)
+- `src/components/layout/AppShell.tsx` (activa interceptor segun estado del log)
+
+### Validacion
+- `npm run build`: exitoso.
+- `npm run lint`: sin errores nuevos en archivos modificados.
+
+### Recomendaciones pendientes
+- Instrumentar metodos internos de paginas principales (dashboard, catalogo, inventario) con `traceMethod`/`traceAsyncMethod` para trazar logica puramente client-side que no dispara fetch.
+- Crear wrapper server-side central de Supabase para trazar DB operations automaticamente.
 - Reducir `reloadRuns()` a solo inicio y final del barrido.
-- Usar `run.rows_inserted` como proxy durante todo el procesamiento, eliminando incluso el `count(*)` residual del `waveDone`.
 - Migrar coordinacion de workers a un backend job/queue (Inngest, Vercel Cron, etc.).

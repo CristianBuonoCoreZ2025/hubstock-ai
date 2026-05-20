@@ -455,11 +455,18 @@ export async function withLogging<T>(
   }
 }
 
-// Interceptor global de fetch para capturar TODAS las llamadas HTTP
+// Interceptor global de fetch para capturar llamadas HTTP NO cubiertas por wrappers explicitos
+const EXCLUDED_FETCH_PREFIXES = ['/api/retail-scrapping']
 let originalFetch: typeof fetch | null = null
+function shouldInterceptFetch(url: string): boolean {
+  return !EXCLUDED_FETCH_PREFIXES.some((p) => url.startsWith(p))
+}
 function createFetchInterceptor() {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+    if (!shouldInterceptFetch(url)) {
+      return (originalFetch as typeof fetch)(input, init)
+    }
     const method = init?.method ?? 'GET'
     const logId = requestLogger.startLog('api', `${method} ${url}`, { url, method })
 

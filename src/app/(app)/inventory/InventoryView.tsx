@@ -18,6 +18,7 @@ import { ProductDialog } from './ProductDialog'
 import type { InventoryRow } from './inventory-rows'
 import type { TaxonomyCategory, TaxonomySection } from '@/types/taxonomy'
 import { filterBySearch } from '@/lib/search'
+import { requestLogger } from '@/lib/request-logger'
 
 type Props = {
   categories: TaxonomyCategory[]
@@ -108,6 +109,7 @@ export function InventoryView({ categories, sections, rows, lead, query }: Props
   }, [rows, categoryFilter, sectionFilter, statusFilter, query.q])
 
   function pushQuery(next: Partial<Props['query']>) {
+    requestLogger.logClick('InventoryView.pushQuery', { filters: Object.keys(next) })
     const merged: Props['query'] = {
       ...query,
       section: sectionFilter,

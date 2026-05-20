@@ -8,6 +8,7 @@ import { AppSearchBox } from '@/components/search/app-search-box'
 import { Button } from '@/components/ui/button'
 import { consumeProduct } from '@/app/actions/inventory'
 import { filterBySearch, normalizeSearchText } from '@/lib/search'
+import { requestLogger } from '@/lib/request-logger'
 
 export type ConsumptionProduct = {
   id: string
@@ -32,7 +33,7 @@ export function ConsumptionView({ products }: Props) {
 
   function runConsume(id: string, qty: number) {
     startTransition(async () => {
-      const res = await consumeProduct(id, qty)
+      const res = await requestLogger.traceAsyncMethod('runConsume', async () => consumeProduct(id, qty), { id, qty })
       if (res.error) {
         toast.error(res.error)
         return

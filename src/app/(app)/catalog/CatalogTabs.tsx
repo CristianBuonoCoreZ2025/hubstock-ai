@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { Check, GitMerge, Minus, Pencil, CheckCheck } from 'lucide-react'
 import { toast } from 'sonner'
+import { requestLogger } from '@/lib/request-logger'
 import {
   CatalogFilterCombo,
   CatalogProductsTableSkeleton,
@@ -555,9 +556,10 @@ export function CatalogTabs(props: {
   const productsFetchSeq = useRef(0)
 
   const reloadProducts = useCallback(async () => {
-    const seq = ++productsFetchSeq.current
-    setProductsLoading(true)
-    const res = await fetchCatalogProductsPage({
+    return await requestLogger.traceAsyncMethod('reloadProducts', async () => {
+      const seq = ++productsFetchSeq.current
+      setProductsLoading(true)
+      const res = await fetchCatalogProductsPage({
       page: productPage,
       includeInactive: showInactiveProducts,
       sectionId: sectionFilter,
@@ -576,6 +578,7 @@ export function CatalogTabs(props: {
     setProductsTotal(res.total)
     setProductsHasNext(res.hasNextPage)
     setProductsTruncated(Boolean(res.truncated))
+    })
   }, [
     brandFilter,
     categoryFilter,
@@ -589,8 +592,9 @@ export function CatalogTabs(props: {
     if (tab !== 'products') return
     let cancelled = false
     async function loadOpts() {
-      setProductFilterOptionsLoading(true)
-      const res = await fetchCatalogProductFilterOptions({
+      return await requestLogger.traceAsyncMethod('loadOpts', async () => {
+        setProductFilterOptionsLoading(true)
+        const res = await fetchCatalogProductFilterOptions({
         search: productSearchSubmitted,
         sectionId: sectionFilter,
         categoryId: categoryFilter,
@@ -602,6 +606,7 @@ export function CatalogTabs(props: {
       setProductFilterSections(res.sections)
       setProductFilterCategories(res.categories)
       setProductFilterBrands(res.brands)
+      })
     }
     void loadOpts()
     return () => {

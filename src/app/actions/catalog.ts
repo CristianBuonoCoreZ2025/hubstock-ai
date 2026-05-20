@@ -14,6 +14,7 @@ import {
   searchTermsFromQuery,
 } from '@/lib/search'
 import { perfLog, withPerfTiming } from '@/lib/perf-log'
+import { withServerActionDiagnostic } from '@/lib/server-action-diagnostic'
 import {
   getUserFriendlyErrorMessage,
   isUniqueViolation,
@@ -1068,6 +1069,7 @@ async function hydrateCatalogProductRows(
 export async function fetchCatalogProductsPage(
   params: FetchCatalogProductsPageParams
 ): Promise<FetchCatalogProductsPageOk | { ok: false; error: string }> {
+  const startMs = Date.now()
   const reqId = globalThis.crypto?.randomUUID?.() ?? `req_${Date.now()}_${Math.random().toString(16).slice(2)}`
   const baseMeta = {
     reqId,
@@ -1272,14 +1274,10 @@ export async function fetchCatalogProductsPage(
 
   const hasNextPage = (pageIdx + 1) * PAGE < total
 
-  return {
-    ok: true,
-    items,
-    total,
-    page: pageIdx,
-    pageSize: PAGE,
-    hasNextPage,
-  }
+  return withServerActionDiagnostic(
+    { ok: true as const, items, total, page: pageIdx, pageSize: PAGE, hasNextPage },
+    { operation: 'fetchCatalogProductsPage', durationMs: Date.now() - startMs, dbOperation: 'rpc', table: 'catalog_products', rowCount: items.length }
+  )
 }
 
 /** Wrapper con nombre esperado por UI (productos filtrados por marca). */
