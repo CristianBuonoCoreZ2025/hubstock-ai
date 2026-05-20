@@ -537,6 +537,7 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
   runId: string
   retailId: string
   abortSignal?: AbortSignal
+  maxPages?: number
 }): Promise<
   | {
       ok: true
@@ -626,6 +627,13 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
       // Lider: descubrimiento completo del catálogo
       checkAborted()
       const fullSeeds = await buildLiderFullCatalogPageSeeds(baseUrl)
+
+      // Aplicar límite configurable de páginas (settings)
+      const maxPages = input.maxPages ?? 0
+      if (maxPages > 0 && fullSeeds.length > maxPages) {
+        console.info('[phase2-seal] Truncando seeds al límite configurado', { original: fullSeeds.length, limit: maxPages })
+        fullSeeds.length = maxPages
+      }
 
       run = await fetchScrappingRunById(editor.admin, runId)
       if (!run || run.status !== 'running') {

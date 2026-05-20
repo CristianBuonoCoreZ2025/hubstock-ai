@@ -94,6 +94,7 @@ export async function barridoApiPhase2Seal(
   input: {
     runId: string
     retailId: string
+    maxPages?: number
   },
   signal?: AbortSignal,
 ): Promise<BarridoPhase2SealResponse> {

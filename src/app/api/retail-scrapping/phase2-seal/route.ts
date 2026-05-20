@@ -19,6 +19,10 @@ export async function POST(request: Request) {
     typeof body === 'object' && body !== null && 'retailId' in body ?
       String((body as { retailId?: unknown }).retailId ?? '').trim()
     : ''
+  const maxPages =
+    typeof body === 'object' && body !== null && 'maxPages' in body ?
+      Number((body as { maxPages?: unknown }).maxPages ?? 0)
+    : 0
   if (!runId || !retailId) {
     return NextResponse.json(
       { ok: false as const, error: 'Faltan el identificador de la ejecución o del retail.' },
@@ -27,7 +31,7 @@ export async function POST(request: Request) {
   }
   try {
     const abortSignal = request.signal
-    const result = await discoverPhase2AppendAndSealLiderScrappingPagesAction({ runId, retailId, abortSignal })
+    const result = await discoverPhase2AppendAndSealLiderScrappingPagesAction({ runId, retailId, abortSignal, maxPages: maxPages > 0 ? maxPages : undefined })
     return NextResponse.json(result)
   } catch (e) {
     console.error('[api/retail-scrapping/phase2-seal]', e)

@@ -211,8 +211,41 @@ El log estaba montado globalmente y con sesiones por ruta, pero solo captura-cad
 - `npm run build`: exitoso.
 - `npm run lint`: sin errores nuevos en archivos modificados.
 
+---
+
+## 2026-05-20 (continuacion) - Instrumentacion de paginas principales y helper server-side
+
+### Objetivo
+Trazar metodos internos de paginas principales (catalogo, inventario, consumo) y crear helper server-side para diagnosticar server actions.
+
+### Cambios aplicados
+
+**1. Metodos internos instrumentados:**
+- `CatalogTabs.tsx`: `reloadProducts` y `loadOpts` ahora usan `requestLogger.traceAsyncMethod`.
+- `InventoryView.tsx`: `pushQuery` ahora usa `requestLogger.logClick`.
+- `ConsumptionView.tsx`: `runConsume` ahora usa `requestLogger.traceAsyncMethod`.
+
+**2. Helper server-side (`src/lib/server-action-diagnostic.ts`):**
+- `withServerActionDiagnostic`: agrega `__diagnostic` a respuestas de server actions.
+- Incluye: operation, durationMs, dbOperation, table, rowCount, bulk.
+- Usado en `fetchCatalogProductsPage` (catalog.ts).
+
+**3. Interceptor de fetch mejorado:**
+- Agregada exclusion para `/api/retail-scrapping/*` para evitar duplicados con `barridoApi` wrappers.
+- El interceptor solo captura fetches que NO estan ya instrumentados explicitamente.
+
+### Archivos modificados
+- `src/app/(app)/catalog/CatalogTabs.tsx`
+- `src/app/(app)/inventory/InventoryView.tsx`
+- `src/app/(app)/consumption/ConsumptionView.tsx`
+- `src/app/actions/catalog.ts`
+- `src/lib/server-action-diagnostic.ts` (nuevo)
+- `src/lib/request-logger.ts`
+
+### Validacion
+- `npm run build`: exitoso.
+- `npm run lint`: sin errores nuevos en archivos modificados.
+
 ### Recomendaciones pendientes
-- Instrumentar metodos internos de paginas principales (dashboard, catalogo, inventario) con `traceMethod`/`traceAsyncMethod` para trazar logica puramente client-side que no dispara fetch.
-- Crear wrapper server-side central de Supabase para trazar DB operations automaticamente.
 - Reducir `reloadRuns()` a solo inicio y final del barrido.
 - Migrar coordinacion de workers a un backend job/queue (Inngest, Vercel Cron, etc.).

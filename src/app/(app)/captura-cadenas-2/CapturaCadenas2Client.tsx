@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Sparkles, PackagePlus, X } from 'lucide-react'
+import { AlertTriangle, Loader2, CircleCheck, LayoutGrid, Link2, Play, Square, Trash2, Zap, Sparkles, PackagePlus, X } from 'lucide-react'
 import { toast } from 'sonner'
+import { getMaxScrappingPages } from '@/lib/max-scrapping-pages'
 import {
   barridoApiBarridoContext,
   barridoApiInit,
@@ -647,6 +648,12 @@ export function CapturaCadenas2Client() {
   async function onForceFinalizeScrappingFromModal() {
     const effectiveRetailId = modalRetailId || selectedRetailId
     if (!effectiveRetailId || forceFinalizeBusy || fullSweepBusy || barridoPlanActionBusy) return
+    const confirmed = window.confirm(
+      '¿Cerrar esta corrida forzosamente?
+
+Esta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marcarán como completadas sin descargar. No se podrá retomar el barrido después.',
+    )
+    if (!confirmed) return
     setForceFinalizeBusy(true)
     try {
       const r = await forceFinalizeScrappingRunForRetailAction({ retailId: effectiveRetailId })
@@ -839,6 +846,7 @@ export function CapturaCadenas2Client() {
       const phase2Promise = barridoApiPhase2Seal({
         runId: prepared.runId,
         retailId: selectedRetailId,
+        maxPages: getMaxScrappingPages(),
       }, sync.abortController.signal).catch(() => ({ ok: false as const, error: 'Fase 2 cancelada por el usuario.' } as BarridoPhase2SealResponse))
 
       const runWorker = async () => {
@@ -1098,7 +1106,7 @@ export function CapturaCadenas2Client() {
 
           {barridoPlanCtx && barridoPlanCtx.ok ?
             <div className="space-y-4 text-sm">
-              {/* === MODO EJECUCIÓN: solo dashboard + detener === */}
+              {/* === MODO EJECUCIÓN: dashboard + continuar/detener/concluir forzado === */}
               {fullSweepBusy || barridoPlanCtx?.runningForRetail ? (
                 <div className="space-y-4">
                   {/* Header */}
@@ -1149,23 +1157,70 @@ export function CapturaCadenas2Client() {
                     </div>
                   </div>
 
-                  {/* Botón Detener */}
-                  <Button
-                    type="button"
-                    className="btn-danger btn-lg w-full"
-                    disabled={stopBusy}
-                    onClick={() => {
-                      requestLogger.logClick('Detener scrapping (desde modal)')
-                      void onDetenerScrapping()
-                    }}
-                  >
-                    {stopBusy ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                    ) : (
-                      <Square className="mr-2 h-4 w-4" aria-hidden />
-                    )}
-                    Detener scrapping
-                  </Button>
+                  {/* Acciones */}
+                  <div className="grid grid-cols-3 gap-3">
+                    <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-3 text-center">
+                      <p className="text-xs font-medium text-foreground">Retomar</p>
+                      <Button
+                        type="button"
+                        className="btn-run btn-lg w-full"
+                        disabled={barridoPlanActionBusy}
+                        onClick={() => {
+                          const runId = barridoPlanCtx?.runningForRetail?.runId
+                          if (runId) void resumeBarridoFromModal(runId)
+                        }}
+                      >
+                        {barridoPlanActionBusy ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Play className="mr-2 h-4 w-4" aria-hidden />
+                        )}
+                        Continuar
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-3 text-center">
+                      <p className="text-xs font-medium text-foreground">Cancelar</p>
+                      <Button
+                        type="button"
+                        className="btn-danger btn-lg w-full"
+                        disabled={stopBusy}
+                        onClick={() => {
+                          requestLogger.logClick('Detener scrapping (desde modal)')
+                          void onDetenerScrapping()
+                        }}
+                      >
+                        {stopBusy ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <Square className="mr-2 h-4 w-4" aria-hidden />
+                        )}
+                        Detener
+                      </Button>
+                    </div>
+
+                    <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-3 text-center">
+                      <p className="text-xs font-medium text-foreground">Cierre irreversible</p>
+                      <Button
+                        type="button"
+                        className="btn-warn btn-lg w-full"
+                        disabled={forceFinalizeBusy}
+                        onClick={() => void onForceFinalizeScrappingFromModal()}
+                      >
+                        {forceFinalizeBusy ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                        ) : (
+                          <AlertTriangle className="mr-2 h-4 w-4" aria-hidden />
+                        )}
+                        Concluir forzado
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
+                    <AlertTriangle className="inline mr-1 h-3 w-3" aria-hidden />
+                    <strong>Advertencia:</strong> "Concluir forzado" marca todas las páginas pendientes o en proceso como completadas sin descargar. No se podrá retomar el barrido después. Es irreversible.
+                  </div>
 
                   <p className="text-[10px] text-blue-700 dark:text-blue-300 text-center">
                     El barrido continúa en segundo plano si cerrás este modal.

@@ -66,7 +66,7 @@ export default async function PreciosCadenasPage() {
 
         <p className="app-page-lead max-w-prose">
           Captura y homologa precios de retail contra el catálogo maestro.
-          Primero resuelve la taxonomía, después captura productos.
+          Primero resuelve la taxonomía, después captura productos vieja.
         </p>
       </header>
 

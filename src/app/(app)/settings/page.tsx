@@ -6,6 +6,7 @@ import { assertProfileMembership } from '@/lib/profile/membership'
 import { ProfileForm } from './ProfileForm'
 import { SignOutPanel } from './SignOutPanel'
 import DiagnosticLogToggle from './DiagnosticLogToggle'
+import MaxScrappingPagesInput from './MaxScrappingPagesInput'
 
 export default async function SettingsPage() {
   const { activeProfileId } = await getProfileContext()
@@ -58,6 +59,8 @@ export default async function SettingsPage() {
       <ProfileForm name={name} description={description} canEdit={canEdit} />
 
       <DiagnosticLogToggle />
+
+      <MaxScrappingPagesInput />
 
       <SignOutPanel />
 
