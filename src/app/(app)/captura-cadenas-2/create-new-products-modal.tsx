@@ -20,20 +20,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  getCatalogSectionsWithCategoriesAction,
-  runScrappingHomologationCreateNewAllAction,
-  type CatalogSectionWithCategories,
-} from '@/app/actions/retail-scrapping'
+import { runScrappingHomologationCreateNewAllAction } from '@/app/actions/retail-scrapping'
 
-/* ────────── Tipos ────────── */
 
 type RunStatus = 'idle' | 'running' | 'done' | 'error'
 
@@ -93,55 +81,49 @@ function CreateNewProductsModalInner({
   const [result, setResult] = useState<RunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [fallbackCatId, setFallbackCatId] = useState<string>('__auto__')
-  const [sections, setSections] = useState<CatalogSectionWithCategories[]>([])
-  const [sectionsLoading, setSectionsLoading] = useState(false)
-
-  const loadSections = useCallback(async () => {
-    if (sections.length > 0) return
-    setSectionsLoading(true)
-    const r = await getCatalogSectionsWithCategoriesAction()
-    if (r.ok) setSections(r.sections)
-    setSectionsLoading(false)
-  }, [sections.length])
-
   const runBatch = useCallback(async () => {
     setStatus('running')
     setError(null)
-    const fallbackCategoryId = fallbackCatId !== '__auto__' ? fallbackCatId : null
 
-    setResult({
+    const accumulator: RunResult = {
       processed: 0, total: pendingNew, created: 0, recovered: 0, skipped: 0,
       mediaOk: 0, mediaFailed: 0, errors: 0,
-    })
+    }
+    setResult(accumulator)
 
     const logId = (await import('@/lib/request-logger')).requestLogger.startLog(
       'api',
       'createNewProductsAll',
-      { pendingNew, fallbackCategoryId }
+      { pendingNew }
     )
 
     try {
-      const out = await runScrappingHomologationCreateNewAllAction({ fallbackCategoryId })
-      if (!out.ok) {
-        const displayError = out.__technical ? `${out.error} (${out.__technical})` : out.error
-        ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', { __technical: out.__technical }, displayError)
-        setStatus('error')
-        setError(displayError)
-        return
+      let remaining = pendingNew
+      let batch = 0
+      const MAX_BATCHES = 50
+      while (remaining > 0 && batch < MAX_BATCHES) {
+        batch++
+        const out = await runScrappingHomologationCreateNewAllAction({ batchSize: 1000 })
+        if (!out.ok) {
+          const displayError = out.__technical ? `${out.error} (${out.__technical})` : out.error
+          ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', { __technical: out.__technical }, displayError)
+          setStatus('error')
+          setError(displayError)
+          return
+        }
+        const { stats, remaining: rem } = out.result
+        accumulator.processed += stats.processed
+        accumulator.created += stats.created
+        accumulator.recovered += stats.recovered
+        accumulator.skipped += stats.skipped
+        remaining = rem
+        setResult({ ...accumulator })
       }
-      const { stats } = out.result
-      ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'success', { stats })
+
+      ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'success', { stats: accumulator })
       setResult({
-        processed: stats.processed,
-        total: pendingNew,
-        created: stats.created,
-        recovered: stats.recovered,
-        skipped: stats.skipped,
-        mediaOk: stats.mediaOk,
-        mediaFailed: stats.mediaFailed,
-        errors: stats.errors,
-        lastError: stats.lastError,
+        ...accumulator,
+        lastError: remaining > 0 ? `Quedaron ${remaining} sin procesar (limite de lotes)` : null,
       })
       setStatus('done')
       onFinished()
@@ -151,7 +133,7 @@ function CreateNewProductsModalInner({
       setStatus('error')
       setError(msg)
     }
-  }, [fallbackCatId, pendingNew, onFinished])
+  }, [pendingNew, onFinished])
 
   const isRunning = status === 'running'
   const isDone = status === 'done'
@@ -215,61 +197,6 @@ function CreateNewProductsModalInner({
 
         {/* ── Zona principal ── */}
         <div className="flex flex-col gap-5 px-8 py-6">
-
-          {/* Selector de categoría de respaldo */}
-          {!isDone && (
-            <div
-              className={`space-y-3 rounded-xl border p-5 transition-all duration-300 ${
-                isRunning
-                  ? 'border-border/40 opacity-50'
-                  : 'border-emerald-500/20 bg-emerald-500/[0.03]'
-              }`}
-              style={{ animation: 'homolog-fade-up 0.35s ease-out both' }}
-            >
-              <div className="flex items-center gap-2">
-                <Tags className="h-4 w-4 text-emerald-600" />
-                <p className="text-sm font-bold tracking-tight">Categoría de respaldo</p>
-                <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                  opcional
-                </span>
-              </div>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                Si el retailer no tiene taxonomía mapeada, los productos se asignan aquí. Dejá en <strong>Auto</strong> para usar el fuzzy del catálogo.
-              </p>
-              <Select
-                value={fallbackCatId}
-                onValueChange={setFallbackCatId}
-                disabled={isRunning}
-                onOpenChange={(open) => { if (open) void loadSections() }}
-              >
-                <SelectTrigger className="h-9 w-full text-sm">
-                  {sectionsLoading ?
-                    <div className="flex items-center gap-1.5">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>Cargando...</span>
-                    </div>
-                  : <SelectValue placeholder="Auto (recomendado)" />}
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__auto__" className="text-xs text-muted-foreground">
-                    Auto — fuzzy por nombre
-                  </SelectItem>
-                  {sections.map((sec) => (
-                    <div key={sec.sectionId}>
-                      <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {sec.sectionName}
-                      </div>
-                      {sec.categories.map((cat) => (
-                        <SelectItem key={cat.id} value={cat.id} className="pl-4 text-xs">
-                          {cat.name}
-                        </SelectItem>
-                      ))}
-                    </div>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          )}
 
           {/* Progreso en tiempo real */}
           {isRunning && (

@@ -44,6 +44,7 @@ export type CreateNewProductsBatchResult = {
 export type CreateNewProductsAllResult = {
   stats: CreateNewProductsSummary
   total: number
+  remaining: number
 }
 
 /* ── Helpers internos ── */
@@ -465,9 +466,13 @@ export async function processHomologationCreateNewBatch(
  */
 export async function processHomologationCreateNewAll(
   admin: SupabaseClient,
+  _input: { fallbackCategoryId?: string | null; batchSize?: number },
 ): Promise<{ ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string; __technical?: string }> {
   try {
-    const { data, error } = await admin.rpc('scrapping_create_new_products_all' as never)
+    const batchSize = _input.batchSize ?? 1000
+    const { data, error } = await admin.rpc('scrapping_create_new_products_all' as never, {
+      p_limit: batchSize,
+    })
     if (error) {
       const msg = error instanceof Error ? error.message : JSON.stringify(error)
       const code = (error as unknown as { code?: string }).code
@@ -497,9 +502,10 @@ export async function processHomologationCreateNewAll(
         errors: 0,
       },
       total: processed,
+      remaining: Number(o.remaining ?? 0),
     }
 
-    logger.info({ ...result.stats }, '[create-new] RPC completado')
+    logger.info({ ...result.stats, remaining: result.remaining }, '[create-new] RPC completado')
     return { ok: true, result }
   } catch (e) {
     logger.error({ err: e instanceof Error ? e.message : String(e) }, '[create-new] excepcion')

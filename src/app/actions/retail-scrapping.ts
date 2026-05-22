@@ -65,8 +65,6 @@ import {
   claimNextScrappingPage,
   countRunningScrappingRuns,
   countScrappingPages,
-  countScrappingPageRowsGlobal,
-  countScrappingProductRowsGlobal,
   countScrappingProductRowsPendingHomologation,
   failPendingPagesAndCancelRunIfRunning,
   fetchLatestScrappingRunForRetail,
@@ -80,8 +78,6 @@ import {
   insertScrappingRun,
   listScrappingPageUrlsForRun,
   purgeScrappingProductsAndPages,
-  listRecentScrappingRuns,
-  listRetailTargets,
   purgeScrappingRowsThatAlreadyHaveRetailLink,
   reopenScrappingRunForQueueProcessing,
   requeueFailedScrappingPagesForRun,
@@ -776,7 +772,7 @@ export async function getLiderScrappingBarridoContextAction(input: {
     // Una sola consulta SQL con CTEs para obtener todo de una vez
     const { data, error } = await editor.admin.rpc('get_barrido_context', {
       p_retail_id: retailId,
-    } as any)
+    } as never)
     if (error) throw error
 
     const row = data?.[0] ?? data
@@ -791,12 +787,28 @@ export async function getLiderScrappingBarridoContextAction(input: {
       }
     }
 
-    const r = row as any
+    const r = row as unknown as {
+      running_count?: number | null
+      running_run_id?: string | null
+      running_run_started_at?: string | null
+      running_pending?: number | null
+      running_processing?: number | null
+      running_failed?: number | null
+      running_done?: number | null
+      running_total?: number | null
+      running_total_pages?: number | null
+      latest_run_id?: string | null
+      latest_run_status?: string | null
+      latest_run_started_at?: string | null
+      latest_failed?: number | null
+      product_count?: number | null
+      page_count?: number | null
+    }
     const anyRunningGlobally = (r.running_count ?? 0) > 0
 
     const runningForRetail: LiderBarridoContextOk['runningForRetail'] = r.running_run_id ? {
       runId: r.running_run_id,
-      startedAt: r.running_run_started_at,
+      startedAt: r.running_run_started_at ?? '',
       pending: r.running_pending ?? 0,
       processing: r.running_processing ?? 0,
       failed: r.running_failed ?? 0,
@@ -807,8 +819,8 @@ export async function getLiderScrappingBarridoContextAction(input: {
 
     const latestRun: LiderBarridoContextOk['latestRun'] = r.latest_run_id ? {
       runId: r.latest_run_id,
-      status: r.latest_run_status,
-      startedAt: r.latest_run_started_at,
+      status: r.latest_run_status ?? '',
+      startedAt: r.latest_run_started_at ?? '',
       failedPages: r.latest_failed ?? 0,
     } : null
 
@@ -1319,6 +1331,25 @@ export async function processLiderScrappingRunPageAction(input: {
         }
         if (!pageError) {
           rowsWritten = rowsFiltered.length
+
+          // Insertar snapshots en catalog_retail_snapshots para historial de precios
+          const snapshotRows = cap.data.snapshots.map((r) => ({
+            retailer: page.retailer,
+            external_ref: r.external_ref,
+            source_url: (r.source_url ?? '').trim() || page.page_url,
+            title: r.title,
+            price: r.price,
+            category_hint: r.category_hint ?? null,
+            brand_hint: r.brand ?? null,
+            captured_at: extractedAt,
+            match_method: 'scrapping_capture',
+          }))
+          const SNAP_CHUNK = 200
+          for (let i = 0; i < snapshotRows.length; i += SNAP_CHUNK) {
+            checkAborted()
+            const slice = snapshotRows.slice(i, i + SNAP_CHUNK)
+            await editor.admin.from('catalog_retail_snapshots').insert(slice as never)
+          }
         }
       }
 
@@ -1464,7 +1495,7 @@ export async function listScrappingRunsAction(): Promise<
   try {
     const { data, error } = await editor.admin.rpc('list_scrapping_runs', {
       p_limit: 32,
-    } as any)
+    } as never)
     if (error) throw error
     return { ok: true, runs: (data ?? []) as ScrappingRunRow[] }
   } catch (e) {
@@ -1484,7 +1515,7 @@ export async function getScrappingInitAction(): Promise<
   try {
     const [{ data: retailsData, error: retailsErr }, { data: runsData, error: runsErr }] = await Promise.all([
       editor.admin.rpc('list_retail_for_scrapping'),
-      editor.admin.rpc('list_scrapping_runs', { p_limit: 32 } as any),
+      editor.admin.rpc('list_scrapping_runs', { p_limit: 32 } as never),
     ])
     if (retailsErr) throw retailsErr
     if (runsErr) throw runsErr
@@ -1762,9 +1793,9 @@ export async function runScrappingHomologationCreateNewBatchAction(input: {
   return r
 }
 
-/** Paso 3 · crear TODOS los productos nuevos en un solo request atómico. */
-export async function runScrappingHomologationCreateNewAllAction(input: {
-  fallbackCategoryId?: string | null
+/** Paso 3 · crear TODOS los productos nuevos en lotes atómicos. */
+export async function runScrappingHomologationCreateNewAllAction(input?: {
+  batchSize?: number
 }): Promise<
   { ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string; __technical?: string }
 > {
@@ -1780,7 +1811,7 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
     })
     return { ok: false, error: gate.error }
   }
-  const r = await processHomologationCreateNewAll(gate.admin)
+  const r = await processHomologationCreateNewAll(gate.admin, input ?? {})
   if (!r.ok) {
     console.error('[create-new-action] ERROR:', r.error)
     await logError(gate.admin, {

@@ -161,7 +161,7 @@ export default function AppShell({
                 onClick={() => setChangelogOpen(true)}
                 className="self-start rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/20 transition-colors"
               >
-                v{latestVersion}
+                V {latestVersion}
               </button>
             )}
           </div>
