@@ -27,6 +27,7 @@ import {
   runScrappingHomologationCreateNewBatchAction,
 } from '@/app/actions/retail-scrapping'
 import { PackagePlus } from 'lucide-react'
+import { withLogging } from '@/lib/request-logger'
 
 /* ────────── Tipos ────────── */
 
@@ -185,7 +186,7 @@ function HomologationWizardInner({
     setStep1Status('running')
     setStep1Error(null)
     try {
-      const out = await runScrappingHomologationStep2DbMotorAction()
+      const out = await withLogging('api', 'runScrappingHomologationStep2DbMotorAction', () => runScrappingHomologationStep2DbMotorAction())
       if (!out.ok) {
         setStep1Status('error')
         setStep1Error(out.error)
@@ -222,7 +223,7 @@ function HomologationWizardInner({
     let afterId: string | null = null
     try {
       for (;;) {
-        const out = await runScrappingHomologationGrayIaBatchAction({ afterId, batchSize: 10 })
+        const out = await withLogging('api', 'runScrappingHomologationGrayIaBatchAction', () => runScrappingHomologationGrayIaBatchAction({ afterId, batchSize: 10 }))
         if (!out.ok) {
           setStep2Status('error')
           setStep2Error(out.error)
@@ -264,7 +265,7 @@ function HomologationWizardInner({
     let afterId: string | null = null
     try {
       for (;;) {
-        const out = await runScrappingHomologationCreateNewBatchAction({ afterId, batchSize: 10 })
+        const out = await withLogging('api', 'runScrappingHomologationCreateNewBatchAction', () => runScrappingHomologationCreateNewBatchAction({ afterId, batchSize: 10 }))
         if (!out.ok) {
           setStep3Status('error')
           setStep3Error(out.error)
@@ -410,6 +411,12 @@ function HomologationWizardInner({
                 <StatBadge label="zona gris" value={step1Result.grayIa} color="bg-amber-500/10 text-amber-700 border-amber-500/20" delay={160} />
                 <StatBadge label="nuevos" value={step1Result.pendingNew} color="bg-sky-500/10 text-sky-700 border-sky-500/20" delay={240} />
               </div>
+            )}
+
+            {step1Status === 'done' && step1Result && step1Result.processed > 0 && step1Result.pendingNew === step1Result.processed && step1Result.autoTentative === 0 && step1Result.grayIa === 0 && (
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                El catálogo maestro está vacío. Todos los productos se marcaron como nuevos.
+              </p>
             )}
 
             {step1Status === 'error' && (

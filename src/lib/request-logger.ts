@@ -446,7 +446,14 @@ export async function withLogging<T>(
 
   try {
     const result = await fn()
-    requestLogger.endLog(id, 'success', result)
+    const r = result as Record<string, unknown> | null
+    const isControlledError = r && typeof r === 'object' && 'ok' in r && r.ok === false && 'error' in r
+    if (isControlledError) {
+      const errMsg = String(r.error ?? 'Error controlado')
+      requestLogger.endLog(id, 'error', result, errMsg)
+    } else {
+      requestLogger.endLog(id, 'success', result)
+    }
     return result
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error)

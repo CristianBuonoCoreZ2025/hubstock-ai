@@ -246,8 +246,8 @@ export function RequestLogViewer() {
                             </pre>
                           </details>
                         )}
-                        {Boolean(log.response) && log.status === 'success' && (
-                          <details className="text-slate-600">
+                        {Boolean(log.response) && (
+                          <details className={log.status === 'error' ? 'text-red-600' : 'text-slate-600'}>
                             <summary className="cursor-pointer hover:text-slate-800">Response</summary>
                             <pre className="mt-1 p-2 bg-slate-100 rounded overflow-auto max-h-32 text-xs text-slate-800">
                               {typeof log.response === 'string' ? log.response : JSON.stringify(log.response, null, 2)}

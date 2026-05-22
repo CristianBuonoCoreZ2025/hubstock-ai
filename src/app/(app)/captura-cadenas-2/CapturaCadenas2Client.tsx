@@ -407,6 +407,16 @@ export function CapturaCadenas2Client() {
     })
   }, []) // Solo ejecutar una vez al montar - funciones son estables
 
+  // Polling del contexto del modal: cuando está abierto, recarga cada 5s
+  // para detectar automáticamente cuando una corrida pasa a completed/cancelled.
+  useEffect(() => {
+    if (!barridoPlanOpen || !modalRetailId) return
+    const id = setInterval(() => {
+      void loadBarridoContextForModal(modalRetailId)
+    }, 5000)
+    return () => clearInterval(id)
+  }, [barridoPlanOpen, modalRetailId])
+
   /** Porcentaje de barra: solo cola real (max_pages no acota); monótono para no retroceder si crece la cola. */
   const [progressBarPercent, setProgressBarPercent] = useState(0)
 
@@ -609,7 +619,7 @@ export function CapturaCadenas2Client() {
     }
     setExactMatchBusy(true)
     try {
-      const r = await applyScrappingExactCatalogMatchesAction()
+      const r = await withLogging('api', 'applyScrappingExactCatalogMatchesAction', () => applyScrappingExactCatalogMatchesAction())
       if (!r.ok) {
         toast.error(r.error)
         return
@@ -651,9 +661,6 @@ export function CapturaCadenas2Client() {
     const confirmed = window.confirm(
       '¿Cerrar esta corrida forzosamente?\n\nEsta acción es IRREVERSIBLE: todas las páginas pendientes o en proceso se marcarán como completadas sin descargar. No se podrá retomar el barrido después.',
     )
-    if (!confirmed) return
-    if (!confirmed) return
-    if (!confirmed) return
     if (!confirmed) return
     setForceFinalizeBusy(true)
     try {
@@ -1909,7 +1916,7 @@ export function CapturaCadenas2Client() {
             >
               <PackagePlus className="h-4 w-4" aria-hidden />
               {(homologDash?.pendingNew ?? 0) > 0 ?
-                `Crear ${homologDash!.pendingNew.toLocaleString('es-CL')} producto(s) nuevos`
+                `Crear ${homologDash!.pendingNew.toLocaleString('es-CL')} productos`
               : 'Sin pendientes'}
             </Button>
           </div>

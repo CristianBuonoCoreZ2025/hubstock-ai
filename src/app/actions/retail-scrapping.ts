@@ -628,19 +628,29 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
       checkAborted()
       const fullSeeds = await buildLiderFullCatalogPageSeeds(baseUrl)
 
-      // Aplicar límite configurable de páginas (settings)
-      const maxPages = input.maxPages ?? 0
-      if (maxPages > 0 && fullSeeds.length > maxPages) {
-        console.info('[phase2-seal] Truncando seeds al límite configurado', { original: fullSeeds.length, limit: maxPages })
-        fullSeeds.length = maxPages
-      }
-
       run = await fetchScrappingRunById(editor.admin, runId)
       if (!run || run.status !== 'running') {
         return { ok: false, error: 'La ejecución se detuvo antes de terminar de ampliar la cola.' }
       }
 
-      if (fullSeeds.length === 0) {
+      const { urls: existing, error: listErr } = await listScrappingPageUrlsForRun(editor.admin, runId)
+      if (listErr) {
+        return { ok: false, error: getUserFriendlyErrorMessage(listErr, 'generic') }
+      }
+
+      // Aplicar límite configurable de páginas (settings).
+      // El límite actúa sobre el TOTAL de páginas, no solo las descubiertas,
+      // por lo que restamos las ya existentes antes de truncar.
+      const maxPages = input.maxPages ?? 0
+      if (maxPages > 0) {
+        const allowedNew = Math.max(0, maxPages - existing.size)
+        if (fullSeeds.length > allowedNew) {
+          console.info('[phase2-seal] Truncando seeds al límite configurado (considerando existentes)', { original: fullSeeds.length, allowedNew, existing: existing.size, limit: maxPages })
+          fullSeeds.length = allowedNew
+        }
+      }
+
+      if (fullSeeds.length === 0 && existing.size === 0) {
         await editor.admin
           .from('scrapping_runs')
           .update({
@@ -656,11 +666,6 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
           ok: false,
           error: 'No se pudo armar la cola de URLs para este retail. Reintenta más tarde.',
         }
-      }
-
-      const { urls: existing, error: listErr } = await listScrappingPageUrlsForRun(editor.admin, runId)
-      if (listErr) {
-        return { ok: false, error: getUserFriendlyErrorMessage(listErr, 'generic') }
       }
 
       const maxIx = await getMaxScrappingPageIndexForRun(editor.admin, runId)
@@ -1598,7 +1603,7 @@ export async function getScrappingHomologacionPendingCountAction(): Promise<
 
 /** Paso 1 de homologación: solo con ninguna corrida `running` (scrapping finalizado automática o manualmente). */
 export async function applyScrappingExactCatalogMatchesAction(): Promise<
-  { ok: true; result: ScrappingExactCatalogMatchStats } | { ok: false; error: string }
+  { ok: true; result: ScrappingExactCatalogMatchStats } | { ok: false; error: string; __technical?: string }
 > {
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
@@ -1621,18 +1626,23 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
 
     const purgeRes = await purgeScrappingRowsThatAlreadyHaveRetailLink(editor.admin)
     if (purgeRes.error) {
-      return { ok: false, error: getUserFriendlyErrorMessage(purgeRes.error, 'generic') }
+      const tech = purgeRes.error instanceof Error ? purgeRes.error.message : String(purgeRes.error)
+      return { ok: false, error: getUserFriendlyErrorMessage(purgeRes.error, 'generic'), __technical: tech }
     }
 
     const { data, error } = await editor.admin.rpc('scrapping_apply_exact_catalog_matches')
     if (error) {
-      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+      const tech = error instanceof Error ? error.message : JSON.stringify(error)
+      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic'), __technical: tech }
     }
     const raw = data as unknown
     if (raw == null || typeof raw !== 'object') {
-      return { ok: false, error: 'No se pudo completar la acción. Intenta nuevamente.' }
+      const tech = JSON.stringify({ raw: String(raw), type: typeof raw })
+      console.error('[applyScrappingExactCatalogMatchesAction] RPC retornó valor inesperado:', tech)
+      return { ok: false, error: 'No se pudo completar la acción. Intenta nuevamente.', __technical: tech }
     }
-    const o = raw as Record<string, unknown>
+    // Supabase puede envolver jsonb en array de 1 elemento
+    const o: Record<string, unknown> = Array.isArray(raw) && raw.length > 0 && raw[0] != null && typeof raw[0] === 'object' ? (raw[0] as Record<string, unknown>) : (raw as Record<string, unknown>)
     const pendingN = await countScrappingProductRowsPendingHomologation(editor.admin)
     const result: ScrappingExactCatalogMatchStats = {
       scrappingDuplicatesPurged: purgeRes.deleted,
@@ -1696,7 +1706,7 @@ export async function countScrappingSimilarityPendingAction(): Promise<
 
 /** Paso 2 · motor determinístico en Postgres (scores + bandas). Un solo RPC para todas las filas pending. */
 export async function runScrappingHomologationStep2DbMotorAction(): Promise<
-  { ok: true; summary: HomologationStep2RpcSummary } | { ok: false; error: string }
+  { ok: true; summary: HomologationStep2RpcSummary } | { ok: false; error: string; __technical?: string }
 > {
   const gate = await assertNoRunningScrappingForHomologation()
   if (!gate.ok) return { ok: false, error: gate.error }

@@ -51,6 +51,21 @@ function formatSimilarityScore(value: number | null | undefined): string {
   return value.toFixed(4)
 }
 
+function labelForBaseDecision(decision: string | null | undefined): string | null {
+  if (!decision) return null
+  switch (decision) {
+    case 'NO_CATALOG': return 'Sin catálogo'
+    case 'NO_CANDIDATES': return 'Sin candidatos'
+    case 'AUTO_TENTATIVE': return 'Auto tentativo'
+    case 'HARD_CONFLICT': return 'Conflicto duro'
+    case 'PENDING_NEW_SCORE': return 'Nuevo por score'
+    case 'GRAY_IA': return 'Zona gris IA'
+    case 'AMBIGUOUS_GAP': return 'Gap ambiguo'
+    case 'USER_REVIEW': return 'Revisión humana'
+    default: return decision
+  }
+}
+
 function shortUuid(id: string | null | undefined): string {
   const s = id?.trim()
   if (!s) return '—'
@@ -887,7 +902,7 @@ function SimilarityReviewGrid(props: ReviewGridProps) {
                               {row.base_decision ?
                                 <>
                                   {' · '}
-                                  {row.base_decision}
+                                  {labelForBaseDecision(row.base_decision)}
                                 </>
                               : null}
                             </p>
