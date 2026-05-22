@@ -14,10 +14,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import { normalizeRetailCapturedInput } from '@/server/retail/normalize/normalize-retail-product'
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
-import { resolveCatalogCategoryIdForScrappingRow } from '@/server/retail/scrapping/scrapping-similarity-taxonomy'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import logger from '@/lib/logger'
-import { logError } from '@/lib/db-logger'
 import {
   normalizeLiderSectionKeyStrong,
   normalizeLiderCategoryKeyStrong,
@@ -467,14 +465,15 @@ export async function processHomologationCreateNewBatch(
  */
 export async function processHomologationCreateNewAll(
   admin: SupabaseClient,
-  _input: { fallbackCategoryId?: string | null },
-): Promise<{ ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string }> {
+): Promise<{ ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string; __technical?: string }> {
   try {
     const { data, error } = await admin.rpc('scrapping_create_new_products_all' as never)
     if (error) {
       const msg = error instanceof Error ? error.message : JSON.stringify(error)
-      logger.error({ err: msg }, '[create-new] RPC error')
-      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
+      const code = (error as unknown as { code?: string }).code
+      const tech = code ? `[${code}] ${msg}` : msg
+      logger.error({ err: msg, code }, '[create-new] RPC error')
+      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic'), __technical: tech }
     }
 
     const raw = data as unknown

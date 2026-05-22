@@ -124,9 +124,10 @@ function CreateNewProductsModalInner({
     try {
       const out = await runScrappingHomologationCreateNewAllAction({ fallbackCategoryId })
       if (!out.ok) {
-        ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', undefined, out.error)
+        const displayError = out.__technical ? `${out.error} (${out.__technical})` : out.error
+        ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', { __technical: out.__technical }, displayError)
         setStatus('error')
-        setError(out.error)
+        setError(displayError)
         return
       }
       const { stats } = out.result

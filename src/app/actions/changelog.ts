@@ -24,6 +24,7 @@ export async function getAppChangelogAction(): Promise<
       .from('app_changelog')
       .select('id, version, module, description, files_changed, author, commit_hash, tags, created_at')
       .order('created_at', { ascending: false })
+      .order('version', { ascending: false })
       .limit(50)
 
     if (error) {

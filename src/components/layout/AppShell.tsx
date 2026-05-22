@@ -4,7 +4,9 @@ import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { RequestLogViewer } from '@/components/request-log-viewer'
+import { ChangelogModal } from '@/components/changelog-modal'
 import { requestLogger, installFetchInterceptor, uninstallFetchInterceptor } from '@/lib/request-logger'
+import { getAppChangelogAction } from '@/app/actions/changelog'
 import type { ProfileOption } from '@/lib/profile/context'
 import {
   mobileBottomNavItems,
@@ -109,6 +111,16 @@ export default function AppShell({
     return requestLogger.subscribeEnabled((enabled) => setDiagLogEnabled(enabled))
   }, [])
 
+  const [changelogOpen, setChangelogOpen] = useState(false)
+  const [latestVersion, setLatestVersion] = useState<string | null>(null)
+  useEffect(() => {
+    getAppChangelogAction().then((res) => {
+      if (res.ok && res.rows.length > 0) {
+        setLatestVersion(res.rows[0].version)
+      }
+    })
+  }, [])
+
   // Instalar interceptor global de fetch cuando el log esta activo
   useEffect(() => {
     if (diagLogEnabled) {
@@ -144,6 +156,14 @@ export default function AppShell({
               activeProfileId={activeProfileId}
               className="w-full"
             />
+            {latestVersion && (
+              <button
+                onClick={() => setChangelogOpen(true)}
+                className="self-start rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/20 transition-colors"
+              >
+                v{latestVersion}
+              </button>
+            )}
           </div>
           <nav className="flex flex-1 flex-col gap-0.5 px-2 py-3 text-[13px] font-medium lg:px-3">
             {navigationTree.map((node) =>
@@ -166,6 +186,7 @@ export default function AppShell({
             </div>
           ) : null}
         </div>
+        <ChangelogModal open={changelogOpen} onOpenChange={setChangelogOpen} />
       </aside>
 
       <div className="flex min-h-screen flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] md:pb-0">

@@ -7,7 +7,7 @@ import { ProfileForm } from './ProfileForm'
 import { SignOutPanel } from './SignOutPanel'
 import DiagnosticLogToggle from './DiagnosticLogToggle'
 import MaxScrappingPagesInput from './MaxScrappingPagesInput'
-import ChangelogPanel from './ChangelogPanel'
+import ChangelogSettingsTrigger from './ChangelogSettingsTrigger'
 
 export default async function SettingsPage() {
   const { activeProfileId } = await getProfileContext()
@@ -63,7 +63,7 @@ export default async function SettingsPage() {
 
       <MaxScrappingPagesInput />
 
-      <ChangelogPanel />
+      <ChangelogSettingsTrigger />
 
       <SignOutPanel />
 

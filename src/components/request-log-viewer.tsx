@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { requestLogger, type LogEntry } from '@/lib/request-logger'
 import { X, Trash2, Download, Clock, AlertCircle, CheckCircle, Loader2, MousePointer, Database, Globe, Terminal, Activity, Repeat, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -13,8 +14,10 @@ export function RequestLogViewer() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [autoScroll, setAutoScroll] = useState(true)
   const [session, setSession] = useState(requestLogger.getSession())
+  const [mounted, setMounted] = useState(false)
 
   useEffect(() => {
+    setMounted(true)
     const unsubscribe = requestLogger.subscribe((newLogs) => {
       setLogs(newLogs)
       setSession(requestLogger.getSession())
@@ -91,9 +94,8 @@ export function RequestLogViewer() {
     avgDuration: logs.filter(l => l.duration).reduce((acc, l) => acc + (l.duration || 0), 0) / logs.filter(l => l.duration).length || 0
   }
 
-  if (!isOpen) {
-    return (
-      <Button
+  const panel = !isOpen ? (
+    <Button
         variant="outline"
         size="sm"
         className="fixed right-4 top-4 z-[9999] gap-2"
@@ -112,10 +114,7 @@ export function RequestLogViewer() {
           </span>
         )}
       </Button>
-    )
-  }
-
-  return (
+  ) : (
     <div className="fixed right-4 top-4 z-[9999] w-[380px] max-h-[600px] bg-slate-50 border border-slate-300 rounded-lg shadow-2xl flex flex-col">
       {/* Header */}
       <div className="flex items-center justify-between p-2 border-b bg-white rounded-t-lg shrink-0">
@@ -270,4 +269,7 @@ export function RequestLogViewer() {
       </div>
     </div>
   )
+
+  if (!mounted) return null
+  return createPortal(panel, document.body)
 }

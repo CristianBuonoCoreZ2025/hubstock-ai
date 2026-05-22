@@ -1766,7 +1766,7 @@ export async function runScrappingHomologationCreateNewBatchAction(input: {
 export async function runScrappingHomologationCreateNewAllAction(input: {
   fallbackCategoryId?: string | null
 }): Promise<
-  { ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string }
+  { ok: true; result: CreateNewProductsAllResult } | { ok: false; error: string; __technical?: string }
 > {
   const gate = await assertNoRunningScrappingForHomologation()
   if (!gate.ok) {
@@ -1780,7 +1780,7 @@ export async function runScrappingHomologationCreateNewAllAction(input: {
     })
     return { ok: false, error: gate.error }
   }
-  const r = await processHomologationCreateNewAll(gate.admin, input)
+  const r = await processHomologationCreateNewAll(gate.admin)
   if (!r.ok) {
     console.error('[create-new-action] ERROR:', r.error)
     await logError(gate.admin, {
