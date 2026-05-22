@@ -1,10 +1,12 @@
 -- ---------------------------------------------------------------------------
 -- RPC: Crear productos maestros desde scrapping pending_new (todo atomico).
 -- Reglas:
---   1. No crear duplicados: busca por nombre normalizado en catalog_products.
+--   1. No crear duplicados: busca por nombre normalizado y por URL.
 --   2. Mejor categoria: via mapeo de taxonomia Lider si existe y esta linked;
 --      si no, usa fallback "General / Sin categoria".
---   3. Todo en un solo round-trip Postgres; sin limite de 1.000 filas.
+--   3. Si dos filas pending_new comparten la misma URL, apuntan al mismo
+--      producto maestro (recuperado o nuevo).
+--   4. Todo en un solo round-trip Postgres; sin limite de 1.000 filas.
 -- ---------------------------------------------------------------------------
 
 create or replace function public.scrapping_create_new_products_all()
@@ -98,7 +100,6 @@ begin
   -- ========================================================================
   -- 3. Detectar duplicados por nombre normalizado en catalog_products
   -- ========================================================================
-  -- Marcar filas cuyo name_norm ya existe en catalog_products
   create temp table _tmp_existing_names on commit drop as
   select distinct on (cpn.name_norm)
     cpn.name_norm,
@@ -133,6 +134,31 @@ begin
   set catalog_product_id = e.existing_id
   from _tmp_existing_urls e
   where t.url = e.url;
+
+  -- ========================================================================
+  -- 4b. Unificar UUIDs para filas pending_new que comparten la misma URL
+  -- ========================================================================
+  -- Si dos o mas filas de scrapping tienen la misma URL y ninguna es recuperada,
+  -- deben apuntar al mismo producto nuevo para evitar violar la constraint unique.
+  -- Si una fue recuperada (existing_id), todas toman ese ID (recuperada > nueva).
+  with best_per_url as (
+    select distinct on (url)
+      url,
+      catalog_product_id as best_id
+    from _tmp_new_products
+    where url is not null
+    order by url,
+      case when catalog_product_id in (
+        select existing_id from _tmp_existing_names
+        union
+        select existing_id from _tmp_existing_urls where existing_id is not null
+      ) then 0 else 1 end,
+      catalog_product_id
+  )
+  update _tmp_new_products t
+  set catalog_product_id = b.best_id
+  from best_per_url b
+  where t.url = b.url;
 
   -- ========================================================================
   -- 5. Insertar maestros nuevos (solo los que NO son recuperados)
@@ -184,7 +210,8 @@ begin
     'scrapping_homologation',
     tc.url
   from to_create tc
-  left join _tmp_cat_max_sort cms on cms.cat_id = tc.best_category_id;
+  left join _tmp_cat_max_sort cms on cms.cat_id = tc.best_category_id
+  on conflict (id) do nothing;
 
   get diagnostics v_created = row_count;
 
@@ -219,35 +246,22 @@ begin
   update public.scrapping s
   set
     catalog_match_status       = 'matched',
-    matched_catalog_product_id = t.catalog_product_id,
-    homolog_final_status       = case
-      when t.catalog_product_id in (
-        select existing_id from _tmp_existing_names
-        union
-        select existing_id from _tmp_existing_urls where existing_id is not null
-      ) then 'MATCHED_EXISTING'
-      else 'CREATED_NEW'
-    end,
-    catalog_matched_at         = now(),
-    homolog_reviewed_at      = now()
+    catalog_product_id         = t.catalog_product_id,
+    catalog_match_confidence   = 1.0,
+    catalog_match_method       = 'homologation_create_new',
+    catalog_match_reviewed_at  = now(),
+    catalog_match_reviewed_by  = auth.uid()
   from _tmp_new_products t
   where s.id = t.scrapping_id;
 
-  -- ========================================================================
-  -- 9. Cleanup
-  -- ========================================================================
+  v_skipped := v_processed - v_created - v_recovered;
+
   return jsonb_build_object(
     'processed', v_processed,
-    'created',   v_created,
+    'created', v_created,
     'recovered', v_recovered,
-    'skipped',   v_skipped,
-    'total',     v_processed
+    'skipped', v_skipped,
+    'total', v_processed
   );
 end;
 $$;
-
-comment on function public.scrapping_create_new_products_all() is
-  'Crea productos maestros desde scrapping pending_new: deduplica por nombre+URL, asigna mejor categoria via taxonomia mapeada, todo atomico. Invocar con service_role desde servidor.';
-
-revoke all on function public.scrapping_create_new_products_all() from public;
-grant execute on function public.scrapping_create_new_products_all() to service_role;

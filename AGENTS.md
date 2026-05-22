@@ -246,6 +246,55 @@ Trazar metodos internos de paginas principales (catalogo, inventario, consumo) y
 - `npm run build`: exitoso.
 - `npm run lint`: sin errores nuevos en archivos modificados.
 
+---
+
+## 2026-05-22 - Fix funcion SQL crear productos nuevos + Panel de versiones en Configuracion
+
+### Objetivo
+1. Arreglar la funcion SQL `scrapping_create_new_products_all` que fallaba con error 23505 cuando dos filas pending_new compartian la misma URL.
+2. Mejorar el interceptor de fetch para leer errores reales desde JSON bodies.
+3. Instrumentar el modal de crear productos nuevos con log de diagnostico.
+4. Crear panel de versiones en Configuracion con historial desde `app_changelog`.
+
+### Causa raiz del error 23505
+La funcion SQL generaba un UUID diferente para cada fila de scrapping `pending_new`. Si dos filas compartian la misma `product_url`, ambas intentaban insertarse en `catalog_products` con la misma `source_product_url`, violando la constraint unique `idx_catalog_products_source_product_url_unique`.
+
+### Archivos modificados
+- `supabase/migrations/20260702000000_scrapping_create_new_products_all.sql` (funcion corregida)
+- `supabase/migrations/20260702130000_fix_create_new_products_duplicate_url.sql` (migracion nueva con fix)
+- `supabase/migrations/20260702131000_app_changelog_seed.sql` (seed historico)
+- `src/app/(app)/captura-cadenas-2/create-new-products-modal.tsx` (logueo de accion)
+- `src/lib/request-logger.ts` (interceptor lee errores de JSON body)
+- `src/app/actions/changelog.ts` (server action para leer app_changelog)
+- `src/app/(app)/settings/ChangelogPanel.tsx` (nuevo componente de versiones)
+- `src/app/(app)/settings/page.tsx` (integra ChangelogPanel)
+
+### Cambios aplicados
+
+**Fix SQL - unificacion por URL:**
+- Paso 5 nuevo: update con subquery que elige un unico `catalog_product_id` por cada URL duplicada dentro del lote.
+- Orden de prioridad: existing_id (recuperado) > nuevo UUID menor.
+- Proteccion `on conflict (id) do nothing` en el INSERT de `catalog_products`.
+
+**Interceptor de fetch mejorado:**
+- Lee el body JSON de respuestas HTTP para detectar `{ ok: false, error: ... }`.
+- Propaga el mensaje de error real al log de diagnostico en lugar de solo "error HTTP 200".
+
+**Modal de crear productos nuevos:**
+- Agregado `requestLogger.startLog/endLog` alrededor de `runScrappingHomologationCreateNewAllAction`.
+- Errores y exitos se registran en el log de diagnostico automaticamente.
+
+**Panel de versiones:**
+- Nueva server action `getAppChangelogAction` que lee `app_changelog` con service role.
+- Componente `ChangelogPanel` con tarjetas expandibles: version, modulo, descripcion, tags, archivos afectados.
+- Badges de modulo con colores distintivos.
+- Seed historico con 10 registros desde v1.0.1 hasta v1.0.10.
+
+### Validacion
+- `npm run build`: exitoso.
+
 ### Recomendaciones pendientes
 - Reducir `reloadRuns()` a solo inicio y final del barrido.
-- Migrar coordinacion de workers a un backend job/queue (Inngest, Vercel Cron, etc.).
+- Migrar coordinacion de workers a un backend job/queue.
+- Aplicar la migracion `20260702130000_fix_create_new_products_duplicate_url.sql` a la base de datos.
+- Aplicar la migracion `20260702131000_app_changelog_seed.sql` para poblar historial.

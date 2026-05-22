@@ -115,14 +115,22 @@ function CreateNewProductsModalInner({
       mediaOk: 0, mediaFailed: 0, errors: 0,
     })
 
+    const logId = (await import('@/lib/request-logger')).requestLogger.startLog(
+      'api',
+      'createNewProductsAll',
+      { pendingNew, fallbackCategoryId }
+    )
+
     try {
       const out = await runScrappingHomologationCreateNewAllAction({ fallbackCategoryId })
       if (!out.ok) {
+        ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', undefined, out.error)
         setStatus('error')
         setError(out.error)
         return
       }
       const { stats } = out.result
+      ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'success', { stats })
       setResult({
         processed: stats.processed,
         total: pendingNew,
@@ -137,8 +145,10 @@ function CreateNewProductsModalInner({
       setStatus('done')
       onFinished()
     } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Error inesperado'
+      ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'error', undefined, msg)
       setStatus('error')
-      setError(e instanceof Error ? e.message : 'Error inesperado')
+      setError(msg)
     }
   }, [fallbackCatId, pendingNew, onFinished])
 
