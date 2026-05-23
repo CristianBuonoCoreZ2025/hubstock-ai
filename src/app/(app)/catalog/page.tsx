@@ -17,7 +17,7 @@ export default async function CatalogPage({ searchParams }: PageProps) {
   const sp = (await searchParams) ?? {}
 
   if (sp.tab === 'cadenas') {
-    redirect('/precios-cadenas')
+    redirect('/captura-cadenas-2')
   }
 
 

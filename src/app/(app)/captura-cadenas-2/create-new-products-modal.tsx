@@ -35,6 +35,7 @@ type RunResult = {
   mediaFailed: number
   errors: number
   lastError?: string | null
+  remaining?: number
 }
 
 export type CreateNewProductsModalProps = {
@@ -111,13 +112,13 @@ function CreateNewProductsModalInner({
           setError(displayError)
           return
         }
-        const { stats, remaining: rem } = out.result
-        accumulator.processed += stats.processed
-        accumulator.created += stats.created
-        accumulator.recovered += stats.recovered
-        accumulator.skipped += stats.skipped
-        remaining = rem
-        setResult({ ...accumulator })
+        const r = out.result
+        accumulator.processed += r.processedRows
+        accumulator.created += r.productsCreated
+        accumulator.recovered += r.productsRecovered
+        accumulator.skipped += r.skipped
+        remaining = r.remaining
+        setResult({ ...accumulator, remaining })
       }
 
       ;(await import('@/lib/request-logger')).requestLogger.endLog(logId, 'success', { stats: accumulator })

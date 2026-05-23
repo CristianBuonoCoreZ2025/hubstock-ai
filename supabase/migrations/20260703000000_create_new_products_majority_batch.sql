@@ -288,12 +288,11 @@ begin
   -- ========================================================================
   update public.scrapping s
   set
-    catalog_match_status       = 'matched',
-    catalog_product_id         = t.catalog_product_id,
-    catalog_match_confidence   = 1.0,
-    catalog_match_method       = 'homologation_create_new',
-    catalog_match_reviewed_at  = now(),
-    catalog_match_reviewed_by  = auth.uid()
+    catalog_match_status       = 'catalog_created',
+    matched_catalog_product_id = t.catalog_product_id,
+    catalog_matched_at         = now(),
+    homolog_final_status       = 'CREATED_NEW',
+    homolog_reviewed_at        = now()
   from _tmp_new_products t
   where s.id = t.scrapping_id;
 

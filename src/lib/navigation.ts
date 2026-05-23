@@ -116,14 +116,9 @@ export const navigationTree: NavNode[] = [
       { name: 'Personas', href: '/users#admin-personas', icon: UserRound },
       { name: 'Invitaciones enviadas', href: '/users#admin-invitaciones', icon: Mail },
       {
-        name: 'Precios por cadena',
-        href: '/precios-cadenas',
-        icon: CircleDollarSign,
-      },
-      {
-        name: 'Captura de cadenas 2',
+        name: 'Captura de cadenas',
         href: '/captura-cadenas-2',
-        icon: Table2,
+        icon: CircleDollarSign,
       },
     ],
   },

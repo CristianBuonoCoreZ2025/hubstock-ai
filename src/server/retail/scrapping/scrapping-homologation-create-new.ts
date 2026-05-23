@@ -42,8 +42,18 @@ export type CreateNewProductsBatchResult = {
 }
 
 export type CreateNewProductsAllResult = {
-  stats: CreateNewProductsSummary
-  total: number
+  processedRows: number
+  uniqueProductsDetected: number
+  productsCreated: number
+  productsRecovered: number
+  retailLinksCreated: number
+  retailSnapshotsCreated: number
+  taxonomyMappingsCreated: number
+  taxonomyPending: number
+  brandsCreated: number
+  aliasesCreated: number
+  imagePending: number
+  skipped: number
   remaining: number
 }
 
@@ -487,25 +497,23 @@ export async function processHomologationCreateNewAll(
         ? (raw[0] as Record<string, unknown>)
         : (raw as Record<string, unknown>)
 
-    const processed = Number(o.processed ?? 0)
-    const created = Number(o.created ?? 0)
-    const recovered = Number(o.recovered ?? 0)
-
     const result: CreateNewProductsAllResult = {
-      stats: {
-        processed,
-        created,
-        recovered,
-        skipped: Number(o.skipped ?? 0),
-        mediaOk: 0,
-        mediaFailed: 0,
-        errors: 0,
-      },
-      total: processed,
+      processedRows: Number(o.processed_rows ?? 0),
+      uniqueProductsDetected: Number(o.unique_products_detected ?? 0),
+      productsCreated: Number(o.products_created ?? 0),
+      productsRecovered: Number(o.products_recovered ?? 0),
+      retailLinksCreated: Number(o.retail_links_created ?? 0),
+      retailSnapshotsCreated: Number(o.retail_snapshots_created ?? 0),
+      taxonomyMappingsCreated: Number(o.taxonomy_mappings_created ?? 0),
+      taxonomyPending: Number(o.taxonomy_pending ?? 0),
+      brandsCreated: Number(o.brands_created ?? 0),
+      aliasesCreated: Number(o.aliases_created ?? 0),
+      imagePending: Number(o.image_pending ?? 0),
+      skipped: Number(o.skipped ?? 0),
       remaining: Number(o.remaining ?? 0),
     }
 
-    logger.info({ ...result.stats, remaining: result.remaining }, '[create-new] RPC completado')
+    logger.info(result, '[create-new] RPC completado')
     return { ok: true, result }
   } catch (e) {
     logger.error({ err: e instanceof Error ? e.message : String(e) }, '[create-new] excepcion')

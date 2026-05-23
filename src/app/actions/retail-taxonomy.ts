@@ -165,7 +165,7 @@ export async function detectLiderRetailTaxonomyAction(): Promise<
     await refreshLiderTaxonomyProductsCountsFromCaptures(editor.admin)
 
     revalidatePath('/catalog')
-    revalidatePath('/precios-cadenas')
+    revalidatePath('/captura-cadenas-2')
     return {
       ok: true,
       sections: discoveredSections.length,
@@ -198,7 +198,7 @@ export async function syncLiderRetailCategoriesFromPlanUrlsAction(): Promise<
   if (!result.ok) return { ok: false, error: result.error }
 
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return {
     ok: true,
     discoveredCategoryRows: result.discoveredCategoryRows,
@@ -291,7 +291,7 @@ export async function approveLiderRetailTaxonomyLiderSectionAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -323,7 +323,7 @@ export async function linkLiderRetailTaxonomyLiderSectionAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -345,7 +345,7 @@ export async function ignoreLiderRetailTaxonomyLiderSectionAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -367,7 +367,7 @@ export async function discardLiderRetailTaxonomyLiderSectionAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -466,7 +466,7 @@ export async function createMasterSectionFromLiderTaxonomySectionAction(input: {
   if (upErr) return { ok: false, error: getUserFriendlyErrorMessage(upErr, 'generic') }
 
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -521,7 +521,7 @@ export async function approveLiderRetailTaxonomyMappingAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -543,7 +543,7 @@ export async function ignoreLiderRetailTaxonomyMappingAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -573,7 +573,7 @@ export async function discardLiderRetailTaxonomyMappingAction(input: {
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -678,7 +678,7 @@ export async function linkLiderRetailTaxonomyMappingToMasterCategoryAction(input
 
   if (error) return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }
 
@@ -761,6 +761,6 @@ export async function createCategoryAndLinkLiderTaxonomyAction(input: {
 
   if (upErr) return { ok: false, error: getUserFriendlyErrorMessage(upErr, 'generic') }
   revalidatePath('/catalog')
-  revalidatePath('/precios-cadenas')
+  revalidatePath('/captura-cadenas-2')
   return { ok: true }
 }

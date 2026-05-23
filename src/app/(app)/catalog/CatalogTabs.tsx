@@ -1191,8 +1191,8 @@ export function CatalogTabs(props: {
               <>
                 Un maestro por producto real: precios Lider, Jumbo y Central cuando hay homologación; columna
                 Cadenas indica vínculos con tiendas.                 La captura y homologación por cadena se gestiona en{' '}
-                <Link href="/precios-cadenas" className="text-primary underline underline-offset-2">
-                  Precios por cadena
+                <Link href="/captura-cadenas-2" className="text-primary underline underline-offset-2">
+                  Captura de cadenas
                 </Link>{' '}
                 (Administración).
               </>
