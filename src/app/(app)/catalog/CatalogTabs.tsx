@@ -41,6 +41,7 @@ import {
   type CatalogProductGridRow,
   type CatalogProductInput,
 } from '@/app/actions/catalog'
+import { fetchMissingCatalogImagesAction } from '@/app/actions/catalog-images'
 import { normalizeCatalogAlias } from '@/lib/catalog-alias'
 import { CATALOG_GRID_PAGE_SIZE } from '@/lib/catalog-grid'
 import { GridPagingRow } from '@/components/grid/grid-paging-row'
@@ -676,6 +677,7 @@ export function CatalogTabs(props: {
   const [brandMergeAbsorbedName, setBrandMergeAbsorbedName] = useState<string | null>(null)
   const [brandMergeUnifiedName, setBrandMergeUnifiedName] = useState('')
   const [brandMergeBusy, setBrandMergeBusy] = useState(false)
+  const [fetchImagesBusy, setFetchImagesBusy] = useState(false)
 
   function resetBrandMergeForm() {
     setBrandMergeSurvivorId('')
@@ -937,6 +939,41 @@ export function CatalogTabs(props: {
       category_id: cats[0]?.id ?? '',
     })
     setProductDialogOpen(true)
+  }
+
+  async function submitFetchImages() {
+    if (fetchImagesBusy) return
+    setFetchImagesBusy(true)
+    const logId = requestLogger.startLog('api', 'fetchMissingCatalogImages', { batchSize: 50 })
+    try {
+      const res = await fetchMissingCatalogImagesAction({ batchSize: 50 })
+      if (!res.ok) {
+        requestLogger.endLog(logId, 'error', res.__diagnostic, res.error)
+        toast.error(res.error)
+        console.error('[fetchMissingCatalogImages] error:', res.error, res.__diagnostic)
+        return
+      }
+      requestLogger.endLog(logId, 'success', { ...res.__diagnostic, processed: res.processed, success: res.success, failed: res.failed, remaining: res.remaining })
+      console.info('[fetchMissingCatalogImages] ok:', { processed: res.processed, success: res.success, failed: res.failed, remaining: res.remaining, diag: res.__diagnostic })
+      if (res.success > 0) {
+        toast.success(String(res.success) + ' imágenes recuperadas')
+        void reloadProducts()
+      } else if (res.processed === 0) {
+        toast.info('No hay imágenes pendientes')
+      } else {
+        toast.error('No se pudieron recuperar las imágenes')
+      }
+      if (res.remaining > 0) {
+        toast.info(String(res.remaining) + ' productos aún sin imagen')
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      requestLogger.endLog(logId, 'error', undefined, msg)
+      console.error('[fetchMissingCatalogImages] excepción:', msg)
+      toast.error('Error inesperado: ' + msg)
+    } finally {
+      setFetchImagesBusy(false)
+    }
   }
 
   function openEditProduct(p: CatalogProductRow) {
@@ -1281,6 +1318,15 @@ export function CatalogTabs(props: {
               />
               Mostrar inactivos
             </label>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-9 shrink-0 gap-2"
+              disabled={fetchImagesBusy}
+              onClick={() => void submitFetchImages()}
+            >
+              {fetchImagesBusy ? 'Recuperando…' : 'Recuperar imágenes'}
+            </Button>
             <Button type="button" className="btn-create h-9 shrink-0 gap-2" onClick={openNewProduct}>
               Nuevo producto
             </Button>
@@ -2098,10 +2144,10 @@ export function CatalogTabs(props: {
 
       <Dialog open={brandEditOpen} onOpenChange={setBrandEditOpen}>
         <DialogContent className="modal-lg">
-          <div className="modal-header">
-            <h2 className="text-base font-semibold text-foreground">Editar marca</h2>
-            <p className="mt-0.5 text-[13px] text-muted-foreground">Nombre canónico en el catálogo maestro.</p>
-          </div>
+          <DialogHeader>
+            <DialogTitle>Editar marca</DialogTitle>
+            <DialogDescription>Nombre canónico en el catálogo maestro.</DialogDescription>
+          </DialogHeader>
           <div className="modal-body-cols">
             <div className="modal-col-main justify-center">
               <div className="space-y-2">
