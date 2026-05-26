@@ -3,10 +3,14 @@
 @import "../../node_modules/tw-animate-css/dist/tw-animate.css";
 @import "./ui-style-skins.css";
 
+/* Tema oscuro por clase `.dark` en `<html>`, no por preferencia del SO (evita cajas oscuras en UI clara). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Estilos organizados por dominio */
 @import "./styles/buttons.css";
 @import "./styles/modals.css";
 @import "./styles/components.css";
+@import "./styles/scrapping-ui.css";
 @import "./styles/animations.css";
 @import "./styles/forms.css";
 

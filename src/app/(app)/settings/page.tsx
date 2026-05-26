@@ -8,6 +8,7 @@ import { SignOutPanel } from './SignOutPanel'
 import DiagnosticLogToggle from './DiagnosticLogToggle'
 import MaxScrappingPagesInput from './MaxScrappingPagesInput'
 import ChangelogSettingsTrigger from './ChangelogSettingsTrigger'
+import CatalogResetPanel from './CatalogResetPanel'
 
 export default async function SettingsPage() {
   const { activeProfileId } = await getProfileContext()
@@ -64,6 +65,8 @@ export default async function SettingsPage() {
       <MaxScrappingPagesInput />
 
       <ChangelogSettingsTrigger />
+
+      <CatalogResetPanel />
 
       <SignOutPanel />
 

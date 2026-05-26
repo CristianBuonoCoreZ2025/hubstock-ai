@@ -315,7 +315,7 @@ function CreateNewProductsModalInner({
       <div className="flex items-center justify-between border-t bg-muted/10 px-8 py-4">
         <Button
           variant="ghost"
-          className={`h-9 gap-2 ${isDone ? 'btn-close' : 'btn-cancel'}`}
+          className={isDone ? 'btn-close btn-footer' : 'btn-cancel btn-footer'}
           onClick={() => onOpenChange(false)}
           disabled={isRunning}
         >
@@ -335,7 +335,7 @@ function CreateNewProductsModalInner({
 
           {status === 'error' && (
             <Button
-              className="btn-warn h-9 gap-2"
+              className="btn-warn btn-footer"
               onClick={() => void runBatch()}
             >
               <PackagePlus className="h-4 w-4" />
@@ -345,7 +345,7 @@ function CreateNewProductsModalInner({
 
           {isDone && result && result.skipped > 0 && (
             <Button
-              className="btn-amber h-9 gap-2"
+              className="btn-amber btn-footer"
               onClick={() => {
                 setStatus('idle')
                 setResult(null)

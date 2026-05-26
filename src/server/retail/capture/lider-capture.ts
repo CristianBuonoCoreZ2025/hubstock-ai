@@ -253,7 +253,7 @@ async function captureLiderCatalogSystemJsonPage(pageUrl: string): Promise<
       unit_price: extractUnitPriceFromSynthetic(raw),
       category_hint: snap.category_hint ?? catHint,
       description_hint: snap.description_hint,
-      image_url: extractThumbFromSynthetic(raw),
+      image_url: snap.image_url ?? extractThumbFromSynthetic(raw),
       raw_data: raw,
     }
     const norm = normalizeRetailCapturedInput(input)
@@ -314,7 +314,7 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
       unit_price: extractUnitPriceFromSynthetic(raw),
       category_hint: snap.category_hint ?? catHint,
       description_hint: snap.description_hint,
-      image_url: extractThumbFromSynthetic(raw),
+      image_url: snap.image_url ?? extractThumbFromSynthetic(raw),
       raw_data: raw,
     }
     const norm = normalizeRetailCapturedInput(input)

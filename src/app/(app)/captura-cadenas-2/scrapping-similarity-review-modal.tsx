@@ -42,7 +42,6 @@ import {
 import type { ScrappingProductRow } from '@/server/retail/scrapping/lider-scrapping-service'
 import type { ScrappingSimilarityManualCandidate } from '@/server/retail/scrapping/scrapping-similarity-manual'
 
-const FOOTER_ACTION_BTN = 'h-9 shrink-0'
 const CANDIDATE_PREFETCH_CONCURRENCY = 6
 const APPLY_BATCH_SIZE = 120
 
@@ -731,7 +730,7 @@ export function ScrappingSimilarityReviewModal({
         <DialogFooter className="gap-2 sm:justify-between">
           <Button
             type="button"
-            className={`btn-close ${FOOTER_ACTION_BTN}`}
+            className="btn-close btn-footer"
             disabled={applyBusy || phase === 'bulk'}
             onClick={() => onOpenChange(false)}
           >
@@ -740,7 +739,7 @@ export function ScrappingSimilarityReviewModal({
           {!homologacionBloqueada && phase === 'bulk' ?
             <Button
               type="button"
-              className={`btn-skip gap-2 ${FOOTER_ACTION_BTN}`}
+              className="btn-skip btn-footer"
               onClick={() => void skipBulkToReview()}
             >
               <SkipForward className="h-4 w-4" />
@@ -749,7 +748,7 @@ export function ScrappingSimilarityReviewModal({
           : !homologacionBloqueada && phase === 'review' ?
             <Button
               type="button"
-              className={`btn-violet gap-2 ${FOOTER_ACTION_BTN}`}
+              className="btn-violet btn-footer"
               disabled={uiLocked || pendingTotal === 0}
               onClick={() => void onApplyAllPending()}
             >

@@ -655,9 +655,20 @@ export function CatalogTabs(props: {
     setProductPage(0)
   }, [productSearchSubmitted, sectionFilter, categoryFilter, brandFilter, showInactiveProducts])
 
+  const lastProductsFetchKey = useRef<string>('')
   useEffect(() => {
+    const key = JSON.stringify({
+      page: productPage,
+      includeInactive: showInactiveProducts,
+      sectionId: sectionFilter,
+      categoryId: categoryFilter,
+      brandId: brandFilter,
+      search: productSearchSubmitted,
+    })
+    if (key === lastProductsFetchKey.current) return
+    lastProductsFetchKey.current = key
     void reloadProducts()
-  }, [reloadProducts])
+  }, [reloadProducts, productPage, showInactiveProducts, sectionFilter, categoryFilter, brandFilter, productSearchSubmitted])
 
   const [deactivateProductRow, setDeactivateProductRow] = useState<CatalogProductGridRow | null>(
     null,

@@ -44,6 +44,15 @@ function pickPrice(product: Record<string, unknown>): number | null {
 }
 
 function buildProductUrl(baseUrl: string, product: Record<string, unknown>): string | null {
+  const canonicalUrl =
+    typeof product.canonicalUrl === 'string' && product.canonicalUrl.trim() ?
+      product.canonicalUrl.trim()
+    : null
+  if (canonicalUrl) {
+    if (canonicalUrl.startsWith('http')) return canonicalUrl
+    return `${trimBase(baseUrl)}${canonicalUrl.startsWith('/') ? canonicalUrl : `/${canonicalUrl}`}`
+  }
+
   const linkText =
     typeof product.linkText === 'string' && product.linkText.trim() ?
       product.linkText.trim()

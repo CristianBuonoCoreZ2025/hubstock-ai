@@ -1,0 +1,365 @@
+/*
+ * UI de captura-cadenas / barrido — hub-stock-ai
+ * Métricas, cajas de acción, progreso y tarjetas de homologación.
+ * Sin colores ni layout ad-hoc en páginas TSX.
+ */
+
+@layer components {
+  /* ── Progreso (ancho dinámico vía --scrapping-progress en componente ScrappingProgressBar) ── */
+  .scrapping-progress-track {
+    @apply h-3 w-full overflow-hidden rounded-full bg-blue-200 dark:bg-blue-900;
+  }
+
+  .scrapping-progress-track--muted {
+    @apply h-2 bg-muted;
+  }
+
+  .scrapping-progress-fill {
+    height: 100%;
+    width: var(--scrapping-progress, 0%);
+    @apply rounded-full bg-blue-600 transition-[width] duration-300 ease-out;
+  }
+
+  .scrapping-progress-fill--primary {
+    @apply bg-primary;
+  }
+
+  .scrapping-progress-fill--empty {
+    width: 0%;
+  }
+
+  /* ── Cabeceras de estado del modal de barrido ── */
+  .scrapping-state-header {
+    @apply flex items-center gap-2 text-sm font-medium;
+  }
+
+  .scrapping-state-header--active {
+    @apply text-foreground;
+  }
+
+  .scrapping-state-header--active svg {
+    @apply text-blue-600 dark:text-blue-400;
+  }
+
+  .scrapping-state-header--paused {
+    @apply text-foreground;
+  }
+
+  .scrapping-state-header--paused svg {
+    @apply text-amber-600 dark:text-amber-400;
+  }
+
+  /* ── Grilla de métricas ── */
+  .scrapping-metrics-grid {
+    @apply grid grid-cols-3 gap-2;
+  }
+
+  .scrapping-metric {
+    @apply rounded-md border px-2 text-center;
+    box-shadow: none !important;
+  }
+
+  .scrapping-metric--lg {
+    @apply py-3;
+  }
+
+  .scrapping-metric--md {
+    @apply py-2;
+  }
+
+  .scrapping-metric-value {
+    @apply font-bold tabular-nums;
+  }
+
+  .scrapping-metric-value--lg {
+    @apply text-2xl;
+  }
+
+  .scrapping-metric-value--md {
+    @apply text-xl;
+  }
+
+  .scrapping-metric-label {
+    @apply text-[10px] font-medium uppercase tracking-wider;
+  }
+
+  /* Patrón original (commit f95c4b6): fondo /5 + borde /20, distinto color por métrica. */
+  .scrapping-metric--blue {
+    @apply border-blue-500/20 bg-blue-500/5;
+  }
+
+  .scrapping-metric--blue .scrapping-metric-value {
+    @apply text-blue-700 dark:text-blue-300;
+  }
+
+  .scrapping-metric--blue .scrapping-metric-label {
+    @apply text-blue-600 dark:text-blue-400;
+  }
+
+  .scrapping-metric--emerald {
+    @apply border-emerald-500/20 bg-emerald-500/5;
+  }
+
+  .scrapping-metric--emerald .scrapping-metric-value {
+    @apply text-emerald-600 dark:text-emerald-400;
+  }
+
+  .scrapping-metric--emerald .scrapping-metric-label {
+    @apply text-emerald-600 dark:text-emerald-400;
+  }
+
+  .scrapping-metric--amber {
+    @apply border-amber-500/20 bg-amber-500/5;
+  }
+
+  .scrapping-metric--amber .scrapping-metric-value {
+    @apply text-amber-600 dark:text-amber-400;
+  }
+
+  .scrapping-metric--amber .scrapping-metric-label {
+    @apply text-amber-600 dark:text-amber-400;
+  }
+
+  /* Fallidas: rojo (como en Git, no rose fuerte). */
+  .scrapping-metric--rose {
+    @apply border-red-500/20 bg-red-500/5;
+  }
+
+  .scrapping-metric--rose .scrapping-metric-value {
+    @apply text-red-600 dark:text-red-400;
+  }
+
+  .scrapping-metric--rose .scrapping-metric-label {
+    @apply text-red-600 dark:text-red-400;
+  }
+
+  /* Procesadas: slate (como en Git, no sky). */
+  .scrapping-metric--sky {
+    @apply border-slate-500/20 bg-slate-500/5;
+  }
+
+  .scrapping-metric--sky .scrapping-metric-value {
+    @apply text-slate-600 dark:text-slate-400;
+  }
+
+  .scrapping-metric--sky .scrapping-metric-label {
+    @apply text-slate-600 dark:text-slate-400;
+  }
+
+  /* ── Cajas de acción: misma caja neutra; solo el texto lleva color semántico ── */
+  .scrapping-action-box,
+  .scrapping-action-box--amber,
+  .scrapping-action-box--emerald,
+  .scrapping-action-box--rose,
+  .scrapping-action-box--neutral,
+  .scrapping-action-box--danger,
+  .scrapping-action-box--muted-disabled {
+    @apply space-y-2 rounded-md border border-border bg-background px-2 py-3 text-center;
+    box-shadow: none !important;
+  }
+
+  .scrapping-action-box--muted-disabled {
+    @apply opacity-60;
+  }
+
+  .scrapping-action-box-title {
+    @apply text-xs font-semibold text-foreground;
+  }
+
+  .scrapping-action-box-title--amber {
+    @apply text-amber-800 dark:text-amber-200;
+  }
+
+  .scrapping-action-box-title--emerald {
+    @apply text-emerald-800 dark:text-emerald-200;
+  }
+
+  .scrapping-action-box-title--rose {
+    @apply text-rose-800 dark:text-rose-200;
+  }
+
+  .scrapping-action-box-title--muted {
+    @apply text-muted-foreground;
+  }
+
+  .scrapping-action-hint {
+    @apply text-xs leading-snug text-muted-foreground;
+  }
+
+  .scrapping-action-box--wide {
+    @apply px-3;
+  }
+
+  .scrapping-actions-row {
+    @apply grid grid-cols-2 gap-3;
+  }
+
+  .scrapping-footnote {
+    @apply text-[10px] text-center;
+  }
+
+  .scrapping-footnote--active {
+    @apply text-muted-foreground;
+  }
+
+  .scrapping-warning-box {
+    @apply rounded-md border border-border bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-foreground;
+  }
+
+  .scrapping-warning-box strong {
+    @apply font-semibold text-foreground;
+  }
+
+  .scrapping-warning-box svg {
+    @apply text-rose-700 dark:text-rose-300;
+  }
+
+  .scrapping-info-panel {
+    @apply rounded-md border border-border bg-muted/40 px-3 py-2;
+  }
+
+  .scrapping-progress-labels {
+    @apply flex justify-between text-xs text-muted-foreground;
+  }
+
+  .scrapping-progress-host {
+    @apply w-full opacity-50;
+  }
+
+  .scrapping-progress-host--active {
+    @apply opacity-100;
+  }
+
+  .scrapping-progress-host-labels {
+    @apply flex justify-between text-[10px] text-muted-foreground;
+  }
+
+  /* ── Tarjetas pasos homologación ── */
+  /* No usar `group` en @apply: en Tailwind v4 es variante, no utilidad aplicable. */
+  .homolog-steps-grid {
+    @apply mt-4 grid items-stretch gap-4 md:grid-cols-3;
+  }
+
+  .homolog-step-card {
+    @apply relative flex h-full flex-col overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md;
+  }
+
+  .homolog-step-card--sky {
+    @apply border-sky-500/20;
+  }
+
+  .homolog-step-card--violet {
+    @apply border-dashed border-border opacity-90;
+  }
+
+  .homolog-step-card--violet-active {
+    @apply border-primary/30 opacity-100;
+  }
+
+  .homolog-step-card--emerald {
+    @apply border-dashed border-border opacity-90;
+  }
+
+  .homolog-step-card--emerald-active {
+    @apply border-emerald-500/30 opacity-100;
+  }
+
+  .homolog-step-card__accent {
+    @apply absolute inset-x-0 top-0 h-1;
+  }
+
+  .homolog-step-card__accent--sky {
+    @apply bg-linear-to-r from-sky-400 to-blue-500;
+  }
+
+  .homolog-step-card__accent--violet {
+    @apply bg-linear-to-r from-primary to-violet-500 opacity-30;
+  }
+
+  .homolog-step-card__accent--violet-active {
+    @apply opacity-100;
+  }
+
+  .homolog-step-card__accent--emerald {
+    @apply bg-linear-to-r from-emerald-400 to-teal-500 opacity-30;
+  }
+
+  .homolog-step-card__accent--emerald-active {
+    @apply opacity-100;
+  }
+
+  .homolog-step-card__icon-wrap {
+    @apply flex h-9 w-9 items-center justify-center rounded-xl shadow-md;
+  }
+
+  .homolog-step-card__icon-wrap--sky {
+    @apply bg-linear-to-br from-sky-400 to-blue-500 shadow-sky-500/20;
+  }
+
+  .homolog-step-card__icon-wrap--violet {
+    @apply bg-muted shadow-none;
+  }
+
+  .homolog-step-card__icon-wrap--violet-active {
+    @apply bg-linear-to-br from-primary to-violet-600 shadow-primary/25;
+  }
+
+  .homolog-step-card__icon-wrap--emerald {
+    @apply bg-muted shadow-none;
+  }
+
+  .homolog-step-card__icon-wrap--emerald-active {
+    @apply bg-linear-to-br from-emerald-500 to-teal-600 shadow-emerald-500/25;
+  }
+
+  .homolog-step-card__icon {
+    @apply h-4.5 w-4.5;
+  }
+
+  .homolog-step-card__icon--on-color {
+    @apply text-white;
+  }
+
+  .homolog-step-card__icon--muted {
+    @apply text-muted-foreground;
+  }
+
+  .homolog-step-card__head {
+    @apply flex items-center gap-3;
+  }
+
+  .homolog-step-card__kicker {
+    @apply text-[10px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+
+  .homolog-step-card__title {
+    @apply text-sm font-bold tracking-tight text-foreground;
+  }
+
+  .homolog-step-card__body {
+    @apply mt-3 flex-1 text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .homolog-step-card__btn {
+    @apply mt-auto h-10 w-full shrink-0 gap-2 px-4 text-xs font-medium;
+    & svg {
+      @apply h-4 w-4;
+    }
+  }
+
+  .homolog-callout {
+    @apply mt-3 rounded-md border px-3 py-2 text-xs;
+  }
+
+  .homolog-callout--amber {
+    @apply border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100;
+  }
+
+  .homolog-callout--sky {
+    @apply border-sky-500/40 bg-sky-500/10 text-sky-950 dark:text-sky-100;
+  }
+
+  .homolog-callout--emerald {
+    @apply border-emerald-500/40 bg-emerald-500/10 text-emerald-950 dark:text-emerald-100;
+  }
+}

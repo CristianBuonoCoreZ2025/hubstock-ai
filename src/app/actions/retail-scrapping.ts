@@ -61,7 +61,10 @@ import {
 import type { ScrappingSimilarityManualCandidate } from '@/server/retail/scrapping/scrapping-similarity-manual'
 import {
   appendScrappingPage,
+  cancelAllActiveScrappingRunsForFreshStart,
   cancelAllRunningScrappingRuns,
+  countBlockingScrappingRuns,
+  pauseAllRunningScrappingRunsForUser,
   claimNextScrappingPage,
   countRunningScrappingRuns,
   countScrappingPages,
@@ -70,7 +73,6 @@ import {
   fetchLatestScrappingRunForRetail,
   fetchRunningScrappingRunForRetail,
   fetchScrappingRunById,
-  filterScrappingUpsertRowsWithoutExistingRetailLinks,
   finalizeScrappingPage,
   forceClosePendingScrappingPagesAsDone,
   getMaxScrappingPageIndexForRun,
@@ -119,6 +121,17 @@ type ScrappingUpsertRow = {
 /** La cola dejó de crecer: `total_pages` fijado (≥ 0). Mientras es -1, no se cierra la corrida aunque no haya pendientes. */
 function isScrappingQueueSealed(totalPages: number | null | undefined): boolean {
   return typeof totalPages === 'number' && totalPages >= 0
+}
+
+/** Valor para UI cuando `scrapping_runs.total_pages` sigue en -1 (cola abierta en curso). */
+function resolveDisplayPagesTotal(
+  persistedTotalPages: number | null | undefined,
+  queueTotal: number,
+): number {
+  if (typeof persistedTotalPages === 'number' && persistedTotalPages >= 0) {
+    return persistedTotalPages
+  }
+  return Math.max(0, queueTotal)
 }
 
 /** Persiste `total_pages` en corrida: mantiene -1 hasta que la fase 2 selle; si no, refleja el tamaño actual de la cola. */
@@ -312,7 +325,7 @@ export async function prepareLiderScrappingRunAction(input: {
 
     const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
 
-    const { error: cancelErr } = await cancelAllRunningScrappingRuns(editor.admin)
+    const { error: cancelErr } = await cancelAllActiveScrappingRunsForFreshStart(editor.admin)
     if (cancelErr) {
       return { ok: false, error: getUserFriendlyErrorMessage(cancelErr, 'generic') }
     }
@@ -401,7 +414,7 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
     const tallies0 = await countScrappingPages(editor.admin, runId)
     if (tallies0.total > 0) {
       const tp = run.total_pages
-      if (tp == null) {
+      if (tp == null || tp === LIDER_SCRAPPING_QUEUE_TOTAL_PAGES_OPEN) {
         await editor.admin
           .from('scrapping_runs')
           .update({ total_pages: tallies0.total } as never)
@@ -715,12 +728,15 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
   }
 }
 
-/** Cancela corridas en curso y marca la cola pendiente o en proceso como fallida (detención explícita). */
+/**
+ * Pausa la corrida en curso: páginas `processing` vuelven a `pending` (no `failed`)
+ * y la corrida pasa a `paused` (no `cancelled`). El usuario podrá reanudar o terminar después.
+ */
 export async function stopLiderScrappingAction(): Promise<{ ok: true } | { ok: false; error: string }> {
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
   try {
-    const { error } = await cancelAllRunningScrappingRuns(editor.admin)
+    const { error } = await pauseAllRunningScrappingRunsForUser(editor.admin)
     if (error) {
       const realError = error instanceof Error ? error.message : JSON.stringify(error)
       console.error('[stopLiderScrappingAction] ERROR:', realError)
@@ -751,9 +767,21 @@ export type LiderBarridoContextOk = {
     done: number
     total: number
     totalPages: number | null
+    rowsInserted: number
   }
   /** Última corrida del retail (para ofrecer reintento de fallidas). */
-  latestRun: null | { runId: string; status: string; startedAt: string; failedPages: number }
+  latestRun: null | {
+    runId: string
+    status: string
+    startedAt: string
+    failedPages: number
+    pagesDone: number
+    /** Total de páginas para mostrar (nunca -1). */
+    pagesTotal: number
+    /** Páginas pendientes + en proceso (reanudables). */
+    pagesPending: number
+    rowsInserted: number
+  }
 }
 
 export type LiderBarridoContextResponse = LiderBarridoContextOk | { ok: false; error: string }
@@ -806,6 +834,18 @@ export async function getLiderScrappingBarridoContextAction(input: {
     }
     const anyRunningGlobally = (r.running_count ?? 0) > 0
 
+    /**
+     * Conteos frescos de filas en `scrapping` por run. Permite mostrar productos rescatados
+     * en el modal sin esperar a `scrapping_runs.rows_inserted` (que se persiste al cierre de wave).
+     */
+    const runningRowsInserted = r.running_run_id
+      ? (await selectScrappingRowCountForRun(editor.admin, r.running_run_id)) ?? 0
+      : 0
+    const latestRowsInserted = r.latest_run_id
+      ? (await selectScrappingRowCountForRun(editor.admin, r.latest_run_id)) ?? 0
+      : 0
+
+    const runningQueueTotal = Math.max(0, r.running_total ?? 0)
     const runningForRetail: LiderBarridoContextOk['runningForRetail'] = r.running_run_id ? {
       runId: r.running_run_id,
       startedAt: r.running_run_started_at ?? '',
@@ -813,15 +853,56 @@ export async function getLiderScrappingBarridoContextAction(input: {
       processing: r.running_processing ?? 0,
       failed: r.running_failed ?? 0,
       done: r.running_done ?? 0,
-      total: r.running_total ?? 0,
-      totalPages: r.running_total_pages ?? null,
+      total: runningQueueTotal,
+      totalPages: resolveDisplayPagesTotal(r.running_total_pages ?? null, runningQueueTotal),
+      rowsInserted: runningRowsInserted,
     } : null
+
+    /**
+     * Métricas adicionales del último run para el modal pausado/finalizado.
+     * Lectura directa de `scrapping_runs` + conteo vivo de `scrapping_pages` (el -1 en total_pages es solo interno).
+     */
+    let latestPagesDone = 0
+    let latestPersistedTotalPages: number | null = null
+    let latestQueue = { total: 0, pending: 0, processing: 0, done: 0, failed: 0 }
+    if (r.latest_run_id) {
+      const [{ data: latestRunRow }, queue] = await Promise.all([
+        editor.admin
+          .from('scrapping_runs')
+          .select('pages_done, total_pages')
+          .eq('id', r.latest_run_id)
+          .maybeSingle(),
+        countScrappingPages(editor.admin, r.latest_run_id),
+      ])
+      if (latestRunRow) {
+        const lr = latestRunRow as { pages_done: number | null; total_pages: number | null }
+        latestPagesDone = Math.max(0, lr.pages_done ?? 0)
+        latestPersistedTotalPages = lr.total_pages ?? null
+      }
+      latestQueue = queue
+      if (
+        r.latest_run_status === 'paused' &&
+        latestPersistedTotalPages === LIDER_SCRAPPING_QUEUE_TOTAL_PAGES_OPEN &&
+        latestQueue.total > 0
+      ) {
+        await editor.admin
+          .from('scrapping_runs')
+          .update({ total_pages: latestQueue.total } as never)
+          .eq('id', r.latest_run_id)
+          .eq('status', 'paused')
+        latestPersistedTotalPages = latestQueue.total
+      }
+    }
 
     const latestRun: LiderBarridoContextOk['latestRun'] = r.latest_run_id ? {
       runId: r.latest_run_id,
       status: r.latest_run_status ?? '',
       startedAt: r.latest_run_started_at ?? '',
-      failedPages: r.latest_failed ?? 0,
+      failedPages: Math.max(r.latest_failed ?? 0, latestQueue.failed),
+      pagesDone: latestPagesDone,
+      pagesTotal: resolveDisplayPagesTotal(latestPersistedTotalPages, latestQueue.total),
+      pagesPending: latestQueue.pending + latestQueue.processing,
+      rowsInserted: latestRowsInserted,
     } : null
 
     return {
@@ -837,7 +918,7 @@ export async function getLiderScrappingBarridoContextAction(input: {
   }
 }
 
-/** Reanuda una corrida `running` del retail (sin purgar ni crear run nueva). */
+/** Reanuda una corrida pausada/cancelada del retail (sin purgar ni crear run nueva). */
 export async function resumeLiderScrappingBarridoAction(input: {
   runId: string
   retailId: string
@@ -875,11 +956,64 @@ export async function resumeLiderScrappingBarridoAction(input: {
     if (String(run.retail_id ?? '') !== retailId) {
       return { ok: false, error: 'El retail no coincide con la ejecución registrada.' }
     }
-    if (run.status !== 'running') {
-      return { ok: false, error: 'Esa ejecución ya no está en curso; no se puede reanudar desde aquí.' }
+
+    const queue = await countScrappingPages(editor.admin, runId)
+    const resumablePages = queue.pending + queue.processing + queue.failed
+
+    if (run.status === 'completed') {
+      return { ok: false, error: 'La corrida ya está finalizada; no se puede reanudar.' }
     }
 
-  await resetStaleScrappingPagesProcessing(editor.admin, runId)
+    if (run.status !== 'running') {
+      if (run.status !== 'paused' && run.status !== 'cancelled') {
+        return { ok: false, error: 'Esa ejecución ya no está en curso; no se puede reanudar desde aquí.' }
+      }
+      if (resumablePages === 0) {
+        return { ok: false, error: 'No quedan páginas reanudables en esta corrida.' }
+      }
+
+      const blockingN = await countBlockingScrappingRuns(editor.admin, runId)
+      if (blockingN === -1) {
+        return { ok: false, error: 'No se pudo verificar si hay otra corrida activa. Intenta nuevamente.' }
+      }
+      if (blockingN > 0) {
+        return {
+          ok: false,
+          error: 'Hay otra corrida en curso o pausada. Detenela o iniciá un barrido nuevo antes de reanudar esta.',
+        }
+      }
+
+      if (run.status === 'cancelled' && queue.failed > 0) {
+        const { error: rqErr } = await requeueFailedScrappingPagesForRun(editor.admin, runId)
+        if (rqErr) {
+          return { ok: false, error: getUserFriendlyErrorMessage(rqErr, 'generic') }
+        }
+      }
+
+      const { error: reopenErr } = await reopenScrappingRunForQueueProcessing(editor.admin, runId)
+      if (reopenErr) {
+        return { ok: false, error: getUserFriendlyErrorMessage(reopenErr, 'generic') }
+      }
+
+      const runAfterReopen = await fetchScrappingRunById(editor.admin, runId)
+      if (runAfterReopen?.status !== 'running') {
+        return {
+          ok: false,
+          error:
+            'No se pudo reactivar la corrida en la base. Si falta la migración de estado `paused`, aplícala en Supabase.',
+        }
+      }
+    } else {
+      const otherRunning = await countRunningScrappingRuns(editor.admin)
+      if (otherRunning > 1) {
+        return {
+          ok: false,
+          error: 'Hay más de una corrida en curso. Detené el scrapping antes de continuar.',
+        }
+      }
+    }
+
+    await resetStaleScrappingPagesProcessing(editor.admin, runId)
     revalidatePath('/captura-cadenas-2')
     return {
       ok: true,
@@ -998,12 +1132,28 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
   if (!retailId) return { ok: false, error: 'Falta el retail.' }
 
   try {
-    const run = await fetchRunningScrappingRunForRetail(editor.admin, retailId)
+    /**
+     * «Terminar» se puede apretar tanto en estado activo (run en `running`) como en pausado
+     * (run en `cancelled` con páginas reanudables). En ambos casos cerramos toda la cola
+     * pendiente como `done` y dejamos la corrida en `completed`.
+     */
+    let run = await fetchRunningScrappingRunForRetail(editor.admin, retailId)
     if (!run) {
-      return { ok: false, error: 'No hay una corrida en curso para este retail.' }
+      const latest = await fetchLatestScrappingRunForRetail(editor.admin, retailId)
+      if (
+        latest &&
+        (latest.status === 'paused' ||
+          latest.status === 'cancelled' ||
+          latest.status === 'running')
+      ) {
+        run = latest
+      }
     }
-    if (run.status !== 'running') {
-      return { ok: false, error: 'La corrida ya no está en curso.' }
+    if (!run) {
+      return { ok: false, error: 'No hay una corrida activa o pausada para terminar.' }
+    }
+    if (run.status === 'completed') {
+      return { ok: false, error: 'La corrida ya está finalizada.' }
     }
 
     const closed = await forceClosePendingScrappingPagesAsDone(editor.admin, run.id)
@@ -1020,9 +1170,13 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
 
     const runSummary =
       closed.forcedPages > 0 ?
-        `Cola cerrada por el usuario: ${closed.forcedPages} listado(s) pendientes o en proceso se marcaron como listos sin descargar.`
+        `Cola cerrada por el usuario: ${closed.forcedPages} listado(s) pendientes/fallidos se marcaron como listos sin descargar.`
       : null
 
+    /**
+     * Filtro: cualquier estado distinto de `completed` para permitir cerrar tanto `running` como `cancelled`.
+     * Si entre tanto otro proceso ya la dejó en `completed`, no la pisamos.
+     */
     const { data: updated, error: upErr } = await editor.admin
       .from('scrapping_runs')
       .update({
@@ -1036,7 +1190,7 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
         error_message: runSummary,
       } as never)
       .eq('id', run.id)
-      .eq('status', 'running')
+      .neq('status', 'completed' as never)
       .select('id')
       .maybeSingle()
 
@@ -1044,7 +1198,7 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
     if (!updated) {
       return {
         ok: false,
-        error: 'La corrida dejó de estar en curso antes de guardar el cierre. Revisá el listado de corridas.',
+        error: 'La corrida ya estaba finalizada por otro proceso. Refrescá y volvé a intentar.',
       }
     }
 
@@ -1112,16 +1266,6 @@ export async function processLiderScrappingRunPageAction(input: {
     }
   }
 
-  // Helper para timeout de 2 segundos
-  const withTimeout = <T>(promise: Promise<T>, ms = 2000): Promise<T> => {
-    return Promise.race([
-      promise,
-      new Promise<T>((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout: operación excedió 2 segundos')), ms)
-      )
-    ])
-  }
-
   checkAborted() // Verificar al inicio
   const editor = await requireCatalogEditorRetail()
   if (!editor.ok) return { ok: false, error: editor.error }
@@ -1134,14 +1278,15 @@ export async function processLiderScrappingRunPageAction(input: {
 
   const benchStart = await loadRetailBenchmarks(editor.admin, run.retail_id)
 
-  if (run.status === 'completed' || run.status === 'cancelled') {
+  if (run.status === 'completed' || run.status === 'cancelled' || run.status === 'paused') {
     const t0 = await countScrappingPages(editor.admin, runId)
     const scrappingRowsTotal = await selectScrappingRowCountForRun(editor.admin, runId)
     const processed = t0.done + t0.failed
     return {
       ok: true,
       done: true,
-      cancelled: run.status === 'cancelled',
+      // El cliente trata `cancelled: true` como "termina sin error". Aplica también para `paused`.
+      cancelled: run.status === 'cancelled' || run.status === 'paused',
       pageIndex: run.pages_done,
       productsThisPage: 0,
       rowsWritten: 0,
@@ -1189,7 +1334,7 @@ export async function processLiderScrappingRunPageAction(input: {
     const runGate = await fetchScrappingRunById(editor.admin, runId)
     const waveDone =
       t.total > 0 && t.pending === 0 && t.processing === 0 && isScrappingQueueSealed(runGate?.total_pages)
-    if (runGate?.status === 'cancelled') {
+    if (runGate?.status === 'cancelled' || runGate?.status === 'paused') {
       const processed = t.done + t.failed
       const scrappingRowsTotal = await selectScrappingRowCountForRun(editor.admin, runId)
       const rowsTally = scrappingRowsTotal ?? Number(runGate.rows_inserted ?? 0)
@@ -1283,11 +1428,18 @@ export async function processLiderScrappingRunPageAction(input: {
   try {
     checkAborted() // Verificar antes de capturar la página
     checkAborted() // Verificar antes de fetch a Lider
-    const cap = await withTimeout(captureRetailPage(page.retailer, page.page_url), 2500)
+    // Sin timeout artificial: Lider puede tardar ~26s en fetch HTML (ver fetchLiderHtmlPage).
+    const cap = await captureRetailPage(page.retailer, page.page_url)
     if (!cap.ok) {
       pageError = cap.error
     } else {
       productsFound = cap.data.rawProductCount
+
+      if (productsFound > 0 && cap.data.snapshots.length === 0) {
+        console.warn(
+          `[scrapping] página ${page.page_index}: ${productsFound} producto(s) vistos pero ninguno pasó validación (precio/ref/título).`,
+        )
+      }
 
       const pathDerived = deriveSectionCategoryFromListingUrl(page.page_url, listingPathConfig ?? undefined)
       const rows = cap.data.snapshots.map((r) => ({
@@ -1309,20 +1461,13 @@ export async function processLiderScrappingRunPageAction(input: {
 
       if (rows.length > 0) {
         checkAborted()
-        const { kept: rowsFiltered, skipped: skippedLinked } = await withTimeout(
-          filterScrappingUpsertRowsWithoutExistingRetailLinks(editor.admin, page.retailer, rows),
-          1500
-        )
-        if (skippedLinked > 0) {
-          console.info(
-            `[scrapping] página ${page.page_index}: omitidos ${skippedLinked} producto(s) ya homologados (vínculo en catalog_retail_links).`,
-          )
-        }
+        // Insertar todo lo capturado: la depuración de ya homologados ocurre en paso 1
+        // (`purgeScrappingRowsThatAlreadyHaveRetailLink`), no durante el barrido.
         const chunk = 50
-        for (let i = 0; i < rowsFiltered.length; i += chunk) {
+        for (let i = 0; i < rows.length; i += chunk) {
           checkAborted() // Verificar antes de cada chunk de insert
-          const slice = rowsFiltered.slice(i, i + chunk) as ScrappingUpsertRow[]
-          const { error: upErr } = await withTimeout(upsertScrappingChunkForRun(editor.admin, slice), 1000)
+          const slice = rows.slice(i, i + chunk) as ScrappingUpsertRow[]
+          const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
           if (upErr) {
             lastPersistErr = upErr
             pageError = getUserFriendlyErrorMessage(upErr, 'generic')
@@ -1330,7 +1475,7 @@ export async function processLiderScrappingRunPageAction(input: {
           }
         }
         if (!pageError) {
-          rowsWritten = rowsFiltered.length
+          rowsWritten = rows.length
 
           // Insertar snapshots en catalog_retail_snapshots para historial de precios
           const snapshotRows = cap.data.snapshots.map((r) => ({
@@ -1357,7 +1502,7 @@ export async function processLiderScrappingRunPageAction(input: {
         checkAborted()
         const nextUrl = computeNextRetailPageUrl(page.page_url, page.retailer, cap.data.rawProductCount)
         if (nextUrl) {
-          const app = await withTimeout(appendScrappingPage(editor.admin, runId, page.retailer, nextUrl), 1000)
+          const app = await appendScrappingPage(editor.admin, runId, page.retailer, nextUrl)
           if (app.error) {
             expandError = getUserFriendlyErrorMessage(app.error, 'generic')
           }
@@ -1408,19 +1553,30 @@ export async function processLiderScrappingRunPageAction(input: {
     scrappingRowsTotal = await selectScrappingRowCountForRun(editor.admin, runId)
   }
 
-  /** Conteo en BD (válido con varios workers en paralelo; no sumar sobre `rows_inserted` leído al inicio). */
-  const rowsCountForRun = waveDone
-    ? (await selectScrappingRowCountForRun(editor.admin, runId)) ?? Number(run.rows_inserted ?? 0)
-    : Number(run.rows_inserted ?? 0)
+  /**
+   * Conteo en BD por respuesta, igual que `countScrappingPages` para las cajas de páginas.
+   * Esto mantiene la caja "Productos" del modal sincronizada con la realidad en cada respuesta del worker,
+   * en vez de quedarse con `run.rows_inserted` leído al inicio (valor fantasma hasta el cierre de wave).
+   */
+  const rowsCountForRun =
+    (await selectScrappingRowCountForRun(editor.admin, runId)) ?? Number(run.rows_inserted ?? 0)
 
   let benchOut = benchStart
   const runBeforeBench = await fetchScrappingRunById(editor.admin, runId)
-  if (waveDone && runBeforeBench?.status !== 'cancelled') {
+  if (
+    waveDone &&
+    runBeforeBench?.status !== 'cancelled' &&
+    runBeforeBench?.status !== 'paused'
+  ) {
     benchOut = await refreshRetailBenchmarksAfterWaveClose(editor.admin, run.retail_id, runId, t2.total)
   }
 
   const totalPagesDb = resolveScrappingRunTotalPagesForDb(waveDone, t2.total, runForSeal?.total_pages)
 
+  /**
+   * Solo actualizamos si la corrida sigue en `running`: si entre tanto el usuario la pausó (`paused`)
+   * o canceló (`cancelled`), no la pisamos. Eso preserva el estado correcto del Detener / fresh start.
+   */
   await editor.admin
     .from('scrapping_runs')
     .update({
@@ -1434,10 +1590,10 @@ export async function processLiderScrappingRunPageAction(input: {
       error_message: waveDone ? runSummary : null,
     } as never)
     .eq('id', runId)
-    .neq('status', 'cancelled' as never)
+    .eq('status', 'running' as never)
 
   const runAfter = await fetchScrappingRunById(editor.admin, runId)
-  const cancelledFlag = runAfter?.status === 'cancelled'
+  const cancelledFlag = runAfter?.status === 'cancelled' || runAfter?.status === 'paused'
 
   const scrappingRowsTally = waveDone ? (scrappingRowsTotal ?? rowsCountForRun) : rowsCountForRun
 
@@ -1640,18 +1796,18 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
   if (!editor.ok) return { ok: false, error: editor.error }
 
   try {
-    const runningN = await countRunningScrappingRuns(editor.admin)
-    if (runningN === -1) {
+    const blockingN = await countBlockingScrappingRuns(editor.admin)
+    if (blockingN === -1) {
       return {
         ok: false,
         error: 'No se pudo verificar si hay scrapping en curso. Intenta nuevamente.',
       }
     }
-    if (runningN !== 0) {
+    if (blockingN !== 0) {
       return {
         ok: false,
         error:
-          'Hay una corrida de scrapping en curso. Finalizá el barrido (hasta que la corrida quede completada) o usá «Dar por finalizado el scrapping pendiente» en el plan del barrido antes de homologar.',
+          'Hay una corrida de scrapping en curso o pausada. Finalizá o retomá el barrido antes de homologar.',
       }
     }
 

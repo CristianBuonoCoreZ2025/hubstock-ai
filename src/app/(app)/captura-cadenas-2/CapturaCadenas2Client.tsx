@@ -35,6 +35,7 @@ import { ScrappingSimilarityReviewModal } from '@/app/(app)/captura-cadenas-2/sc
 import { HomologationWizardModal } from '@/app/(app)/captura-cadenas-2/homologation-wizard-modal'
 import { CreateNewProductsModal } from '@/app/(app)/captura-cadenas-2/create-new-products-modal'
 import { Button } from '@/components/ui/button'
+import { ScrappingProgressBar } from '@/components/scrapping/ScrappingProgressBar'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { requestLogger, withLogging } from '@/lib/request-logger'
@@ -225,6 +226,7 @@ function scrappingRunStatusLabel(status: string, totalPages?: number | null): st
     return 'En curso · ampliando cola…'
   }
   if (s === 'completed') return 'Completada'
+  if (s === 'paused') return 'Pausada'
   if (s === 'cancelled') return 'Cancelada'
   if (s === 'running') return 'En curso'
   return status || '—'
@@ -853,7 +855,7 @@ export function CapturaCadenas2Client() {
 
       const phase2Promise = barridoApiPhase2Seal({
         runId: prepared.runId,
-        retailId: selectedRetailId,
+        retailId: prepared.retailId,
         maxPages: getMaxScrappingPages(),
       }, sync.abortController.signal).catch(() => ({ ok: false as const, error: 'Fase 2 cancelada por el usuario.' } as BarridoPhase2SealResponse))
 
@@ -1115,101 +1117,96 @@ export function CapturaCadenas2Client() {
           {barridoPlanCtx && barridoPlanCtx.ok ?
             <div className="space-y-4 text-sm">
               {(() => {
-                const isConcluded =
-                  !barridoPlanCtx.latestRun ||
-                  barridoPlanCtx.latestRun.status === 'completed' ||
-                  barridoPlanCtx.latestRun.status === 'cancelled'
                 const isActive = fullSweepBusy || barridoPlanCtx?.runningForRetail
-                const isPaused = !isActive && !isConcluded
+                /**
+                 * Pausado: corrida con status `paused` (Detener) o `cancelled` legacy con páginas
+                 * reanudables (compat con corridas detenidas antes de migrar a `paused`).
+                 */
+                const latestRunStatus = barridoPlanCtx.latestRun?.status
+                const latestFailedPages = barridoPlanCtx.latestRun?.failedPages ?? 0
+                const latestPendingPages = barridoPlanCtx.latestRun?.pagesPending ?? 0
+                const isPausedReanudable =
+                  !isActive &&
+                  (latestRunStatus === 'paused' ||
+                    (latestRunStatus === 'cancelled' &&
+                      (latestFailedPages > 0 || latestPendingPages > 0)))
+                const isConcluded = !isActive && !isPausedReanudable
+                const isPaused = isPausedReanudable
 
                 if (isActive) {
+                  const progressPct =
+                    queuePagesTotal > 0 ?
+                      Math.round((queuePagesProcessed / queuePagesTotal) * 100)
+                    : 0
                   return (
                     <div className="space-y-4">
-                      {/* Header */}
-                      <div className="flex items-center gap-2 text-sm font-medium text-blue-900 dark:text-blue-100">
+                      <div className="scrapping-state-header scrapping-state-header--active">
                         <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
                         Barrido en ejecución · {currentRetailLabel || 'Cargando…'}
                       </div>
 
-                      {/* Dashboard visual */}
-                      <div className="grid grid-cols-3 gap-2">
-                        <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{queuePagesTotal.toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Páginas total</p>
+                      <div className="scrapping-metrics-grid">
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--blue">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">{queuePagesTotal.toLocaleString('es-CL')}</p>
+                          <p className="scrapping-metric-label">Páginas total</p>
                         </div>
-                        <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">{scraperRowsTotal.toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Productos</p>
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--blue">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">
+                            {Math.max(scraperRowsTotal, barridoPlanCtx.runningForRetail?.rowsInserted ?? 0).toLocaleString('es-CL')}
+                          </p>
+                          <p className="scrapping-metric-label">Productos</p>
                         </div>
-                        <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{Math.max(0, queuePagesTotal - queuePagesProcessed).toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-blue-600 dark:text-blue-400">Restantes</p>
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--amber">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">{Math.max(0, queuePagesTotal - queuePagesProcessed).toLocaleString('es-CL')}</p>
+                          <p className="scrapping-metric-label">Restantes</p>
                         </div>
-                        <div className="rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">{queuePagesOk.toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Ok</p>
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--emerald">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">{queuePagesOk.toLocaleString('es-CL')}</p>
+                          <p className="scrapping-metric-label">Ok</p>
                         </div>
-                        <div className="rounded-md border border-red-500/20 bg-red-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-red-600 dark:text-red-400">{queuePagesFailed.toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-red-600 dark:text-red-400">Fallidas</p>
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--rose">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">{queuePagesFailed.toLocaleString('es-CL')}</p>
+                          <p className="scrapping-metric-label">Fallidas</p>
                         </div>
-                        <div className="rounded-md border border-slate-500/20 bg-slate-500/5 px-2 py-3 text-center">
-                          <p className="text-2xl font-bold text-slate-600 dark:text-slate-400">{Math.max(0, queuePagesProcessed).toLocaleString('es-CL')}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-slate-600 dark:text-slate-400">Procesadas</p>
+                        <div className="scrapping-metric scrapping-metric--lg scrapping-metric--sky">
+                          <p className="scrapping-metric-value scrapping-metric-value--lg">{Math.max(0, queuePagesProcessed).toLocaleString('es-CL')}</p>
+                          <p className="scrapping-metric-label">Procesadas</p>
                         </div>
                       </div>
 
-                      {/* Barra de progreso */}
                       <div className="space-y-1">
-                        <div className="flex justify-between text-xs text-blue-800 dark:text-blue-200">
+                        <div className="scrapping-progress-labels">
                           <span>{queuePagesProcessed.toLocaleString('es-CL')} de {queuePagesTotal.toLocaleString('es-CL')}</span>
-                          <span>{queuePagesTotal > 0 ? Math.round((queuePagesProcessed / queuePagesTotal) * 100) : 0}%</span>
+                          <span>{progressPct}%</span>
                         </div>
-                        <div className="h-3 w-full overflow-hidden rounded-full bg-blue-200 dark:bg-blue-900">
-                          <div
-                            className="h-full rounded-full bg-blue-600 transition-[width] duration-300 ease-out"
-                            style={{ width: queuePagesTotal > 0 ? `${Math.min(100, (queuePagesProcessed / queuePagesTotal) * 100)}%` : '0%' }}
-                          />
-                        </div>
+                        <ScrappingProgressBar
+                          percent={progressPct}
+                          active={queuePagesTotal > 0}
+                        />
                       </div>
 
-                      {/* Acciones: Retomar (apagado) + Cancelar */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2 rounded-md border border-slate-500/30 bg-slate-500/5 px-2 py-3 text-center opacity-60">
-                          <p className="text-xs font-medium text-muted-foreground">Retomar</p>
-                          <Button
-                            type="button"
-                            className="btn-run btn-lg w-full"
-                            disabled
-                          >
-                            <Play className="mr-2 h-4 w-4" aria-hidden />
-                            Continuar
-                          </Button>
-                          <p className="text-[10px] text-muted-foreground">Ya se está ejecutando</p>
-                        </div>
-
-                        <div className="space-y-2 rounded-md border border-red-500/30 bg-red-500/5 px-2 py-3 text-center">
-                          <p className="text-xs font-medium text-foreground">Cancelar</p>
-                          <Button
-                            type="button"
-                            className="btn-danger btn-lg w-full"
-                            disabled={stopBusy}
-                            onClick={() => {
-                              requestLogger.logClick('Detener scrapping (desde modal)')
-                              void onDetenerScrapping()
-                            }}
-                          >
-                            {stopBusy ? (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
-                            ) : (
-                              <Square className="mr-2 h-4 w-4" aria-hidden />
-                            )}
-                            Detener
-                          </Button>
-                        </div>
+                      <div className="scrapping-action-box scrapping-action-box--wide scrapping-action-box--amber">
+                        <p className="scrapping-action-box-title scrapping-action-box-title--amber">Detener</p>
+                        <Button
+                          type="button"
+                          className="btn-warn btn-lg-block"
+                          disabled={stopBusy}
+                          onClick={() => {
+                            requestLogger.logClick('Detener scrapping (desde modal)')
+                            void onDetenerScrapping()
+                          }}
+                        >
+                          {stopBusy ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                          ) : (
+                            <Square className="mr-2 h-4 w-4" aria-hidden />
+                          )}
+                          Detener
+                        </Button>
+                        <p className="scrapping-action-hint">Pausa la corrida; podés reanudar después</p>
                       </div>
 
-                      <p className="text-[10px] text-blue-700 dark:text-blue-300 text-center">
+                      <p className="scrapping-footnote scrapping-footnote--active">
                         El barrido continúa en segundo plano si cerrás este modal.
                       </p>
                     </div>
@@ -1219,30 +1216,53 @@ export function CapturaCadenas2Client() {
                 if (isPaused) {
                   return (
                     <div className="space-y-4">
-                      {/* Header */}
-                      <div className="flex items-center gap-2 text-sm font-medium text-amber-900 dark:text-amber-100">
+                      <div className="scrapping-state-header scrapping-state-header--paused">
                         <AlertTriangle className="h-4 w-4 text-amber-600" aria-hidden />
-                        Corrida pendiente · {currentRetailLabel || 'Cargando…'}
+                        Corrida pausada · {currentRetailLabel || 'Cargando…'}
                       </div>
 
-                      {/* Info ultima corrida */}
-                      {barridoPlanCtx.latestRun ? (
-                        <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
-                          <p className="font-medium">Última corrida registrada</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            Estado: {barridoPlanCtx.latestRun.status} · Fallidas en cola:{' '}
-                            {barridoPlanCtx.latestRun.failedPages}
-                          </p>
-                        </div>
-                      ) : null}
+                      {(() => {
+                        const lr = barridoPlanCtx.latestRun
+                        if (!lr) return null
+                        const total = lr.pagesTotal
+                        const pendingResumable = lr.pagesPending
+                        const okPages = Math.max(0, lr.pagesDone - lr.failedPages)
+                        return (
+                          <div className="scrapping-metrics-grid">
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--blue">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{total.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Páginas total</p>
+                            </div>
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--blue">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{lr.rowsInserted.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Productos</p>
+                            </div>
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--amber">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{pendingResumable.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Reanudables</p>
+                            </div>
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--emerald">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{okPages.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Ok</p>
+                            </div>
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--rose">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{lr.failedPages.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Fallidas</p>
+                            </div>
+                            <div className="scrapping-metric scrapping-metric--lg scrapping-metric--sky">
+                              <p className="scrapping-metric-value scrapping-metric-value--lg">{lr.pagesDone.toLocaleString('es-CL')}</p>
+                              <p className="scrapping-metric-label">Procesadas</p>
+                            </div>
+                          </div>
+                        )
+                      })()}
 
-                      {/* Acciones: Retomar + Concluir forzado */}
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-3 text-center">
-                          <p className="text-xs font-medium text-foreground">Retomar</p>
+                      <div className="scrapping-actions-row">
+                        <div className="scrapping-action-box scrapping-action-box--emerald">
+                          <p className="scrapping-action-box-title scrapping-action-box-title--emerald">Reanudar</p>
                           <Button
                             type="button"
-                            className="btn-run btn-lg w-full"
+                            className="btn-emerald btn-lg-block"
                             disabled={barridoPlanActionBusy}
                             onClick={() => {
                               const runId = barridoPlanCtx?.latestRun?.runId
@@ -1254,15 +1274,16 @@ export function CapturaCadenas2Client() {
                             ) : (
                               <Play className="mr-2 h-4 w-4" aria-hidden />
                             )}
-                            Continuar
+                            Reanudar
                           </Button>
+                          <p className="scrapping-action-hint">Continúa con las páginas pendientes</p>
                         </div>
 
-                        <div className="space-y-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-3 text-center">
-                          <p className="text-xs font-medium text-foreground">Cierre irreversible</p>
+                        <div className="scrapping-action-box scrapping-action-box--rose">
+                          <p className="scrapping-action-box-title scrapping-action-box-title--rose">Terminar</p>
                           <Button
                             type="button"
-                            className="btn-warn btn-lg w-full"
+                            className="btn-danger btn-lg-block"
                             disabled={forceFinalizeBusy}
                             onClick={() => void onForceFinalizeScrappingFromModal()}
                           >
@@ -1271,50 +1292,84 @@ export function CapturaCadenas2Client() {
                             ) : (
                               <AlertTriangle className="mr-2 h-4 w-4" aria-hidden />
                             )}
-                            Concluir forzado
+                            Terminar
                           </Button>
+                          <p className="scrapping-action-hint">Cierra la corrida sin descargar más</p>
                         </div>
                       </div>
 
-                      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
+                      <div className="scrapping-warning-box">
                         <AlertTriangle className="inline mr-1 h-3 w-3" aria-hidden />
-                        <strong>Advertencia:</strong> &ldquo;Concluir forzado&rdquo; marca todas las páginas pendientes o en proceso como completadas sin descargar. No se podrá retomar el barrido después. Es irreversible.
+                        <strong>Advertencia:</strong> &ldquo;Terminar&rdquo; marca todas las páginas pendientes o en proceso como completadas sin descargar. No se podrá retomar el barrido después. Es irreversible.
                       </div>
                     </div>
                   )
                 }
 
-                /* === Estado Cerrado: Nuevo + Borrar === */
                 return (
                   <div className="space-y-4">
-                    {/* Warning si hay running en otro retail */}
                     {barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail && (
-                      <p className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-amber-950 dark:text-amber-100 text-xs">
+                      <p className="homolog-callout homolog-callout--amber">
                         Hay una corrida en curso en otro retail. Detené el scrapping antes de iniciar un barrido nuevo
                         o vaciar tablas desde acá.
                       </p>
                     )}
 
-                    {/* Info ultima corrida */}
                     {barridoPlanCtx.latestRun ? (
-                      <div className="rounded-md border border-border bg-muted/40 px-3 py-2">
-                        <p className="font-medium">Última corrida registrada</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Estado: {barridoPlanCtx.latestRun.status} · Fallidas en cola:{' '}
-                          {barridoPlanCtx.latestRun.failedPages}
-                        </p>
-                      </div>
+                      <>
+                        <div className="scrapping-info-panel">
+                          <p className="font-medium">Última corrida registrada</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Estado: {barridoPlanCtx.latestRun.status}
+                          </p>
+                        </div>
+
+                        {(() => {
+                          const lr = barridoPlanCtx.latestRun
+                          if (!lr) return null
+                          const total = lr.pagesTotal
+                          const okPages = Math.max(0, lr.pagesDone - lr.failedPages)
+                          const restantes = Math.max(0, total - lr.pagesDone)
+                          return (
+                            <div className="scrapping-metrics-grid">
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--blue">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{total.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Páginas total</p>
+                              </div>
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--blue">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{lr.rowsInserted.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Productos</p>
+                              </div>
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--rose">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{lr.failedPages.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Fallidas</p>
+                              </div>
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--emerald">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{okPages.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Ok</p>
+                              </div>
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--sky">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{lr.pagesDone.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Procesadas</p>
+                              </div>
+                              <div className="scrapping-metric scrapping-metric--md scrapping-metric--amber">
+                                <p className="scrapping-metric-value scrapping-metric-value--md">{restantes.toLocaleString('es-CL')}</p>
+                                <p className="scrapping-metric-label">Restantes</p>
+                              </div>
+                            </div>
+                          )
+                        })()}
+                      </>
                     ) : (
                       <p className="text-muted-foreground">No hay corridas previas para este retail.</p>
                     )}
 
-                    {/* Acciones: Nuevo + Borrar (siempre 2 cajas) */}
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-2 rounded-md border border-border bg-muted/20 px-2 py-3 text-center">
-                        <p className="text-xs font-medium text-foreground">Nuevo barrido</p>
+                    <div className="scrapping-actions-row">
+                      <div className="scrapping-action-box scrapping-action-box--neutral">
+                        <p className="scrapping-action-box-title">Nuevo barrido</p>
                         <Button
                           type="button"
-                          className="btn-run btn-lg w-full"
+                          className="btn-new btn-lg-block"
                           disabled={
                             barridoPlanActionBusy ||
                             (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)
@@ -1328,14 +1383,15 @@ export function CapturaCadenas2Client() {
                           )}
                           Nuevo
                         </Button>
+                        <p className="scrapping-action-hint">Empieza una corrida desde cero</p>
                       </div>
 
-                      {barridoPlanCtx.globalScrappingPages > 0 ? (
-                        <div className="space-y-2 rounded-md border border-destructive/30 bg-destructive/5 px-2 py-3 text-center">
-                          <p className="text-xs font-medium text-foreground">({barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')})</p>
+                      {barridoPlanCtx.globalScrappingProducts > 0 || barridoPlanCtx.globalScrappingPages > 0 ? (
+                        <div className="scrapping-action-box scrapping-action-box--danger">
+                          <p className="scrapping-action-box-title">Borrar</p>
                           <Button
                             type="button"
-                            className="btn-danger btn-lg w-full"
+                            className="btn-danger btn-lg-block"
                             disabled={
                               purgeIdleBusy ||
                               barridoPlanActionBusy ||
@@ -1350,10 +1406,22 @@ export function CapturaCadenas2Client() {
                             )}
                             Borrar
                           </Button>
+                          <p className="scrapping-action-hint tabular-nums">
+                            {barridoPlanCtx.globalScrappingProducts.toLocaleString('es-CL')} prod · {barridoPlanCtx.globalScrappingPages.toLocaleString('es-CL')} pág
+                          </p>
                         </div>
                       ) : (
-                        <div className="rounded-md border border-border bg-muted/20 px-2 py-3 text-center opacity-50">
-                          <p className="text-xs text-muted-foreground">Sin datos</p>
+                        <div className="scrapping-action-box scrapping-action-box--muted-disabled">
+                          <p className="scrapping-action-box-title--muted">Borrar</p>
+                          <Button
+                            type="button"
+                            className="btn-danger btn-lg-block"
+                            disabled
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+                            Borrar
+                          </Button>
+                          <p className="scrapping-action-hint">Sin datos para borrar</p>
                         </div>
                       )}
                     </div>
@@ -1374,7 +1442,7 @@ export function CapturaCadenas2Client() {
           <DialogFooter className="sm:justify-end">
             <Button
               type="button"
-              className="btn-save btn-sm"
+              className="btn-close btn-sm"
               onClick={() => {
                 setBarridoPlanOpen(false)
                 setBarridoPlanCtx(null)
@@ -1429,14 +1497,14 @@ export function CapturaCadenas2Client() {
 
         {/* Barra de progreso - full width */}
         <div className="mt-4 space-y-1">
-          <div className="flex justify-between text-[10px] text-muted-foreground">
+          <div className="scrapping-progress-host-labels">
             <span>
               Avance: páginas procesadas del total en cola. La barra no retrocede si la cola crece.
             </span>
             <span className="tabular-nums">{fullSweepBusy ? `${progressBarPercent}%` : '—'}</span>
           </div>
           <div
-            className={`h-2 w-full overflow-hidden rounded-full bg-muted ${fullSweepBusy ? '' : 'opacity-50'}`}
+            className={cn('scrapping-progress-host', fullSweepBusy && 'scrapping-progress-host--active')}
             role={fullSweepBusy ? 'progressbar' : undefined}
             aria-valuenow={fullSweepBusy ? progressBarPercent : undefined}
             aria-valuemin={fullSweepBusy ? 0 : undefined}
@@ -1447,9 +1515,10 @@ export function CapturaCadenas2Client() {
               : 'Barra inactiva: solo muestra avance durante un barrido en curso'
             }
           >
-            <div
-              className={`h-full rounded-full bg-primary transition-[width] duration-300 ease-out ${fullSweepBusy ? '' : 'w-0'}`}
-              style={{ width: fullSweepBusy ? `${progressBarPercent}%` : '0%' }}
+            <ScrappingProgressBar
+              percent={progressBarPercent}
+              active={fullSweepBusy}
+              tone="primary"
             />
           </div>
           {fullSweepBusy && retailMaxPages > 0 ? (
@@ -1603,13 +1672,13 @@ export function CapturaCadenas2Client() {
           {(canStopScrapping || stopBusy) && (
             <Button
               type="button"
-              className="btn-danger btn-sm"
+              className="btn-warn btn-sm"
               onClick={() => {
                 requestLogger.logClick('Detener scrapping')
                 void onDetenerScrapping()
               }}
               disabled={!canStopScrapping || stopBusy || runsBusy}
-              title="Cancela la corrida en curso y marca las páginas pendientes como fallidas"
+              title="Pausa la corrida en curso; podés reanudarla después"
               aria-label="Detener scrapping"
             >
               {stopBusy ? (
@@ -1695,7 +1764,11 @@ export function CapturaCadenas2Client() {
                         : r.status === 'running' &&
                             r.total_pages === SCRAPPING_RUN_TOTAL_PAGES_QUEUE_OPEN ?
                           <span className="text-muted-foreground">Ampliando cola…</span>
-                        : (r.total_pages ?? '—')}
+                        : (r.total_pages != null && r.total_pages >= 0 ?
+                            r.total_pages.toLocaleString('es-CL')
+                          : r.status === 'paused' || r.status === 'completed' || r.status === 'cancelled' ?
+                            (r.pages_done ?? 0).toLocaleString('es-CL')
+                          : '—')}
                       </td>
                       <td className="px-3 py-2 align-top tabular-nums text-foreground">
                         {(r.pages_ok ?? 0).toLocaleString('es-CL')} / {(r.pages_failed ?? 0).toLocaleString('es-CL')}
@@ -1725,7 +1798,7 @@ export function CapturaCadenas2Client() {
         </div>
 
         {homologacionBloqueada ?
-          <p className="mt-3 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100">
+          <p className="homolog-callout homolog-callout--amber">
             {runsBusy ?
               'Cargando estado de corridas…'
             : fullSweepBusy ?
@@ -1744,36 +1817,34 @@ export function CapturaCadenas2Client() {
         : null}
 
         {paso2Destacado ?
-          <p className="mt-3 rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-950 dark:text-sky-100">
+          <p className="homolog-callout homolog-callout--sky">
             Hay productos pendientes de clasificar. Abrí el paso 2 para revisar los candidatos más parecidos
             por marca, nombre y precio. Si ninguno corresponde, marcá «No / nuevo» para crear un producto nuevo.
           </p>
         : !homologacionBloqueada && scrappingPendingHomologacion === 0 ?
-          <p className="mt-3 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-950 dark:text-emerald-100">
+          <p className="homolog-callout homolog-callout--emerald">
             Todos los productos capturados fueron procesados. No quedan pendientes.
           </p>
         : null}
 
-        <div className="mt-4 grid items-stretch gap-4 md:grid-cols-3">
-          {/* ━━━ PASO 1: Coincidencias exactas ━━━ */}
-          <div className="group relative flex h-full flex-col overflow-hidden rounded-xl border border-sky-500/20 bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
-            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-400 to-blue-500" />
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-sky-400 to-blue-500 shadow-md shadow-sky-500/20">
-                <Link2 className="h-4.5 w-4.5 text-white" />
+        <div className="homolog-steps-grid">
+          <div className="homolog-step-card homolog-step-card--sky">
+            <div className="homolog-step-card__accent homolog-step-card__accent--sky" />
+            <div className="homolog-step-card__head">
+              <div className="homolog-step-card__icon-wrap homolog-step-card__icon-wrap--sky">
+                <Link2 className="homolog-step-card__icon homolog-step-card__icon--on-color" />
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Paso 1</p>
-                <p className="text-sm font-bold tracking-tight text-foreground">Coincidencias exactas</p>
+                <p className="homolog-step-card__kicker">Paso 1</p>
+                <p className="homolog-step-card__title">Coincidencias exactas</p>
               </div>
             </div>
-            <p className="mt-3 flex-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="homolog-step-card__body">
               Quita de scrapping lo que ya está en tu catálogo y homologa por nombre + marca exactos al maestro.
             </p>
             <Button
               type="button"
-              variant="default"
-              className="btn-sky mt-auto btn-lg shrink-0"
+              className="btn-run homolog-step-card__btn"
               onClick={() => void onApplyExactCatalogMatches()}
               disabled={homologacionBloqueada || exactMatchBusy}
               title={
@@ -1789,31 +1860,42 @@ export function CapturaCadenas2Client() {
             </Button>
           </div>
 
-          {/* ━━━ PASO 2: Homologación inteligente ━━━ */}
           <div
-            className={`group relative flex h-full flex-col overflow-hidden rounded-xl border p-5 shadow-sm transition-all hover:shadow-md ${
-              paso2Destacado
-                ? 'border-primary/30 bg-card shadow-primary/5'
-                : 'border-dashed border-border bg-card opacity-90'
-            }`}
+            className={cn(
+              'homolog-step-card',
+              paso2Destacado ? 'homolog-step-card--violet-active' : 'homolog-step-card--violet',
+            )}
           >
-            <div className={`absolute inset-x-0 top-0 h-1 bg-linear-to-r from-primary to-violet-500 ${paso2Destacado ? 'opacity-100' : 'opacity-30'}`} />
-            <div className="flex items-center gap-3">
-              <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
-                paso2Destacado
-                  ? 'bg-linear-to-br from-primary to-violet-600 shadow-primary/25'
-                  : 'bg-muted shadow-none'
-              }`}>
-                <Sparkles className={`h-4.5 w-4.5 ${paso2Destacado ? 'text-white' : 'text-muted-foreground'}`} />
+            <div
+              className={cn(
+                'homolog-step-card__accent homolog-step-card__accent--violet',
+                paso2Destacado && 'homolog-step-card__accent--violet-active',
+              )}
+            />
+            <div className="homolog-step-card__head">
+              <div
+                className={cn(
+                  'homolog-step-card__icon-wrap',
+                  paso2Destacado ?
+                    'homolog-step-card__icon-wrap--violet-active'
+                  : 'homolog-step-card__icon-wrap--violet',
+                )}
+              >
+                <Sparkles
+                  className={cn(
+                    'homolog-step-card__icon',
+                    paso2Destacado ? 'homolog-step-card__icon--on-color' : 'homolog-step-card__icon--muted',
+                  )}
+                />
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="homolog-step-card__kicker">
                   {paso2Destacado ? 'Paso 2 · Disponible' : 'Paso 2 · Sin cola'}
                 </p>
-                <p className="text-sm font-bold tracking-tight text-foreground">Homologación inteligente</p>
+                <p className="homolog-step-card__title">Homologación inteligente</p>
               </div>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="homolog-step-card__body">
               Clasificación automática de productos con asistencia de IA y revisión de casos dudosos.
             </p>
 
@@ -1825,18 +1907,24 @@ export function CapturaCadenas2Client() {
                 <span className="inline-flex items-center gap-1 rounded-md border border-amber-500/15 bg-amber-500/5 px-2 py-0.5 text-[10px] font-bold tabular-nums text-amber-700">
                   {homologDash.grayIaQueued.toLocaleString('es-CL')} <span className="font-normal opacity-70">gris IA</span>
                 </span>
-                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
-                  homologDash.userReview > 0
-                    ? 'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
-                    : 'border-violet-500/15 bg-violet-500/5 text-violet-700'
-                }`}>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums',
+                    homologDash.userReview > 0 ?
+                      'border-violet-500/40 bg-violet-500/10 text-violet-700 dark:text-violet-300'
+                    : 'border-violet-500/15 bg-violet-500/5 text-violet-700',
+                  )}
+                >
                   {homologDash.userReview.toLocaleString('es-CL')} <span className="font-normal opacity-70">revisar</span>
                 </span>
-                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
-                  homologDash.pendingNew > 0
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700'
-                }`}>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums',
+                    homologDash.pendingNew > 0 ?
+                      'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700',
+                  )}
+                >
                   {homologDash.pendingNew.toLocaleString('es-CL')} <span className="font-normal opacity-70">nuevos</span>
                 </span>
               </div>
@@ -1845,8 +1933,7 @@ export function CapturaCadenas2Client() {
             {homologDash && homologDash.userReview > 0 ?
               <Button
                 type="button"
-                variant="default"
-                className="btn-violet-alt mt-auto h-9 w-full shrink-0 gap-2"
+                className="btn-violet-alt homolog-step-card__btn"
                 disabled={homologacionBloqueada}
                 onClick={() => setScrappingSimilarityModalOpen(true)}
               >
@@ -1856,8 +1943,7 @@ export function CapturaCadenas2Client() {
             :
               <Button
                 type="button"
-                variant="default"
-                className="btn-violet mt-auto btn-lg"
+                className="btn-violet homolog-step-card__btn"
                 disabled={
                   homologacionBloqueada ||
                   exactMatchBusy ||
@@ -1874,57 +1960,72 @@ export function CapturaCadenas2Client() {
             }
           </div>
 
-          {/* ━━━ PASO 3: Nuevos en catálogo ━━━ */}
-          <div className={`group relative flex h-full flex-col overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all ${
-            (homologDash?.pendingNew ?? 0) > 0
-              ? 'border-emerald-500/30 opacity-100'
-              : 'border-dashed border-border opacity-90'
-          }`}>
-            <div className={`absolute inset-x-0 top-0 h-1 bg-linear-to-r from-emerald-400 to-teal-500 ${
-              (homologDash?.pendingNew ?? 0) > 0 ? 'opacity-100' : 'opacity-30'
-            }`} />
-            <div className="flex items-center gap-3">
-              <div className={`flex h-9 w-9 items-center justify-center rounded-xl shadow-md ${
-                (homologDash?.pendingNew ?? 0) > 0
-                  ? 'bg-linear-to-br from-emerald-500 to-teal-600 shadow-emerald-500/25'
-                  : 'bg-muted shadow-none'
-              }`}>
-                <PackagePlus className={`h-4.5 w-4.5 ${
-                  (homologDash?.pendingNew ?? 0) > 0 ? 'text-white' : 'text-muted-foreground'
-                }`} />
+          <div
+            className={cn(
+              'homolog-step-card',
+              (homologDash?.pendingNew ?? 0) > 0 ?
+                'homolog-step-card--emerald-active'
+              : 'homolog-step-card--emerald',
+            )}
+          >
+            <div
+              className={cn(
+                'homolog-step-card__accent homolog-step-card__accent--emerald',
+                (homologDash?.pendingNew ?? 0) > 0 && 'homolog-step-card__accent--emerald-active',
+              )}
+            />
+            <div className="homolog-step-card__head">
+              <div
+                className={cn(
+                  'homolog-step-card__icon-wrap',
+                  (homologDash?.pendingNew ?? 0) > 0 ?
+                    'homolog-step-card__icon-wrap--emerald-active'
+                  : 'homolog-step-card__icon-wrap--emerald',
+                )}
+              >
+                <PackagePlus
+                  className={cn(
+                    'homolog-step-card__icon',
+                    (homologDash?.pendingNew ?? 0) > 0 ?
+                      'homolog-step-card__icon--on-color'
+                    : 'homolog-step-card__icon--muted',
+                  )}
+                />
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                <p className="homolog-step-card__kicker">
                   {(homologDash?.pendingNew ?? 0) > 0 ? 'Paso 3 · Disponible' : 'Paso 3 · Sin cola'}
                 </p>
-                <p className="text-sm font-bold tracking-tight text-foreground">Nuevos en catálogo</p>
+                <p className="homolog-step-card__title">Nuevos en catálogo</p>
               </div>
             </div>
-            <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+            <p className="homolog-step-card__body">
               Productos sin homólogo: alta en maestro con sección y categoría, imagen y taxonomía automática.
             </p>
 
             {homologDash ?
               <div className="mt-3 mb-2 flex flex-1 flex-wrap content-start gap-2">
-                <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums ${
-                  homologDash.pendingNew > 0
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700'
-                }`}>
+                <span
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold tabular-nums',
+                    homologDash.pendingNew > 0 ?
+                      'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                    : 'border-emerald-500/15 bg-emerald-500/5 text-emerald-700',
+                  )}
+                >
                   {homologDash.pendingNew.toLocaleString('es-CL')} <span className="font-normal opacity-70">nuevos</span>
                 </span>
-                {createNewResult &&
+                {createNewResult ?
                   <span className="inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2 py-0.5 text-[10px] font-normal tabular-nums text-muted-foreground">
                     {createNewResult}
                   </span>
-                }
+                : null}
               </div>
             : <div className="flex-1" />}
 
             <Button
               type="button"
-              variant="default"
-              className="btn-emerald mt-auto btn-lg"
+              className="btn-create homolog-step-card__btn"
               disabled={
                 createNewBusy ||
                 homologacionBloqueada ||

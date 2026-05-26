@@ -94,8 +94,18 @@ export type BarridoContextResponse =
         done: number
         total: number
         totalPages: number | null
+        rowsInserted: number
       }
-      latestRun: null | { runId: string; status: string; startedAt: string; failedPages: number }
+      latestRun: null | {
+        runId: string
+        status: string
+        startedAt: string
+        failedPages: number
+        pagesDone: number
+        pagesTotal: number
+        pagesPending: number
+        rowsInserted: number
+      }
     }
   | { ok: false; error: string }
 

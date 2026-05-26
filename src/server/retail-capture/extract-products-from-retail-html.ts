@@ -10,6 +10,7 @@ export type HtmlListedProductExtract = {
   absoluteUrl?: string
   sku?: string
   brand?: string
+  imageUrl?: string
 }
 
 function parseOfferPrice(offers: unknown): number | null {
@@ -108,7 +109,19 @@ function ingestProductLike(
       String((o.brand as Record<string, unknown>).name).trim()
     : undefined
 
-  out.push({ name, price, absoluteUrl, sku, brand })
+  // Imagen: schema.org image puede ser string, ImageObject o array
+  let imageUrl: string | undefined
+  const imgRaw = o.image
+  if (typeof imgRaw === 'string' && imgRaw.trim().startsWith('http')) {
+    imageUrl = imgRaw.trim()
+  } else if (Array.isArray(imgRaw) && typeof imgRaw[0] === 'string') {
+    imageUrl = String(imgRaw[0]).trim() || undefined
+  } else if (imgRaw !== null && typeof imgRaw === 'object') {
+    const imgObj = imgRaw as Record<string, unknown>
+    const u = imgObj.url ?? imgObj.contentUrl
+    if (typeof u === 'string' && u.trim().startsWith('http')) imageUrl = u.trim()
+  }
+  out.push({ name, price, absoluteUrl, sku, brand, imageUrl })
 }
 
 function walkJsonLdNode(
@@ -262,7 +275,23 @@ function ingestItem(rawItem: unknown, pageOrigin: string, pageUrl: string): Html
       item.manufacturerName.trim()
     : undefined
 
-  return { name, price, absoluteUrl, sku: id, brand }
+  // Imagen: campos comunes en __NEXT_DATA__ de Lider / Walmart Chile
+  let imageUrl: string | undefined
+  const imgCandidates: unknown[] = [
+    (item.imageInfo as Record<string, unknown> | undefined)?.thumbnailUrl,
+    (item.imageInfo as Record<string, unknown> | undefined)?.url,
+    item.image,
+    item.thumbnail,
+    item.imageUrl,
+    item.primaryImage,
+  ]
+  for (const c of imgCandidates) {
+    if (typeof c === 'string' && c.trim().startsWith('http')) {
+      imageUrl = c.trim()
+      break
+    }
+  }
+  return { name, price, absoluteUrl, sku: id, brand, imageUrl }
 }
 
 function ingestNextSearchStacks(
@@ -392,7 +421,7 @@ function parseEmbeddedNextShopData(html: string, pageUrl: string, out: HtmlListe
     origin = ''
   }
 
-  const tagged = /<script[^>]*\bid=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i.exec(html)
+  const tagged = /<script[^>]*\bid=["']?__NEXT_DATA__["']?[^>]*>([\s\S]*?)<\/script>/i.exec(html)
   if (tagged?.[1]) {
     try {
       const parsed = JSON.parse(tagged[1].trim()) as Record<string, unknown>
@@ -442,7 +471,8 @@ function extractProductsFromRenderedHtml(
   while ((m = anchorRe.exec(html)) !== null) {
     const href = m[1]?.trim()
     if (!href) continue
-    if (!/\/([^\/]+)\/p(?:\?|$)/.test(href) && !/\/product\//.test(href)) continue
+    const isLiderIp = /^\/ip\//.test(href)
+    if (!/\/([^\/]+)\/p(?:\?|$)/.test(href) && !/\/product\//.test(href) && !isLiderIp) continue
 
     try {
       const abs = href.startsWith('http') ? href : `${origin}${href.startsWith('/') ? '' : '/'}${href}`
@@ -456,6 +486,10 @@ function extractProductsFromRenderedHtml(
       if (!name || name.length > 120) {
         const textBits = inner.replace(/<[^>]*>/g, '').trim()
         if (textBits && textBits.length < 120) name = textBits
+      }
+      if (!name) {
+        const liderSlug = /^\/ip\/([^\/]+)\//.exec(href)
+        if (liderSlug) name = liderSlug[1]!.replace(/-/g, ' ')
       }
       if (!name) {
         const slug = /\/([^\/]+)\/p(?:\?|$)/.exec(href)
@@ -478,8 +512,9 @@ function extractProductsFromRenderedHtml(
       }
       if (price === null) continue
 
+      const liderSkuMatch = /^\/ip\/[^\/]+\/([^\/]+)/.exec(href)
       const slug = /\/([^\/]+)\/p(?:\?|$)/.exec(abs)
-      const sku = slug ? slug[1]!.replace(/[^a-zA-Z0-9_-]/g, '') : undefined
+      const sku = liderSkuMatch ? liderSkuMatch[1]!.replace(/[^a-zA-Z0-9_-]/g, '') : (slug ? slug[1]!.replace(/[^a-zA-Z0-9_-]/g, '') : undefined)
 
       out.push({ name, price, absoluteUrl: abs, sku, brand: undefined })
     } catch {
@@ -526,8 +561,10 @@ export function htmlListedProductToSyntheticVtex(p: HtmlListedProductExtract): R
     productId: p.sku,
     brand: p.brand,
     linkText,
+    canonicalUrl: p.absoluteUrl,
     items: [
       {
+        images: p.imageUrl ? [{ imageUrl: p.imageUrl }] : [],
         sellers: [
           {
             commertialOffer: { Price: p.price },

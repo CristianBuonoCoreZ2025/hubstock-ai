@@ -73,12 +73,12 @@ export async function purgeAllScrappingChainData(admin: SupabaseClient): Promise
 }
 
 /**
- * Marca como fallidas las páginas en cola activa y cancela corridas `running`.
- * Debe llamarse antes de un barrido nuevo o desde «Detener scrapping».
+ * Cancelación dura: marca páginas pendientes/en proceso como fallidas y deja la corrida en `cancelled`.
+ * Reservado para limpieza previa a un barrido nuevo (fresh start), no para «Detener».
  */
 export async function cancelAllRunningScrappingRuns(admin: SupabaseClient): Promise<{ error: unknown | null }> {
   const now = new Date().toISOString()
-  const stopMsg = 'Detenido por el usuario.'
+  const stopMsg = 'Cancelado para iniciar barrido nuevo.'
 
   const { error: e1 } = await admin
     .from('scrapping_pages')
@@ -105,26 +105,128 @@ export async function cancelAllRunningScrappingRuns(admin: SupabaseClient): Prom
   return { error: e2 ?? null }
 }
 
+/**
+ * Cancela corridas `running` y `paused` antes de un barrido nuevo (fresh start).
+ * Las pausadas no se reanudan: el usuario eligió empezar de cero.
+ */
+export async function cancelAllActiveScrappingRunsForFreshStart(
+  admin: SupabaseClient,
+): Promise<{ error: unknown | null }> {
+  const runningRes = await cancelAllRunningScrappingRuns(admin)
+  if (runningRes.error) return runningRes
+
+  const now = new Date().toISOString()
+  const stopMsg = 'Cancelado para iniciar barrido nuevo.'
+  const { error } = await admin
+    .from('scrapping_runs')
+    .update({
+      status: 'cancelled',
+      finished_at: now,
+      error_message: stopMsg,
+    } as never)
+    .in('status', ['paused'] as never)
+
+  return { error: error ?? null }
+}
+
+/** Corridas que bloquean homologación u otra reanudación (excluye opcionalmente la corrida objetivo). */
+export async function countBlockingScrappingRuns(
+  admin: SupabaseClient,
+  excludeRunId?: string,
+): Promise<number> {
+  let query = admin
+    .from('scrapping_runs')
+    .select('id', { count: 'exact', head: true })
+    .in('status', ['running', 'paused'] as never)
+  if (excludeRunId?.trim()) {
+    query = query.neq('id', excludeRunId.trim())
+  }
+  const { count, error } = await query
+  if (error) return -1
+  return count ?? 0
+}
+
+/**
+ * Pausa lo que esté corriendo: páginas `processing` vuelven a `pending` (recuperables sin requeue),
+ * páginas `pending` siguen `pending`, páginas `failed` no se tocan. Corridas `running` pasan a `paused`.
+ *
+ * Pensada para «Detener»: el usuario podrá reanudar después o terminar definitivamente.
+ */
+export async function pauseAllRunningScrappingRunsForUser(
+  admin: SupabaseClient,
+): Promise<{ error: unknown | null }> {
+  const now = new Date().toISOString()
+  const pauseMsg = 'Pausado por el usuario.'
+
+  /** Al pausar, sellar `total_pages` si aún está abierta (-1/null): el total no debe cambiar al detener. */
+  const { data: runningRuns, error: listErr } = await admin
+    .from('scrapping_runs')
+    .select('id, total_pages')
+    .eq('status', 'running')
+  if (listErr) return { error: listErr }
+
+  for (const row of runningRuns ?? []) {
+    const runRow = row as { id: string; total_pages: number | null }
+    const tp = runRow.total_pages
+    if (tp != null && tp >= 0) continue
+    const tallies = await countScrappingPages(admin, runRow.id)
+    if (tallies.total <= 0) continue
+    const { error: sealErr } = await admin
+      .from('scrapping_runs')
+      .update({ total_pages: tallies.total } as never)
+      .eq('id', runRow.id)
+      .eq('status', 'running')
+    if (sealErr) return { error: sealErr }
+  }
+
+  const { error: e1 } = await admin
+    .from('scrapping_pages')
+    .update({
+      status: 'pending',
+      started_at: null,
+      finished_at: null,
+      error_message: null,
+    } as never)
+    .eq('status', 'processing')
+  if (e1) return { error: e1 }
+
+  const { error: e2 } = await admin
+    .from('scrapping_runs')
+    .update({
+      status: 'paused',
+      finished_at: now,
+      error_message: pauseMsg,
+    } as never)
+    .eq('status', 'running')
+
+  return { error: e2 ?? null }
+}
+
 const SCRAPPING_PAGE_FORCE_DONE_MSG =
   'Listado cerrado manualmente: marcado como listo sin descargar (cierre forzado de la corrida).'
 
 /**
- * Marca páginas `pending` / `processing` de una corrida como `done` sin leer el listado (cierre limpio operativo).
+ * Marca páginas `pending` / `processing` / `failed` de una corrida como `done` sin leer el listado
+ * (cierre limpio operativo). Se usa al apretar «Terminar»: el usuario quiere cerrar TODO lo no-done
+ * de una vez, incluyendo failed que de otro modo quedarían como reanudables.
+ *
  * No altera el estado de la corrida: quien llama debe actualizar `scrapping_runs` después.
  */
 export async function forceClosePendingScrappingPagesAsDone(
   admin: SupabaseClient,
   runId: string,
 ): Promise<{ error: unknown | null; forcedPages: number }> {
+  const remainingStatuses = ['pending', 'processing', 'failed'] as const
+
   const { count: c1, error: errCount } = await admin
     .from('scrapping_pages')
     .select('id', { count: 'exact', head: true })
     .eq('run_id', runId)
-    .in('status', ['pending', 'processing'])
+    .in('status', remainingStatuses as unknown as string[])
 
   if (errCount) return { error: errCount, forcedPages: 0 }
-  const pending = c1 ?? 0
-  if (pending === 0) return { error: null, forcedPages: 0 }
+  const remaining = c1 ?? 0
+  if (remaining === 0) return { error: null, forcedPages: 0 }
 
   const now = new Date().toISOString()
   const { error } = await admin
@@ -137,9 +239,9 @@ export async function forceClosePendingScrappingPagesAsDone(
       rows_written: 0,
     } as never)
     .eq('run_id', runId)
-    .in('status', ['pending', 'processing'])
+    .in('status', remainingStatuses as unknown as string[])
 
-  return { error: error ?? null, forcedPages: pending }
+  return { error: error ?? null, forcedPages: remaining }
 }
 
 /**
@@ -565,7 +667,7 @@ export async function reopenScrappingRunForQueueProcessing(
       error_message: null,
     } as never)
     .eq('id', runId)
-    .in('status', ['completed', 'cancelled'] as never)
+    .in('status', ['completed', 'cancelled', 'paused'] as never)
   return { error: error ?? null }
 }
 
