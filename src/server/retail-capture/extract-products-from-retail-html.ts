@@ -302,7 +302,7 @@ function ingestNextSearchStacks(
 ): void {
   const props = parsed.props as Record<string, unknown> | undefined
   const pageProps = props?.pageProps as Record<string, unknown> | undefined
-  const initial = pageProps?.initialData as Record<string, unknown> | undefined
+  const initial = (pageProps?.initialData ?? pageProps?.bootstrapData) as Record<string, unknown> | undefined
   const stacks = collectItemStacksFromInitialData(initial)
   if (stacks) {
     for (const stack of stacks) {
@@ -579,12 +579,27 @@ export function htmlListedProductToSyntheticVtex(p: HtmlListedProductExtract): R
 export function extractListedProductsFromRetailHtml(html: string, pageUrl: string): HtmlListedProductExtract[] {
   if (!html || html.length < 50) return []
   const out: HtmlListedProductExtract[] = []
+  const before0 = out.length
   parseJsonLdBlocks(html, pageUrl, out)
+  const fromJsonLd = out.length - before0
+
+  const before1 = out.length
   parseEmbeddedNextShopData(html, pageUrl, out)
+  const fromNext = out.length - before1
+
+  const before2 = out.length
   parseReactQueryStateScript(html, pageUrl, out)
+  const fromReactQuery = out.length - before2
+
+  const before3 = out.length
   extractProductsFromRenderedHtml(html, pageUrl, out)
+  const fromDom = out.length - before3
+
   const result = dedupeByUrlOrName(out)
-  if (process.env.NODE_ENV === 'development')
-    console.log(`[HTML] ${pageUrl.slice(0, 80)} → ${result.length} prod`)
+  if (process.env.NODE_ENV === 'development') {
+    const hasNextData = /<script[^>]*\bid=["']?__NEXT_DATA__["']?[^>]*>/i.test(html)
+    const hasBootstrap = /bootstrapData/i.test(html)
+    console.log(`[HTML] ${pageUrl.slice(0, 80)} | htmlLen=${html.length} nextData=${hasNextData} bootstrap=${hasBootstrap} | parsers: jsonLd=${fromJsonLd} next=${fromNext} reactQuery=${fromReactQuery} dom=${fromDom} | final=${result.length}`)
+  }
   return result
 }

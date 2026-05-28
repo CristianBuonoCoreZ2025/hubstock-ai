@@ -87,6 +87,18 @@ export async function fetchLiderHtmlPage(
     if (html.length < 200) {
       return { ok: false, error: 'Respuesta demasiado corta desde la tienda.' }
     }
+    
+    // Detectar challenge anti-bot (Akamai/PerimeterX) de Lider
+    const finalUrl = res.url
+    if (finalUrl.includes('/blocked') || /Robot or human/i.test(html) || /akamai/i.test(html)) {
+      return { ok: false, error: 'Lider bloqueo la captura con anti-bot (Akamai/PerimeterX). La tienda detecto el origen de la peticion como automatizado. Proba desde otra red o verifica que la URL de la categoria sea accesible en navegador.' }
+    }
+
+    // Detectar 404 silencioso (pagina de error de Next.js con titulo friendly)
+    const pageNotFound = /page.*\x2F404|not found|pagina no encontrada/i.test(html)
+    if (pageNotFound) {
+      return { ok: false, error: 'La tienda respondio pagina de error (404 / no encontrada). La estructura de URLs de Lider puede haber cambiado.' }
+    }
     return { ok: true, html }
   } catch {
     return { ok: false, error: 'Tiempo agotado o error de red al cargar Lider.' }
@@ -289,6 +301,9 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
   if (!fetched.ok) return fetched
 
   const listed = extractListedProductsFromRetailHtml(fetched.html, pageUrl)
+  if (process.env.NODE_ENV === 'development') {
+    console.log(`[captureLiderListingPage] ${pageUrl.slice(0, 80)} | html=${fetched.html.length} | listed=${listed.length}`)
+  }
   const ctx = {
     retailer: 'lider' as const,
     vtexBaseUrl: base,

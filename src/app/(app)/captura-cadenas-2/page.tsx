@@ -22,7 +22,7 @@ export default async function CapturaCadenas2Page() {
   return (
     <div className="app-page">
       <header className="app-page-header">
-        <h1 className="app-page-title">Captura de cadenas 2</h1>
+        <h1 className="app-page-title">Captura de cadenas</h1>
         <p className="app-page-lead">
           Scraping masivo de productos Lider hacia la tabla <code className="rounded bg-muted px-1">scrapping</code>{' '}
           (URL completa, nombre, marca, precio, cadena, fecha de extracción). Sin taxonomía ni homologación en

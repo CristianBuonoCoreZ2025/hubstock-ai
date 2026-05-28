@@ -1434,6 +1434,9 @@ export async function processLiderScrappingRunPageAction(input: {
       pageError = cap.error
     } else {
       productsFound = cap.data.rawProductCount
+      if (process.env.NODE_ENV === 'development') {
+        console.log(`[process-page] pageIdx=${page.page_index} capOk=true rawCount=${cap.data.rawProductCount} snapshots=${cap.data.snapshots.length} rows=${cap.data.snapshots.length}`)
+      }
 
       if (productsFound > 0 && cap.data.snapshots.length === 0) {
         console.warn(
