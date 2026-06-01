@@ -853,6 +853,31 @@ export function nextLiderHtmlBrowseListingPageUrl(pageUrl: string, lastPageProdu
 
 const LEGACY_PAGE_SLICE = 50
 
+/**
+ * Extrae el ID de categoría VTEX (último segmento numérico) de una URL browse de Lider.
+ * Ej: /browse/.../60967524_91601784_26707486 → 26707486
+ */
+export function extractVtexCategoryIdFromLiderBrowseUrl(pageUrl: string): string | null {
+  try {
+    const path = new URL(pageUrl).pathname
+    const lastSegment = path.split('/').filter(Boolean).pop() ?? ''
+    const parts = lastSegment.split('_')
+    const lastId = parts.pop()
+    if (lastId && /^\d+$/.test(lastId)) return lastId
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Construye una URL de API VTEX catalog_system a partir de un ID de categoría.
+ */
+export function buildLiderCatalogSystemUrl(baseUrl: string, categoryId: string, from = 0, to = LEGACY_PAGE_SLICE - 1): string {
+  const base = baseUrl.replace(/\/+$/, '')
+  return `${base}/api/catalog_system/pub/products/search?fq=C:${categoryId}&_from=${from}&_to=${to}`
+}
+
 export function isLiderCatalogSystemSearchUrl(pageUrl: string): boolean {
   try {
     const u = new URL(pageUrl)

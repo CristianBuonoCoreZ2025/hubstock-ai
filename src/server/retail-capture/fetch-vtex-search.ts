@@ -98,7 +98,7 @@ function requestTimeoutMs(fetchUrl: string): number {
   return 16_000
 }
 
-async function doGet(url: string, parentSignal: AbortSignal): Promise<RawFetch> {
+export async function doGet(url: string, parentSignal: AbortSignal): Promise<RawFetch> {
   const ctrl = new AbortController()
   const onParentAbort = () => ctrl.abort()
   parentSignal.addEventListener('abort', onParentAbort, { once: true })

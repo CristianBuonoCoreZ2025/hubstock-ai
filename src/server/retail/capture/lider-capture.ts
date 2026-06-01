@@ -10,7 +10,7 @@ import {
   mapVtexProductToSnapshot,
   type RetailSnapshotRow,
 } from '@/server/retail-capture/map-vtex-product'
-import { isLiderCatalogSystemSearchUrl, resolveLiderStoreBaseUrl } from '@/server/retail/capture/lider-catalog-plan'
+import { buildLiderCatalogSystemUrl, extractVtexCategoryIdFromLiderBrowseUrl, isLiderCatalogSystemSearchUrl, resolveLiderStoreBaseUrl } from '@/server/retail/capture/lider-catalog-plan'
 import type { RetailCapturedProductInput } from '@/server/retail/capture/retail-types'
 import { normalizeRetailCapturedInput } from '@/server/retail/normalize/normalize-retail-product'
 
@@ -63,9 +63,21 @@ function categoryHintFromPageUrl(pageUrl: string): string | null {
   }
 }
 
+export type LiderFetchDiagnostic = {
+  htmlLength: number
+  finalUrl: string
+  title?: string
+  flags?: Record<string, boolean>
+}
+
 export async function fetchLiderHtmlPage(
   pageUrl: string,
-): Promise<{ ok: true; html: string } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; html: string }
+  | { ok: false; error: string; __diagnostic?: string }
+> {
+  // Delay para evitar rate-limiting de Akamai Bot Manager
+  await new Promise((r) => setTimeout(r, 2000))
   const ctl = new AbortController()
   const tm = setTimeout(() => ctl.abort(), 26_000)
   try {
@@ -74,10 +86,18 @@ export async function fetchLiderHtmlPage(
       redirect: 'follow',
       cache: 'no-store',
       headers: {
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'es-CL,es;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'max-age=0',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Upgrade-Insecure-Requests': '1',
+        Referer: 'https://super.lider.cl/',
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       },
     })
     if (!res.ok) {
@@ -85,23 +105,58 @@ export async function fetchLiderHtmlPage(
     }
     const html = (await res.text()).trim()
     if (html.length < 200) {
-      return { ok: false, error: 'Respuesta demasiado corta desde la tienda.' }
+      return { ok: false, error: 'Respuesta demasiado corta desde la tienda.', __diagnostic: JSON.stringify({ pageUrl, htmlLength: html.length, finalUrl: res.url }) }
     }
     
     // Detectar challenge anti-bot (Akamai/PerimeterX) de Lider
     const finalUrl = res.url
-    if (finalUrl.includes('/blocked') || /Robot or human/i.test(html) || /akamai/i.test(html)) {
-      return { ok: false, error: 'Lider bloqueo la captura con anti-bot (Akamai/PerimeterX). La tienda detecto el origen de la peticion como automatizado. Proba desde otra red o verifica que la URL de la categoria sea accesible en navegador.' }
+    const isBlockedUrl = finalUrl.includes('/blocked')
+    const isRobotChallenge = /Robot or human/i.test(html)
+    const isAkamaiChallenge = /akamai\s+(bot manager|challenge|captcha)/i.test(html)
+    // Solo detectar challenge PX activo (elemento visible), NO referencias a scripts PX en pagina normal
+    const isPxChallengeActive = /id=["']px-captcha["']|class=["']px-captcha["']/i.test(html) ||
+      /Please verify you are human|Press & Hold to verify|px-challenge/i.test(html)
+    const isAccessDenied = /<title[^>]*>\s*(access denied|forbidden|blocked)/i.test(html)
+    if (isBlockedUrl || isRobotChallenge || isAkamaiChallenge || isPxChallengeActive || isAccessDenied) {
+      const htmlSample = html.slice(0, 800).replace(/\s+/g, ' ')
+      const diag = JSON.stringify({
+        pageUrl,
+        finalUrl,
+        htmlLength: html.length,
+        htmlSample,
+        flags: { isBlockedUrl, isRobotChallenge, isAkamaiChallenge, isPxChallengeActive, isAccessDenied },
+      })
+      return {
+        ok: false,
+        error: 'Lider bloqueo la captura con anti-bot (Akamai/PerimeterX). La tienda detecto el origen de la peticion como automatizado. Proba desde otra red o verifica que la URL de la categoria sea accesible en navegador.',
+        __diagnostic: diag,
+      }
     }
 
     // Detectar 404 silencioso (pagina de error de Next.js con titulo friendly)
-    const pageNotFound = /page.*\x2F404|not found|pagina no encontrada/i.test(html)
-    if (pageNotFound) {
-      return { ok: false, error: 'La tienda respondio pagina de error (404 / no encontrada). La estructura de URLs de Lider puede haber cambiado.' }
+    // Solo detectar si el titulo HTML indica 404, no palabras sueltas en el body
+    const titleMatch = /<title[^>]*>([^<]*)<\/title>/i.exec(html)
+    const titleText = titleMatch?.[1] ?? ''
+    const is404Title = /404|page not found|pagina no encontrada/i.test(titleText)
+    const is404Url = finalUrl.includes('/404') || /\b404\b/.test(new URL(finalUrl).pathname)
+    if (is404Title || is404Url) {
+      const diag = JSON.stringify({
+        pageUrl,
+        finalUrl,
+        title: titleText.slice(0, 120),
+        htmlLength: html.length,
+      })
+      return {
+        ok: false,
+        error: 'La tienda respondio pagina de error (404 / no encontrada). La estructura de URLs de Lider puede haber cambiado.',
+        __diagnostic: diag,
+      }
     }
+    console.info(`[fetchLiderHtmlPage] OK ${pageUrl.slice(0, 80)} | html=${html.length}`)
     return { ok: true, html }
-  } catch {
-    return { ok: false, error: 'Tiempo agotado o error de red al cargar Lider.' }
+  } catch (e) {
+    console.error(`[fetchLiderHtmlPage] ERROR ${pageUrl.slice(0, 80)} | ${e instanceof Error ? e.message : String(e)}`)
+    return { ok: false, error: 'Tiempo agotado o error de red al cargar Lider.', __diagnostic: JSON.stringify({ pageUrl, exception: e instanceof Error ? e.message : String(e) }) }
   } finally {
     clearTimeout(tm)
   }
@@ -137,7 +192,7 @@ async function fetchLiderJsonPage(
       return { ok: false, error: 'La respuesta no es JSON válido.' }
     }
   } catch {
-    return { ok: false, error: 'Tiempo agotado o error de red al cargar Lider.' }
+    return { ok: false, error: "Tiempo agotado o error de red al cargar Lider." }
   } finally {
     clearTimeout(tm)
   }
@@ -194,6 +249,7 @@ export function partitionLiderCaptureForCleanInsert(input: {
     cleanStaging.push(st)
   }
   const discardedProducts = Math.max(0, raw - cleanSnapshots.length)
+  console.info(`[partition] raw=${raw} clean=${cleanSnapshots.length} discarded=${discardedProducts}`)
   return {
     cleanSnapshots,
     cleanStaging,
@@ -230,7 +286,7 @@ function extractThumbFromSynthetic(raw: Record<string, unknown>): string | null 
 
 async function captureLiderCatalogSystemJsonPage(pageUrl: string): Promise<
   | { ok: true; data: LiderCapturePageResult }
-  | { ok: false; error: string }
+  | { ok: false; error: string; __diagnostic?: string }
 > {
   const base = resolveLiderStoreBaseUrl()
   const fetched = await fetchLiderJsonPage(pageUrl)
@@ -290,20 +346,12 @@ async function captureLiderCatalogSystemJsonPage(pageUrl: string): Promise<
 }
 
 /**
- * Descarga una URL de listado Lider (HTML) y devuelve filas para snapshots + staging.
+ * Parsea HTML de listado Lider ya descargado (usado por captura server-side o por browser scraping).
  */
-export async function captureLiderListingPage(pageUrl: string): Promise<
-  | { ok: true; data: LiderCapturePageResult }
-  | { ok: false; error: string }
-> {
+export function parseLiderHtmlPage(html: string, pageUrl: string): LiderCapturePageResult {
   const base = resolveLiderStoreBaseUrl()
-  const fetched = await fetchLiderHtmlPage(pageUrl)
-  if (!fetched.ok) return fetched
+  const listed = extractListedProductsFromRetailHtml(html, pageUrl)
 
-  const listed = extractListedProductsFromRetailHtml(fetched.html, pageUrl)
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[captureLiderListingPage] ${pageUrl.slice(0, 80)} | html=${fetched.html.length} | listed=${listed.length}`)
-  }
   const ctx = {
     retailer: 'lider' as const,
     vtexBaseUrl: base,
@@ -313,7 +361,6 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
   const snapshots: RetailSnapshotRow[] = []
   const stagingRows: LiderCapturePageResult['stagingRows'] = []
 
-  // Un producto listado → un synthetic → un snapshot; no usar mapVtexProductList y luego indexar mal.
   for (const p of listed) {
     const synthetic = htmlListedProductToSyntheticVtex(p)
     const snap = mapVtexProductToSnapshot(synthetic, ctx)
@@ -343,13 +390,26 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
   }
 
   return {
+    pageUrl,
+    snapshots,
+    stagingRows,
+    rawProductCount: listed.length,
+  }
+}
+
+/**
+ * Descarga una URL de listado Lider (HTML) y devuelve filas para snapshots + staging.
+ */
+export async function captureLiderListingPage(pageUrl: string): Promise<
+  | { ok: true; data: LiderCapturePageResult }
+  | { ok: false; error: string; __diagnostic?: string }
+> {
+  const fetched = await fetchLiderHtmlPage(pageUrl)
+  if (!fetched.ok) return fetched
+  const result = parseLiderHtmlPage(fetched.html, pageUrl)
+  return {
     ok: true,
-    data: {
-      pageUrl,
-      snapshots,
-      stagingRows,
-      rawProductCount: listed.length,
-    },
+    data: result,
   }
 }
 
@@ -358,10 +418,31 @@ export async function captureLiderListingPage(pageUrl: string): Promise<
  */
 export async function captureLiderRetailPage(pageUrl: string): Promise<
   | { ok: true; data: LiderCapturePageResult }
-  | { ok: false; error: string }
+  | { ok: false; error: string; __diagnostic?: string }
 > {
   if (isLiderCatalogSystemSearchUrl(pageUrl)) {
     return captureLiderCatalogSystemJsonPage(pageUrl)
   }
-  return captureLiderListingPage(pageUrl)
+
+  // 1. Intentar HTML primero (mas productos, mejor datos)
+  const htmlResult = await captureLiderListingPage(pageUrl)
+  if (htmlResult.ok) return htmlResult
+
+  // 2. Si falla por anti-bot, intentar VTEX API como fallback
+  const isAntiBot = htmlResult.error?.toLowerCase().includes('anti-bot') ||
+    htmlResult.error?.toLowerCase().includes('akamai') ||
+    htmlResult.error?.toLowerCase().includes('perimeterx')
+  if (isAntiBot) {
+    const categoryId = extractVtexCategoryIdFromLiderBrowseUrl(pageUrl)
+    if (categoryId) {
+      const base = resolveLiderStoreBaseUrl()
+      const vtexUrl = buildLiderCatalogSystemUrl(base, categoryId)
+      console.info(`[captureLiderRetailPage] HTML anti-bot, intentando VTEX API fallback: ${vtexUrl.slice(0, 80)}`)
+      const vtexResult = await captureLiderCatalogSystemJsonPage(vtexUrl)
+      if (vtexResult.ok) return vtexResult
+      // Si VTEX API tambien falla, devolvemos el error original de HTML (mas informativo)
+    }
+  }
+
+  return htmlResult
 }

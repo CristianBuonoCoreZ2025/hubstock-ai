@@ -48,7 +48,7 @@ import {
   type CreateNewProductsBatchResult,
   type CreateNewProductsAllResult,
 } from '@/server/retail/scrapping/scrapping-homologation-create-new'
-import { logError } from '@/lib/db-logger'
+import { logError, logWarn } from '@/lib/db-logger'
 import type {
   SimilarityBulkBatchStats,
   SimilarityBulkRunStats,
@@ -99,6 +99,7 @@ import {
   captureRetailPage,
   computeNextRetailPageUrl,
   isVtexRetailer,
+  isJumboHtmlRetailer,
 } from '@/server/retail/scrapping/retail-capture-adapter'
 
 type ScrappingUpsertRow = {
@@ -155,13 +156,13 @@ async function upsertScrappingChunkForRun(
   if (slice.length === 0) return { error: null }
   const { error: fullErr } = await admin
     .from('scrapping')
-    .upsert(slice as never, { onConflict: 'run_id,retailer,external_ref' })
+    .upsert(slice as never, { onConflict: 'run_id,retailer,external_ref,listing_url' })
   if (!fullErr) return { error: null }
   if (!isPostgrestUnknownColumnError(fullErr)) return { error: fullErr }
   const lite = slice.map(({ sections, categories, image_url, ...rest }) => { void sections; void categories; void image_url; return rest })
   const { error: liteErr } = await admin
     .from('scrapping')
-    .upsert(lite as never, { onConflict: 'run_id,retailer,external_ref' })
+    .upsert(lite as never, { onConflict: 'run_id,retailer,external_ref,listing_url' })
   if (!liteErr) {
     console.warn(
       '[scrapping] upsert aplicado sin sections/categories; conviene aplicar la migración scrapping_listing_section_category.',
@@ -438,8 +439,8 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
     const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
     let seeds: Array<{ page_url: string; page_index: number }>
 
-    if (retailerKey === 'jumbo') {
-      // Jumbo: descubrimiento de secciones principales (como /despensa, /despensa?page=2)
+    if (isJumboHtmlRetailer(row.name)) {
+      // Jumbo: usar plan HTML (paginas de categoria)
       const jumboResult = await discoverJumboScrappingUrlsPhase1(baseUrl)
       if (!jumboResult.ok) {
         await editor.admin
@@ -456,7 +457,7 @@ export async function discoverPhase1EnqueueLiderScrappingPagesAction(input: {
         return { ok: false, error: jumboResult.error }
       }
       seeds = jumboResult.seeds.map((s) => ({ page_url: s.page_url, page_index: s.page_index }))
-    } else if (isVtexRetailer(row.name)) {
+    } else if (isVtexRetailer(row.name) || isJumboHtmlRetailer(row.name)) {
       // Central Mayorista: usar plan VTEX (API search)
       const vtexResult = await discoverVtexScrappingUrlsPhase1(retailerKey as 'central_mayorista', {
         pagesPerQuery: 3,
@@ -621,16 +622,16 @@ export async function discoverPhase2AppendAndSealLiderScrappingPagesAction(input
 
     const retailerKey = row.name.trim().toLowerCase().replace(/\s+/g, '_')
 
-    // Para VTEX (Jumbo, Central Mayorista), la cola ya está completa desde Phase 1.
+    // Para VTEX (Central Mayorista) y Jumbo HTML, la cola ya está completa desde Phase 1.
     // Solo sellamos total_pages sin descubrimiento adicional.
     let toInsert: Array<{ page_url: string; page_index: number }> = []
 
-    if (isVtexRetailer(row.name)) {
+    if (isVtexRetailer(row.name) || isJumboHtmlRetailer(row.name)) {
       const t = await countScrappingPages(editor.admin, runId)
       if (t.total === 0) {
         return { ok: false, error: 'No hay páginas en cola para sellar.' }
       }
-      // VTEX no expande; sellar directamente
+      // VTEX y Jumbo HTML no expanden; sellar directamente
       toInsert = []
     } else {
       // Lider: descubrimiento completo del catálogo
@@ -1170,7 +1171,7 @@ export async function forceFinalizeScrappingRunForRetailAction(input: {
 
     const runSummary =
       closed.forcedPages > 0 ?
-        `Cola cerrada por el usuario: ${closed.forcedPages} listado(s) pendientes/fallidos se marcaron como listos sin descargar.`
+        `Cola cerrada por el usuario: ${closed.forcedPages} listado(s) pendientes se marcaron como listos sin descargar. Las fallidas se conservan como fallidas.`
       : null
 
     /**
@@ -1255,6 +1256,12 @@ export async function processLiderScrappingRunPageAction(input: {
       retailMaxPages: number
       /** Pico histórico `retail.max_products`; referencia solamente. */
       retailMaxProducts: number
+      /** Diagnóstico técnico de captura para trazabilidad en el Log de Diagnóstico. */
+      __diagnostic?: string
+      /** URL de la página procesada (útil para browser fallback anti-bot). */
+      pageUrl?: string
+      /** ID de la página en scrapping_pages (necesario para submit desde navegador). */
+      pageId?: string
     }
   | { ok: false; error: string }
 > {
@@ -1324,7 +1331,14 @@ export async function processLiderScrappingRunPageAction(input: {
     return { ok: false, error: 'Esta ejecución no tiene páginas en cola.' }
   }
 
+  let currentPageUrl: string | undefined
+  let currentPageId: string | undefined
+
   let page = await claimNextScrappingPage(editor.admin, runId)
+  if (page) {
+    currentPageUrl = page.page_url
+    currentPageId = page.id
+  }
   if (!page && tallies0.pending > 0) {
     page = await claimNextScrappingPage(editor.admin, runId)
   }
@@ -1418,6 +1432,7 @@ export async function processLiderScrappingRunPageAction(input: {
   }
 
   let pageError: string | undefined
+  let pageDiagnostic: string | undefined
   let expandError: string | undefined
   let lastPersistErr: unknown
   let productsFound = 0
@@ -1432,6 +1447,15 @@ export async function processLiderScrappingRunPageAction(input: {
     const cap = await captureRetailPage(page.retailer, page.page_url)
     if (!cap.ok) {
       pageError = cap.error
+      pageDiagnostic = cap.__diagnostic
+      if (pageDiagnostic) {
+        await logWarn(editor.admin, {
+          module: "retail-scrapping",
+          message: pageError,
+          context: { runId, pageUrl: page.page_url, pageIndex: page.page_index, diagnostic: pageDiagnostic },
+          screen: "captura-cadenas-2",
+        })
+      }
     } else {
       productsFound = cap.data.rawProductCount
       if (process.env.NODE_ENV === 'development') {
@@ -1527,6 +1551,10 @@ export async function processLiderScrappingRunPageAction(input: {
       rows_written: pageError ? 0 : rowsWritten,
       error_message: persistedPageMessage,
     })
+    const tAfterFinalize = await countScrappingPages(editor.admin, runId)
+    if (process.env.NODE_ENV === 'development') {
+      console.log(`[process-page] after finalize pageId=${page.id} status=${pageError ? 'failed' : 'done'} counts=`, tAfterFinalize)
+    }
   } catch (e) {
     // Si es error de aborto, no marcar la página como failed
     if (input.abortSignal?.aborted || e instanceof Error && e.message.includes('cancelado')) {
@@ -1627,7 +1655,168 @@ export async function processLiderScrappingRunPageAction(input: {
     runPersistedStatus: runAfter?.status ?? 'running',
     retailMaxPages: benchOut.max_pages,
     retailMaxProducts: benchOut.max_products,
+    __diagnostic: pageDiagnostic,
+    pageUrl: currentPageUrl,
+    pageId: currentPageId,
   }
+}
+
+/**
+ * Recibe HTML de una página capturada desde el navegador del usuario.
+ * Detecta el retailer (Jumbo o Lider) y usa el parser correcto.
+ * Evita anti-bot porque la petición sale de IP residencial.
+ */
+export async function submitPageHtmlAction(input: {
+  runId: string
+  pageId: string
+  pageUrl: string
+  html: string
+}): Promise<
+  | { ok: true; productsFound: number; rowsWritten: number }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+
+  // Detectar retailer según la URL
+  const isJumbo = input.pageUrl.toLowerCase().includes('jumbo.cl')
+  const retailer = isJumbo ? 'jumbo' : 'lider'
+
+  try {
+    let snapshots: Array<{
+      external_ref: string
+      source_url: string | null
+      title: string
+      brand: string | null
+      price: number | null
+      unit_price: number | string | null
+      category_hint: string | null
+      description_hint: string | null
+      image_url: string | null
+      listing_url: string
+      sections: string | null
+      categories: string | null
+    }>
+    let rawProductCount: number
+
+    if (isJumbo) {
+      const { extractProductsFromJumboShelfHtml } = await import(
+        '@/server/retail/capture/jumbo-html-parser'
+      )
+      const products = extractProductsFromJumboShelfHtml(input.html, input.pageUrl)
+      rawProductCount = products.length
+
+      // Derivar sección del slug de la URL
+      const sectionSlug = new URL(input.pageUrl).pathname.replace(/^\//, '').split('/')[0] ?? ''
+
+      snapshots = products.map((p) => ({
+        external_ref: p.productId,
+        source_url: p.productUrl,
+        title: p.name,
+        brand: p.brand,
+        price: p.price,
+        unit_price: p.price,
+        category_hint: sectionSlug,
+        description_hint: null,
+        image_url: p.imageUrl,
+        listing_url: input.pageUrl,
+        sections: sectionSlug,
+        categories: null,
+      }))
+    } else {
+      const { parseLiderHtmlPage, partitionLiderCaptureForCleanInsert } = await import(
+        '@/server/retail/capture/lider-capture'
+      )
+      const cap = parseLiderHtmlPage(input.html, input.pageUrl)
+      const part = partitionLiderCaptureForCleanInsert({
+        snapshots: cap.snapshots,
+        stagingRows: cap.stagingRows,
+        rawProductCount: cap.rawProductCount,
+      })
+      snapshots = part.cleanStaging.map((r) => ({
+        external_ref: r.external_ref,
+        source_url: r.source_url,
+        title: r.title,
+        brand: r.brand,
+        price: r.price,
+        unit_price: r.unit_price,
+        category_hint: r.category_hint,
+        description_hint: r.description_hint,
+        image_url: r.image_url,
+        listing_url: input.pageUrl,
+        sections: r.category_hint,
+        categories: null,
+      }))
+      rawProductCount = cap.rawProductCount
+    }
+
+    const extractedAt = new Date().toISOString()
+    const listingPathConfig = await loadRetailListingPathConfig(editor.admin, (await fetchScrappingRunById(editor.admin, input.runId))?.retail_id ?? '')
+    const pathDerived = deriveSectionCategoryFromListingUrl(input.pageUrl, listingPathConfig ?? undefined)
+
+    const rows = snapshots.map((r) => ({
+      run_id: input.runId,
+      retailer,
+      external_ref: r.external_ref,
+      product_url: (r.source_url ?? '').trim() || input.pageUrl,
+      product_name: r.title,
+      brand: r.brand ?? null,
+      price: r.price,
+      currency: 'CLP',
+      source_chain: retailer,
+      listing_url: input.pageUrl,
+      sections: pathDerived.sections,
+      categories: pathDerived.categories,
+      image_url: r.image_url ?? null,
+      extracted_at: extractedAt,
+    }))
+
+    if (rows.length > 0) {
+      const chunk = 50
+      for (let i = 0; i < rows.length; i += chunk) {
+        const slice = rows.slice(i, i + chunk) as ScrappingUpsertRow[]
+        const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
+        if (upErr) {
+          await finalizeScrappingPage(editor.admin, input.pageId, {
+            status: 'failed',
+            products_found: rawProductCount,
+            rows_written: 0,
+            error_message: getUserFriendlyErrorMessage(upErr, 'generic'),
+          })
+          return { ok: false, error: getUserFriendlyErrorMessage(upErr, 'generic') }
+        }
+      }
+    }
+
+    await finalizeScrappingPage(editor.admin, input.pageId, {
+      status: 'done',
+      products_found: rawProductCount,
+      rows_written: rows.length,
+    })
+
+    return { ok: true, productsFound: rawProductCount, rowsWritten: rows.length }
+  } catch (e) {
+    await finalizeScrappingPage(editor.admin, input.pageId, {
+      status: 'failed',
+      products_found: 0,
+      rows_written: 0,
+      error_message: getUserFriendlyErrorMessage(e, 'generic'),
+    })
+    return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Alias para compatibilidad con código existente */
+export async function submitLiderPageHtmlAction(input: {
+  runId: string
+  pageId: string
+  pageUrl: string
+  html: string
+}): Promise<
+  | { ok: true; productsFound: number; rowsWritten: number }
+  | { ok: false; error: string }
+> {
+  return submitPageHtmlAction(input)
 }
 
 export async function listRetailTargetsAction(): Promise<
@@ -2364,5 +2553,184 @@ export async function rejectScrappingSimilarityToPendingNewAction(input: {
     return { ok: true }
   } catch (e) {
     return { ok: false, error: getUserFriendlyErrorMessage(e, 'generic') }
+  }
+}
+
+/** Importa productos de Lider desde el script Python local del usuario.
+ *  El script corre en PC (IP residencial) donde no hay anti-bot.
+ */
+export async function importLiderProductsFromJsonAction(input: {
+  products: Array<{
+    id?: string
+    nombre: string
+    marca?: string
+    fabricante?: string
+    precio?: string
+    precio_anterior?: string
+    precio_unitario?: string
+    imagen_url?: string
+    url_producto?: string
+    descripcion_corta?: string
+    categoria?: string
+    subcategoria?: string
+    listing_url?: string
+  }>
+  runId?: string
+}): Promise<
+  | { ok: true; runId: string; inserted: number; snapshots: number }
+  | { ok: false; error: string }
+> {
+  const editor = await requireCatalogEditorRetail()
+  if (!editor.ok) return { ok: false, error: editor.error }
+
+  const products = input.products ?? []
+  if (products.length === 0) {
+    return { ok: false, error: 'No se recibieron productos para importar.' }
+  }
+
+  // Crear o reutilizar run
+  let runId = input.runId?.trim()
+  if (!runId) {
+    const { data: retailData } = await editor.admin
+      .from('retail')
+      .select('id,name')
+      .ilike('name', 'lider')
+      .limit(1)
+      .maybeSingle()
+    const retailId = retailData ? (retailData as { id: string; name: string }).id : null
+
+    const runRes = await insertScrappingRun(editor.admin, {
+      retailer: 'lider',
+      sourceChain: 'lider',
+      totalPages: 0,
+      retailId,
+    })
+    if ('error' in runRes) {
+      return { ok: false, error: 'No se pudo crear la corrida de importación.' }
+    }
+    runId = runRes.id
+
+    await editor.admin
+      .from('scrapping_runs')
+      .update({ status: 'completed', finished_at: new Date().toISOString() } as never)
+      .eq('id', runId)
+  }
+
+  const extractedAt = new Date().toISOString()
+
+  function parsePrice(raw: string | undefined): number {
+    if (!raw) return 0
+    const cleaned = raw
+      .replace('$', '')
+      .replace(/\./g, '')
+      .replace(/,/g, '.')
+      .replace(/\s*x.*$/, '')
+      .trim()
+    const n = Number.parseFloat(cleaned)
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0
+  }
+
+  const rows: ScrappingUpsertRow[] = []
+  const snapshotRows: Array<{
+    retailer: string
+    external_ref: string
+    source_url: string | null
+    title: string
+    price: number
+    category_hint: string | null
+    brand_hint: string | null
+    captured_at: string
+    match_method: string
+  }> = []
+
+  for (const p of products) {
+    const name = p.nombre?.trim()
+    if (!name) continue
+
+    const price = parsePrice(p.precio)
+    const externalRef = p.id?.trim() || p.url_producto || `local:${hashStable(p.nombre + (p.precio ?? ''))}`
+    const productUrl = p.url_producto?.trim() || ''
+    const listingUrl = p.listing_url?.trim() || productUrl
+    const brand = p.marca?.trim() || p.fabricante?.trim() || null
+    const imageUrl = p.imagen_url?.trim() || null
+    const section = p.categoria?.trim() || null
+    const category = p.subcategoria?.trim() || null
+
+    rows.push({
+      run_id: runId,
+      retailer: 'lider',
+      external_ref: externalRef,
+      product_url: productUrl,
+      product_name: name,
+      brand,
+      price,
+      currency: 'CLP',
+      source_chain: 'lider',
+      listing_url: listingUrl,
+      sections: section,
+      categories: category,
+      image_url: imageUrl,
+      extracted_at: extractedAt,
+    })
+
+    snapshotRows.push({
+      retailer: 'lider',
+      external_ref: externalRef,
+      source_url: productUrl || null,
+      title: name,
+      price,
+      category_hint: category ?? section ?? null,
+      brand_hint: brand,
+      captured_at: extractedAt,
+      match_method: 'python_local_import',
+    })
+  }
+
+  // Insertar en batch
+  const chunk = 50
+  let inserted = 0
+  for (let i = 0; i < rows.length; i += chunk) {
+    const slice = rows.slice(i, i + chunk)
+    const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
+    if (upErr) {
+      return { ok: false, error: getUserFriendlyErrorMessage(upErr, 'generic') }
+    }
+    inserted += slice.length
+  }
+
+  // Insertar snapshots
+  const SNAP_CHUNK = 200
+  for (let i = 0; i < snapshotRows.length; i += SNAP_CHUNK) {
+    const slice = snapshotRows.slice(i, i + SNAP_CHUNK)
+    await editor.admin.from('catalog_retail_snapshots').insert(slice as never)
+  }
+
+  // Actualizar run
+  await editor.admin
+    .from('scrapping_runs')
+    .update({
+      rows_inserted: inserted,
+      pages_done: 1,
+      pages_ok: 1,
+      total_pages: 1,
+      status: 'completed',
+      finished_at: new Date().toISOString(),
+    } as never)
+    .eq('id', runId)
+
+  revalidatePath('/captura-cadenas-2')
+  return { ok: true, runId, inserted, snapshots: snapshotRows.length }
+}
+
+function hashStable(v: unknown): string {
+  try {
+    const s = JSON.stringify(v)
+    let h = 0
+    for (let i = 0; i < s.length; i++) {
+      h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
+    }
+    return Math.abs(h).toString(36)
+  } catch {
+    return String(Date.now())
   }
 }

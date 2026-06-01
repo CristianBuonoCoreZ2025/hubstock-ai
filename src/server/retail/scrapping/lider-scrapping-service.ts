@@ -206,9 +206,11 @@ const SCRAPPING_PAGE_FORCE_DONE_MSG =
   'Listado cerrado manualmente: marcado como listo sin descargar (cierre forzado de la corrida).'
 
 /**
- * Marca páginas `pending` / `processing` / `failed` de una corrida como `done` sin leer el listado
- * (cierre limpio operativo). Se usa al apretar «Terminar»: el usuario quiere cerrar TODO lo no-done
- * de una vez, incluyendo failed que de otro modo quedarían como reanudables.
+ * Marca páginas `pending` / `processing` de una corrida como `done` sin leer el listado
+ * (cierre limpio operativo). Se usa al apretar «Terminar»: el usuario quiere cerrar lo que
+ * todavía no se procesó.
+ *
+ * Las páginas `failed` se conservan como `failed` para preservar la trazabilidad de errores.
  *
  * No altera el estado de la corrida: quien llama debe actualizar `scrapping_runs` después.
  */
@@ -216,7 +218,7 @@ export async function forceClosePendingScrappingPagesAsDone(
   admin: SupabaseClient,
   runId: string,
 ): Promise<{ error: unknown | null; forcedPages: number }> {
-  const remainingStatuses = ['pending', 'processing', 'failed'] as const
+  const remainingStatuses = ['pending', 'processing'] as const
 
   const { count: c1, error: errCount } = await admin
     .from('scrapping_pages')
@@ -500,7 +502,7 @@ export async function finalizeScrappingPage(
     error_message?: string | null
   },
 ): Promise<void> {
-  await admin
+  const { error } = await admin
     .from('scrapping_pages')
     .update({
       status: patch.status,
@@ -510,6 +512,9 @@ export async function finalizeScrappingPage(
       finished_at: new Date().toISOString(),
     } as never)
     .eq('id', pageId)
+  if (error) {
+    console.error('[finalizeScrappingPage] Supabase update error:', error.message, 'pageId:', pageId, 'patch:', patch)
+  }
 }
 
 export async function resetStaleScrappingPagesProcessing(

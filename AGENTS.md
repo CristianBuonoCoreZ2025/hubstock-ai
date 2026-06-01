@@ -298,3 +298,10 @@ La funcion SQL generaba un UUID diferente para cada fila de scrapping `pending_n
 - Migrar coordinacion de workers a un backend job/queue.
 - Aplicar la migracion `20260702130000_fix_create_new_products_duplicate_url.sql` a la base de datos.
 - Aplicar la migracion `20260702131000_app_changelog_seed.sql` para poblar historial.
+
+## Regla: No asumir infraestructura de hosting
+
+El usuario corre la app localmente (`npm run dev` en su PC).  
+**Nunca** asumir Vercel, producción, deploy, o servidor remoto a menos que el usuario lo mencione explícitamente.  
+El scraping de cadenas (Jumbo, Lider) corre desde la máquina del usuario, no desde un servidor en la nube.  
+Toda referencia a "servidor", "server-side", "producción" debe interpretarse como "la instancia local de Next.js que corre en la PC del usuario".

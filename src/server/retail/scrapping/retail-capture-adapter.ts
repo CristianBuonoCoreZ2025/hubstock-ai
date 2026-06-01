@@ -1,7 +1,7 @@
 /**
- * Adaptador de captura unificado: decide qué estrategia usar según el retailer.
+ * Adaptador de captura unificado: decide que estrategia usar segun el retailer.
  * - Lider: usa lider-capture.ts (HTML Next.js embebido)
- * - Jumbo: usa jumbo-html-capture.ts (HTML scraping de categorías)
+ * - Jumbo: usa jumbo-html-capture.ts (HTML VTEX shelf)
  * - Central Mayorista: usa vtex-capture.ts (API VTEX)
  */
 
@@ -15,6 +15,10 @@ import {
 import {
   captureVtexRetailPage,
 } from '@/server/retail/capture/vtex-capture'
+import {
+  captureJumboHtmlPage,
+  partitionJumboCaptureForCleanInsert,
+} from '@/server/retail/capture/jumbo-html-capture'
 import type { VtexPageSeed } from '@/server/retail/capture/vtex-catalog-plan'
 import {
   isLiderCatalogSystemSearchUrl,
@@ -26,11 +30,6 @@ import {
   isVtexIntelligentSearchUrl,
   nextVtexIntelligentSearchPageUrl,
 } from '@/server/retail/capture/vtex-catalog-plan'
-import {
-  captureJumboHtmlPage,
-  isJumboHtmlCategoryUrl,
-  type JumboPageSeed,
-} from '@/server/retail/capture/jumbo-html-capture'
 
 export type CaptureResult =
   | {
@@ -50,9 +49,9 @@ export type CaptureResult =
         rawProductCount: number
       }
     }
-  | { ok: false; error: string }
+  | { ok: false; error: string; __diagnostic?: string }
 
-export type RetailerType = 'lider' | 'vtex'
+export type RetailerType = 'lider' | 'jumbo_html' | 'vtex'
 
 /**
  * Determina el tipo de captura para un retailer.
@@ -60,67 +59,49 @@ export type RetailerType = 'lider' | 'vtex'
 export function getRetailerCaptureType(retailer: string): RetailerType {
   const code = retailer.toLowerCase().trim()
   if (code === 'lider') return 'lider'
-  // Jumbo y Central Mayorista usan VTEX
-  if (code === 'jumbo' || code === 'central_mayorista') return 'vtex'
-  // Fallback: si está en el registry con defaultVtexBaseUrl, asumimos VTEX
+  if (code === 'jumbo') return 'jumbo_html'
+  if (code === 'central_mayorista') return 'vtex'
+  // Fallback: si esta en el registry con defaultVtexBaseUrl, asumimos VTEX
   const def = retailerDefinition(code as RetailerCode)
   if (def?.defaultVtexBaseUrl || def?.vtexBaseUrlEnvVar) return 'vtex'
   return 'lider' // default conservador
 }
 
 /**
- * Determina si un retailer es VTEX (Jumbo, Central Mayorista).
+ * Determina si un retailer es VTEX (Central Mayorista).
  */
 export function isVtexRetailer(retailer: string): boolean {
   return getRetailerCaptureType(retailer) === 'vtex'
 }
 
 /**
- * Captura una página según el tipo de retail.
+ * Determina si un retailer usa captura HTML (Jumbo).
+ */
+export function isJumboHtmlRetailer(retailer: string): boolean {
+  return getRetailerCaptureType(retailer) === 'jumbo_html'
+}
+
+/**
+ * Captura una pagina segun el tipo de retail.
  * Para Lider: seed es string (URL directa)
- * Para Jumbo: seed es JumboPageSeed (HTML scraping)
- * Para Central Mayorista: seed es VtexPageSeed (API VTEX)
+ * Para Jumbo: seed es string (URL de categoria HTML)
+ * Para VTEX (Central Mayorista): seed es VtexPageSeed (API VTEX)
  */
 export async function captureRetailPage(
   retailer: string,
-  seed: string | VtexPageSeed | JumboPageSeed,
+  seed: string | VtexPageSeed,
 ): Promise<CaptureResult> {
-  const retailerKey = retailer.toLowerCase().trim()
-  
-  // Jumbo: detectar si es URL de categoría HTML o API VTEX
-  if (retailerKey === 'jumbo') {
-    const url = typeof seed === 'string' ? seed : seed.page_url
-    
-    // Si es URL de categoría HTML (/despensa), usar scraping HTML
-    if (isJumboHtmlCategoryUrl(url)) {
-      const sectionSlug = new URL(url).pathname.replace(/^\//, '').replace(/\?.*/, '')
-      const result = await captureJumboHtmlPage(url, sectionSlug)
-      if (!result.ok) return result
-      
-      return {
-        ok: true,
-        data: {
-          snapshots: result.data.stagingRows.map((r) => ({
-            external_ref: r.external_ref,
-            source_url: r.source_url,
-            title: r.title,
-            brand: r.brand,
-            price: r.price ?? 0,
-            unit_price: Number(r.unit_price ?? r.price ?? 0),
-            category_hint: r.category_hint,
-            description_hint: r.description_hint,
-            image_url: r.image_url,
-          })),
-          rawProductCount: result.data.rawProductCount,
-        },
-      }
-    }
-    
-    // Si es API VTEX, usar captura VTEX
+  const type = getRetailerCaptureType(retailer)
+
+  if (type === 'vtex') {
     const vtexSeed: VtexPageSeed =
       typeof seed === 'string' ? { page_url: seed, page_index: 0, endpoint_type: 'intelligent_search' } : (seed as VtexPageSeed)
-    const result = await captureVtexRetailPage(vtexSeed, 'jumbo')
-    if (!result.ok) return result
+    const result = await captureVtexRetailPage(vtexSeed, retailer as 'central_mayorista')
+    if (!result.ok) {
+      console.warn('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=vtex-capture url=' + vtexSeed.page_url + ' items=0 error=' + result.error)
+      return result
+    }
+    console.info('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=vtex-capture url=' + vtexSeed.page_url + ' items=' + result.data.rawProductCount)
 
     return {
       ok: true,
@@ -141,18 +122,26 @@ export async function captureRetailPage(
     }
   }
 
-  const type = getRetailerCaptureType(retailer)
+  if (type === 'jumbo_html') {
+    const url = typeof seed === 'string' ? seed : seed.page_url
+    const sectionSlug = new URL(url).pathname.replace(/^\//, '').split('/')[0] ?? ''
+    const result = await captureJumboHtmlPage(url, sectionSlug)
+    if (!result.ok) {
+      console.warn('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=jumbo-html-capture url=' + url + ' items=0 error=' + result.error)
+      return result
+    }
+    console.info('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=jumbo-html-capture url=' + url + ' items=' + result.data.rawProductCount)
 
-  if (type === 'vtex') {
-    const vtexSeed: VtexPageSeed =
-      typeof seed === 'string' ? { page_url: seed, page_index: 0, endpoint_type: 'intelligent_search' } : (seed as VtexPageSeed)
-    const result = await captureVtexRetailPage(vtexSeed, retailer as 'jumbo' | 'central_mayorista')
-    if (!result.ok) return result
+    const part = partitionJumboCaptureForCleanInsert({
+      snapshots: result.data.snapshots,
+      stagingRows: result.data.stagingRows,
+      rawProductCount: result.data.rawProductCount,
+    })
 
     return {
       ok: true,
       data: {
-        snapshots: result.data.stagingRows.map((r) => ({
+        snapshots: part.cleanStaging.map((r) => ({
           external_ref: r.external_ref,
           source_url: r.source_url,
           title: r.title,
@@ -160,10 +149,10 @@ export async function captureRetailPage(
           price: r.price ?? 0,
           unit_price: Number(r.unit_price ?? r.price ?? 0),
           category_hint: r.category_hint,
-          description_hint: r.description_hint,
-          image_url: r.image_url,
+          description_hint: r.description_hint ?? null,
+          image_url: r.image_url ?? null,
         })),
-        rawProductCount: result.data.rawProductCount,
+        rawProductCount: part.productsFound,
       },
     }
   }
@@ -171,7 +160,11 @@ export async function captureRetailPage(
   // Lider
   const url = typeof seed === 'string' ? seed : seed.page_url
   const result = await captureLiderRetailPage(url)
-  if (!result.ok) return result
+  if (!result.ok) {
+    console.warn('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=lider-capture url=' + url + ' items=0 error=' + result.error)
+    return result
+  }
+  console.info('[CAPTURE_STRATEGY] retailer=' + retailer + ' strategy=lider-capture url=' + url + ' items=' + result.data.rawProductCount)
 
   const part = partitionLiderCaptureForCleanInsert({
     snapshots: result.data.snapshots,
@@ -199,8 +192,8 @@ export async function captureRetailPage(
 }
 
 /**
- * Calcula la siguiente página para paginación dinámica.
- * Devuelve null si no hay siguiente página.
+ * Calcula la siguiente pagina para paginacion dinamica.
+ * Devuelve null si no hay siguiente pagina.
  */
 export function computeNextRetailPageUrl(
   currentUrl: string,
@@ -210,11 +203,9 @@ export function computeNextRetailPageUrl(
   const type = getRetailerCaptureType(retailer)
 
   if (type === 'vtex') {
-    // Solo intelligent-search soporta paginación dinámica fácil
     if (isVtexIntelligentSearchUrl(currentUrl)) {
       return nextVtexIntelligentSearchPageUrl(currentUrl, currentProductsCount)
     }
-    // catalog_system y shelf_html no expanden fácilmente
     return null
   }
 
@@ -229,12 +220,15 @@ export function computeNextRetailPageUrl(
 }
 
 /**
- * Resuelve la URL base para el retail según su tipo.
+ * Resuelve la URL base para el retail segun su tipo.
  */
 export function resolveRetailBaseUrl(retailer: string): string | null {
   const type = getRetailerCaptureType(retailer)
   if (type === 'vtex') {
     return resolveVtexBaseUrlForRetailer(retailer as 'jumbo' | 'lider' | 'central_mayorista')
+  }
+  if (type === 'jumbo_html') {
+    return 'https://www.jumbo.cl'
   }
   // Lider default
   const fromEnv = process.env.RETAIL_LIDER_VTEX_BASE_URL?.trim() || process.env.RETAIL_LIDER_STORE_ORIGIN?.trim()

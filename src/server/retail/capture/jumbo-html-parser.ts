@@ -143,7 +143,55 @@ export function extractProductsFromJumboShelfHtml(
     // Ignorar errores del matcher
   }
 
-  // ========== MÉTODO 2: data-product-id en cualquier elemento ==========
+  // ========== MÉTODO 2: Script de hidratación VTEX IO (dehydratedState) ==========
+  // Jumbo ahora usa React Query / VTEX IO con un script grande que contiene
+  // dehydratedState.queries[].state.data.products
+  try {
+    const scripts = html.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/gi)
+    for (const scriptMatch of scripts) {
+      const text = scriptMatch[1].trim()
+      if (!text.includes('dehydratedState') || !text.includes('products')) continue
+      try {
+        const parsed = JSON.parse(text)
+        const queries = parsed?.dehydratedState?.queries as Array<Record<string, unknown>> | undefined
+        if (!Array.isArray(queries)) continue
+        for (const q of queries) {
+          const queryData = (q?.state as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined
+          const queryProducts = queryData?.products as Array<Record<string, unknown>> | undefined
+          if (!Array.isArray(queryProducts)) continue
+          for (const product of queryProducts) {
+            const reference = String(product?.reference || product?.productId || '').trim()
+            if (!reference || seen.has(reference)) continue
+            seen.add(reference)
+
+            const slug = typeof product?.slug === 'string' ? product.slug : ''
+            const productUrl = slug ? `https://www.jumbo.cl/${slug}/p` : null
+
+            const item = Array.isArray(product?.items) ? product.items[0] as Record<string, unknown> | undefined : undefined
+            const name = typeof item?.name === 'string' ? item.name.trim() : typeof product?.name === 'string' ? product.name.trim() : 'Sin nombre'
+            const brand = typeof product?.brand === 'string' ? product.brand.trim() : null
+            const price = typeof item?.price === 'number' && item.price > 0 ? item.price : null
+            const imageUrl = Array.isArray(item?.images) && typeof item.images[0] === 'string' ? item.images[0] : null
+
+            products.push({
+              productId: reference,
+              name,
+              brand,
+              price,
+              productUrl,
+              imageUrl,
+            })
+          }
+        }
+      } catch {
+        // Ignorar JSON malformado
+      }
+    }
+  } catch {
+    // Ignorar errores del matcher
+  }
+
+  // ========== MÉTODO 3: data-product-id en cualquier elemento ==========
   // Buscar todos los elementos que tienen data-product-id
   const productIdRegex = /data-product-id=["'](\d+)["']/gi
   let idMatch

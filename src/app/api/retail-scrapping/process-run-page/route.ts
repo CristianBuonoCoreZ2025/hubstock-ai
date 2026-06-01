@@ -36,7 +36,13 @@ export async function POST(request: Request) {
   try {
     const result = await processLiderScrappingRunPageAction({ runId, abortSignal })
     if (diagEnabled) {
-      (result as any).__diagnostic = { durationMs: Date.now() - start, operation: 'processLiderScrappingRunPageAction', runId }
+      const routeDiag = { durationMs: Date.now() - start, operation: 'processLiderScrappingRunPageAction', runId }
+      const originalDiag = (result as any).__diagnostic
+      if (originalDiag) {
+        (result as any).__diagnostic = { ...routeDiag, captureDiagnostic: originalDiag }
+      } else {
+        (result as any).__diagnostic = routeDiag
+      }
     }
     return NextResponse.json(result)
   } catch (e) {

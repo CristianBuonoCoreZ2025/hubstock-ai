@@ -131,3 +131,11 @@ export async function barridoApiPurgeIfIdle(): Promise<BarridoPurgeIdleResponse>
 export async function barridoApiRequeueFailedLatest(retailId: string): Promise<BarridoRequeueFailedResponse> {
   return postJson<BarridoRequeueFailedResponse>('/requeue-failed-latest', { retailId })
 }
+export async function barridoApiSubmitPageHtml(input: {
+  runId: string
+  pageId: string
+  pageUrl: string
+  html: string
+}): Promise<{ ok: true; productsFound: number; rowsWritten: number } | { ok: false; error: string }> {
+  return postJson('/submit-page-html', input)
+}

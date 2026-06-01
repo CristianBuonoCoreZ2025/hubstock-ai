@@ -17,7 +17,7 @@ export type VtexPageSeed = {
   query?: string
 }
 
-const DEFAULT_VTEX_PAGE_SIZE = 20
+const DEFAULT_VTEX_PAGE_SIZE = 50
 
 /** Letras/vocales para barrido inicial de VTEX (términos de alta frecuencia) */
 const VTEX_SWEEP_QUERIES = [

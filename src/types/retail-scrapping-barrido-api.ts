@@ -76,6 +76,11 @@ export type ProcessLiderScrappingRunPageResult =
       runPersistedStatus: string
       retailMaxPages: number
       retailMaxProducts: number
+      __diagnostic?: string
+      /** URL de la pagina que se intento procesar (util para browser fallback cuando hay anti-bot). */
+      pageUrl?: string
+      /** ID de la pagina en scrapping_pages (necesario para submit desde navegador). */
+      pageId?: string
     }
   | { ok: false; error: string }
 

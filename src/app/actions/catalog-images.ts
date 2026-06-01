@@ -8,6 +8,7 @@ import { downloadAndUploadProductImage } from '@/lib/catalog-image-download'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import { resolveLiderStoreBaseUrl } from '@/server/retail/capture/lider-catalog-plan'
 import { fetchLiderRetailProducts } from '@/server/retail-capture/fetch-lider-retail'
+import { recaptureProductImageUrl } from '@/lib/catalog-image-recapture'
 
 export type FetchMissingImagesResult =
   | {
@@ -259,25 +260,30 @@ export async function fetchMissingCatalogImagesAction(
     // ─── Estrategia 1: scrapping.matched_catalog_product_id -> image_url ────────
     const { data: byMatchedId, error: scrErr } = await admin
       .from('scrapping')
-      .select('matched_catalog_product_id, image_url')
+      .select('matched_catalog_product_id, image_url, product_url')
       .in('matched_catalog_product_id', productIds)
-      .not('image_url', 'is', null)
 
     if (scrErr) {
       diag.step = 'scrapping_error'
       return { ok: false, error: getUserFriendlyErrorMessage(scrErr, 'generic'), __diagnostic: diag }
     }
+    const productUrlById = new Map<string, string>()
     const sizeBeforeS1 = urlByProduct.size
     for (const row of (byMatchedId ?? []) as Array<{
       matched_catalog_product_id: string
-      image_url: string
+      image_url: string | null
+      product_url: string | null
     }>) {
-      if (!urlByProduct.has(row.matched_catalog_product_id)) {
+      if (row.image_url?.trim() && !urlByProduct.has(row.matched_catalog_product_id)) {
         urlByProduct.set(row.matched_catalog_product_id, row.image_url.trim())
+      }
+      if (row.product_url?.trim() && !productUrlById.has(row.matched_catalog_product_id)) {
+        productUrlById.set(row.matched_catalog_product_id, row.product_url.trim())
       }
     }
     diag.addedByStrategy1_scrapping = urlByProduct.size - sizeBeforeS1
     diag.cumulativeAfterStrategy1 = urlByProduct.size
+    diag.productUrlsAvailable = productUrlById.size
 
     // ─── Estrategia 2: catalog_retail_links -> catalog_retail_snapshots.image_url ──
     const missingAfterS1 = productIds.filter((pid) => !urlByProduct.has(pid))
@@ -461,20 +467,35 @@ export async function fetchMissingCatalogImagesAction(
         continue
       }
       downloadTasks.push(
-        downloadAndUploadProductImage(admin, pid, url).then((res) => {
+        (async () => {
+          // Intento 1: URL guardada
+          let res = await downloadAndUploadProductImage(admin, pid, url)
           if (res.ok) {
             success++
-          } else {
-            failed++
-            addFail({
-              productId: pid,
-              productName: nameByProduct.get(pid),
-              stage: 'download',
-              detail: res.reason,
-              searchUrl: url,
-            })
+            return
           }
-        })
+          // Intento 2: recapturar desde product_url si la URL guardada expiro
+          const productUrl = productUrlById.get(pid)
+          if (productUrl) {
+            const freshUrl = await recaptureProductImageUrl(productUrl)
+            if (freshUrl && freshUrl !== url) {
+              res = await downloadAndUploadProductImage(admin, pid, freshUrl)
+              if (res.ok) {
+                success++
+                return
+              }
+            }
+          }
+          // Fallo definitivo
+          failed++
+          addFail({
+            productId: pid,
+            productName: nameByProduct.get(pid),
+            stage: 'download',
+            detail: 'download fallo y recaptura no encontro imagen fresca',
+            searchUrl: url,
+          })
+        })()
       )
     }
 

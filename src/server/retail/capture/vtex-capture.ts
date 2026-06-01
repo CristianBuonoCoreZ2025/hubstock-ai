@@ -5,6 +5,7 @@
 
 import {
   fetchVtexSearchProductsPage,
+  doGet,
   type VtexFetchResult,
 } from '@/server/retail-capture/fetch-vtex-search'
 import { mapVtexProductList, type RetailSnapshotRow } from '@/server/retail-capture/map-vtex-product'
@@ -34,8 +35,13 @@ type StagingRow = {
   image_url: string | null
 }
 
+function isVtexApiUrl(url: string): boolean {
+  return url.includes('/api/') || url.includes('/_v/')
+}
+
 /**
  * Captura una página VTEX (cualquier endpoint: intelligent-search, catalog_system, o HTML shelf).
+ * Si el seed ya contiene una URL de API VTEX, la usa directamente en lugar de regenerar URLs candidatas.
  */
 export async function captureVtexRetailPage(
   seed: VtexPageSeed,
@@ -44,15 +50,38 @@ export async function captureVtexRetailPage(
   const baseUrl = seed.page_url.match(/^https?:\/\/[^\/]+/)?.[0] ?? ''
 
   let result: VtexFetchResult
-  try {
-    result = await fetchVtexSearchProductsPage(
-      baseUrl,
-      seed.query ?? '',
-      seed.page_index * 20, // offset aproximado
-      20,
-    )
-  } catch (e) {
-    return { ok: false, error: `Error de red al cargar VTEX: ${e instanceof Error ? e.message : String(e)}` }
+
+  // Si el seed ya tiene una URL de API VTEX, usamos esa URL directamente.
+  // La paginación dinámica genera URLs correctas (page, query, count) y las inserta en scrapping_pages.
+  // Si regeneramos URLs desde baseUrl + query + page_index * 20, perdemos la paginación real.
+  if (isVtexApiUrl(seed.page_url)) {
+    try {
+      const direct = await doGet(seed.page_url, new AbortController().signal)
+      if (direct.ok) {
+        result = { ok: true, products: direct.products }
+      } else {
+        // Fallback al fetcher tradicional si la URL directa falla
+        result = await fetchVtexSearchProductsPage(
+          baseUrl,
+          seed.query ?? '',
+          seed.page_index * 20,
+          20,
+        )
+      }
+    } catch (e) {
+      return { ok: false, error: `Error de red al cargar VTEX: ${e instanceof Error ? e.message : String(e)}` }
+    }
+  } else {
+    try {
+      result = await fetchVtexSearchProductsPage(
+        baseUrl,
+        seed.query ?? '',
+        seed.page_index * 20,
+        20,
+      )
+    } catch (e) {
+      return { ok: false, error: `Error de red al cargar VTEX: ${e instanceof Error ? e.message : String(e)}` }
+    }
   }
 
   if (!result.ok) {
