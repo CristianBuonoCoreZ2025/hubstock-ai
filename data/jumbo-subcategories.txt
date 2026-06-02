@@ -1,0 +1,75 @@
+
+DESPENSA (despensa)
+==================================================
+  (Sin subcategorias detectadas)
+
+LICORES, BEBIDAS Y AGUAS (licores-bebidas-y-aguas)
+==================================================
+  (Sin subcategorias detectadas)
+
+LIMPIEZA (limpieza)
+==================================================
+  (Sin subcategorias detectadas)
+
+QUESOS Y FIAMBRES (quesos-y-fiambres)
+==================================================
+  (Sin subcategorias detectadas)
+
+LACTEOS, HUEVOS Y CONGELADOS (lacteos-huevos-y-congelados)
+==================================================
+  (Sin subcategorias detectadas)
+
+CARNES Y PESCADOS (carnes-y-pescados)
+==================================================
+  (Sin subcategorias detectadas)
+
+CHOCOLATES, GALLETAS Y SNACKS (chocolates-galletas-y-snacks)
+==================================================
+  (Sin subcategorias detectadas)
+
+CUIDADO PERSONAL Y BEBE (cuidado-personal-y-bebe)
+==================================================
+  (Sin subcategorias detectadas)
+
+MASCOTAS (mascotas)
+==================================================
+  Perros
+    URL: https://www.jumbo.cl/mascotas/perros
+    Slug: mascotas/perros
+  Gatos
+    URL: https://www.jumbo.cl/mascotas/gatos
+    Slug: mascotas/gatos
+
+HOGAR, JUGUETERIA Y LIBRERIA (hogar-jugueteria-y-libreria)
+==================================================
+  (Sin subcategorias detectadas)
+
+FARMACIA (farmacia)
+==================================================
+  (Sin subcategorias detectadas)
+
+PANADERIA Y PASTELERIA (panaderia-y-pasteleria)
+==================================================
+  (Sin subcategorias detectadas)
+
+FRUTAS Y VERDURAS (frutas-y-verduras)
+==================================================
+  (Sin subcategorias detectadas)
+
+EXPERIENCIAS JUMBO (experiencias-jumbo)
+==================================================
+  Marcas Exclusivas
+    URL: https://www.jumbo.cl/experiencias-jumbo/marcas-exclusivas
+    Slug: experiencias-jumbo/marcas-exclusivas
+  Productos Importados
+    URL: https://www.jumbo.cl/experiencias-jumbo/productos-importados
+    Slug: experiencias-jumbo/productos-importados
+  Comidas Preparadas
+    URL: https://www.jumbo.cl/experiencias-jumbo/comidas-preparadas
+    Slug: experiencias-jumbo/comidas-preparadas
+  Mundo Bio Natura
+    URL: https://www.jumbo.cl/experiencias-jumbo/mundo-bio-natura
+    Slug: experiencias-jumbo/mundo-bio-natura
+
+========================================
+TOTAL: 6 subcategorias en 14 secciones

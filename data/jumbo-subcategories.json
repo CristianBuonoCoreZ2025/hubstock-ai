@@ -1,0 +1,132 @@
+[
+  {
+    "section": "despensa",
+    "sectionName": "Despensa",
+    "url": "https://www.jumbo.cl/despensa",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "licores-bebidas-y-aguas",
+    "sectionName": "Licores, Bebidas y Aguas",
+    "url": "https://www.jumbo.cl/licores-bebidas-y-aguas",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "limpieza",
+    "sectionName": "Limpieza",
+    "url": "https://www.jumbo.cl/limpieza",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "quesos-y-fiambres",
+    "sectionName": "Quesos y Fiambres",
+    "url": "https://www.jumbo.cl/quesos-y-fiambres",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "lacteos-huevos-y-congelados",
+    "sectionName": "Lacteos, Huevos y Congelados",
+    "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "carnes-y-pescados",
+    "sectionName": "Carnes y Pescados",
+    "url": "https://www.jumbo.cl/carnes-y-pescados",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "chocolates-galletas-y-snacks",
+    "sectionName": "Chocolates, Galletas y Snacks",
+    "url": "https://www.jumbo.cl/chocolates-galletas-y-snacks",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "cuidado-personal-y-bebe",
+    "sectionName": "Cuidado Personal y Bebe",
+    "url": "https://www.jumbo.cl/cuidado-personal-y-bebe",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "mascotas",
+    "sectionName": "Mascotas",
+    "url": "https://www.jumbo.cl/mascotas",
+    "subcategories": [
+      {
+        "slug": "mascotas/perros",
+        "name": "Perros",
+        "url": "https://www.jumbo.cl/mascotas/perros"
+      },
+      {
+        "slug": "mascotas/gatos",
+        "name": "Gatos",
+        "url": "https://www.jumbo.cl/mascotas/gatos"
+      }
+    ],
+    "count": 2
+  },
+  {
+    "section": "hogar-jugueteria-y-libreria",
+    "sectionName": "Hogar, Jugueteria y Libreria",
+    "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "farmacia",
+    "sectionName": "Farmacia",
+    "url": "https://www.jumbo.cl/farmacia",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "panaderia-y-pasteleria",
+    "sectionName": "Panaderia y Pasteleria",
+    "url": "https://www.jumbo.cl/panaderia-y-pasteleria",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "frutas-y-verduras",
+    "sectionName": "Frutas y Verduras",
+    "url": "https://www.jumbo.cl/frutas-y-verduras",
+    "subcategories": [],
+    "count": 0
+  },
+  {
+    "section": "experiencias-jumbo",
+    "sectionName": "Experiencias Jumbo",
+    "url": "https://www.jumbo.cl/experiencias-jumbo",
+    "subcategories": [
+      {
+        "slug": "experiencias-jumbo/marcas-exclusivas",
+        "name": "Marcas Exclusivas",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/marcas-exclusivas"
+      },
+      {
+        "slug": "experiencias-jumbo/productos-importados",
+        "name": "Productos Importados",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/productos-importados"
+      },
+      {
+        "slug": "experiencias-jumbo/comidas-preparadas",
+        "name": "Comidas Preparadas",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/comidas-preparadas"
+      },
+      {
+        "slug": "experiencias-jumbo/mundo-bio-natura",
+        "name": "Mundo Bio Natura",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/mundo-bio-natura"
+      }
+    ],
+    "count": 4
+  }
+]

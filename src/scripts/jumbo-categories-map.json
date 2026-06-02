@@ -1,0 +1,259 @@
+[
+  {
+    "section": "despensa",
+    "url": "https://www.jumbo.cl/despensa",
+    "subcategories": []
+  },
+  {
+    "section": "licores-bebidas-y-aguas",
+    "url": "https://www.jumbo.cl/licores-bebidas-y-aguas",
+    "subcategories": []
+  },
+  {
+    "section": "limpieza",
+    "url": "https://www.jumbo.cl/limpieza",
+    "subcategories": [
+      {
+        "slug": "limpieza/accesorios-de-limpieza",
+        "name": "Accesorios De Limpieza",
+        "url": "https://www.jumbo.cl/limpieza/accesorios-de-limpieza"
+      },
+      {
+        "slug": "limpieza/pisos-y-muebles",
+        "name": "Pisos Y Muebles",
+        "url": "https://www.jumbo.cl/limpieza/pisos-y-muebles"
+      },
+      {
+        "slug": "limpieza/bano",
+        "name": "Bano",
+        "url": "https://www.jumbo.cl/limpieza/bano"
+      }
+    ]
+  },
+  {
+    "section": "quesos-y-fiambres",
+    "url": "https://www.jumbo.cl/quesos-y-fiambres",
+    "subcategories": []
+  },
+  {
+    "section": "lacteos-huevos-y-congelados",
+    "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados",
+    "subcategories": [
+      {
+        "slug": "lacteos-huevos-y-congelados/leches",
+        "name": "Leches",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/leches"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/huevos",
+        "name": "Huevos",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/huevos"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/hamburguesas",
+        "name": "Hamburguesas",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/hamburguesas"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/helados-y-postres",
+        "name": "Helados Y Postres",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/helados-y-postres"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/comidas-congeladas",
+        "name": "Comidas Congeladas",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/comidas-congeladas"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/mantequillas-y-margarinas",
+        "name": "Mantequillas Y Margarinas",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/mantequillas-y-margarinas"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/yoghurt",
+        "name": "Yoghurt",
+        "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados/yoghurt"
+      }
+    ]
+  },
+  {
+    "section": "carnes-y-pescados",
+    "url": "https://www.jumbo.cl/carnes-y-pescados",
+    "subcategories": [
+      {
+        "slug": "carnes-y-pescados/vacuno",
+        "name": "Vacuno",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/vacuno"
+      },
+      {
+        "slug": "carnes-y-pescados/pollo",
+        "name": "Pollo",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/pollo"
+      },
+      {
+        "slug": "carnes-y-pescados/pescados",
+        "name": "Pescados",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/pescados"
+      },
+      {
+        "slug": "carnes-y-pescados/cerdo-y-cordero",
+        "name": "Cerdo Y Cordero",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/cerdo-y-cordero"
+      },
+      {
+        "slug": "carnes-y-pescados/mariscos",
+        "name": "Mariscos",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/mariscos"
+      },
+      {
+        "slug": "carnes-y-pescados/camarones",
+        "name": "Camarones",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/camarones"
+      },
+      {
+        "slug": "carnes-y-pescados/gourmet-del-mar",
+        "name": "Gourmet Del Mar",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/gourmet-del-mar"
+      },
+      {
+        "slug": "carnes-y-pescados/pavo",
+        "name": "Pavo",
+        "url": "https://www.jumbo.cl/carnes-y-pescados/pavo"
+      }
+    ]
+  },
+  {
+    "section": "chocolates-galletas-y-snacks",
+    "url": "https://www.jumbo.cl/chocolates-galletas-y-snacks",
+    "subcategories": []
+  },
+  {
+    "section": "cuidado-personal-y-bebe",
+    "url": "https://www.jumbo.cl/cuidado-personal-y-bebe",
+    "subcategories": []
+  },
+  {
+    "section": "mascotas",
+    "url": "https://www.jumbo.cl/mascotas",
+    "subcategories": []
+  },
+  {
+    "section": "hogar-jugueteria-y-libreria",
+    "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria",
+    "subcategories": [
+      {
+        "slug": "hogar-jugueteria-y-libreria/hogar",
+        "name": "Hogar",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/hogar"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/jugueteria",
+        "name": "Jugueteria",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/jugueteria"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/libreria-y-escolares",
+        "name": "Libreria Y Escolares",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/libreria-y-escolares"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/electro-y-tecnologia",
+        "name": "Electro Y Tecnologia",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/electro-y-tecnologia"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/automovil-ferreteria-y-jardin",
+        "name": "Automovil Ferreteria Y Jardin",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/automovil-ferreteria-y-jardin"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/deportes",
+        "name": "Deportes",
+        "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria/deportes"
+      }
+    ]
+  },
+  {
+    "section": "farmacia",
+    "url": "https://www.jumbo.cl/farmacia",
+    "subcategories": [
+      {
+        "slug": "farmacia/dermocosmetica",
+        "name": "Dermocosmetica",
+        "url": "https://www.jumbo.cl/farmacia/dermocosmetica"
+      },
+      {
+        "slug": "farmacia/primeros-auxilios",
+        "name": "Primeros Auxilios",
+        "url": "https://www.jumbo.cl/farmacia/primeros-auxilios"
+      },
+      {
+        "slug": "farmacia/suplementos-y-vitaminas",
+        "name": "Suplementos Y Vitaminas",
+        "url": "https://www.jumbo.cl/farmacia/suplementos-y-vitaminas"
+      },
+      {
+        "slug": "farmacia/accesorios-medicos",
+        "name": "Accesorios Medicos",
+        "url": "https://www.jumbo.cl/farmacia/accesorios-medicos"
+      },
+      {
+        "slug": "farmacia/bienestar-intimo",
+        "name": "Bienestar Intimo",
+        "url": "https://www.jumbo.cl/farmacia/bienestar-intimo"
+      }
+    ]
+  },
+  {
+    "section": "panaderia-y-pasteleria",
+    "url": "https://www.jumbo.cl/panaderia-y-pasteleria",
+    "subcategories": [
+      {
+        "slug": "panaderia-y-pasteleria/pasteleria",
+        "name": "Pasteleria",
+        "url": "https://www.jumbo.cl/panaderia-y-pasteleria/pasteleria"
+      },
+      {
+        "slug": "panaderia-y-pasteleria/panaderia-envasada",
+        "name": "Panaderia Envasada",
+        "url": "https://www.jumbo.cl/panaderia-y-pasteleria/panaderia-envasada"
+      },
+      {
+        "slug": "panaderia-y-pasteleria/masas-y-tortillas",
+        "name": "Masas Y Tortillas",
+        "url": "https://www.jumbo.cl/panaderia-y-pasteleria/masas-y-tortillas"
+      }
+    ]
+  },
+  {
+    "section": "frutas-y-verduras",
+    "url": "https://www.jumbo.cl/frutas-y-verduras",
+    "subcategories": [
+      {
+        "slug": "frutas-y-verduras/frutas",
+        "name": "Frutas",
+        "url": "https://www.jumbo.cl/frutas-y-verduras/frutas"
+      },
+      {
+        "slug": "frutas-y-verduras/verduras",
+        "name": "Verduras",
+        "url": "https://www.jumbo.cl/frutas-y-verduras/verduras"
+      },
+      {
+        "slug": "frutas-y-verduras/frutas-y-verduras-organicas",
+        "name": "Frutas Y Verduras Organicas",
+        "url": "https://www.jumbo.cl/frutas-y-verduras/frutas-y-verduras-organicas"
+      },
+      {
+        "slug": "frutas-y-verduras/frutos-secos-y-semillas",
+        "name": "Frutos Secos Y Semillas",
+        "url": "https://www.jumbo.cl/frutas-y-verduras/frutos-secos-y-semillas"
+      }
+    ]
+  },
+  {
+    "section": "experiencias-jumbo",
+    "url": "https://www.jumbo.cl/experiencias-jumbo",
+    "subcategories": []
+  }
+]

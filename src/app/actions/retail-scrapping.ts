@@ -1496,6 +1496,7 @@ export async function processLiderScrappingRunPageAction(input: {
           const slice = rows.slice(i, i + chunk) as ScrappingUpsertRow[]
           const { error: upErr } = await upsertScrappingChunkForRun(editor.admin, slice)
           if (upErr) {
+            console.error('[upsert-error]', JSON.stringify(upErr))
             lastPersistErr = upErr
             pageError = getUserFriendlyErrorMessage(upErr, 'generic')
             break

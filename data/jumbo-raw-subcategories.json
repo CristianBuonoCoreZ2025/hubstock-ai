@@ -1,0 +1,568 @@
+[
+  {
+    "section": "despensa",
+    "url": "https://www.jumbo.cl/despensa",
+    "subcategories": [
+      {
+        "slug": "despensa/aceites-sal-y-condimentos",
+        "name": "Aceites Sal Y Condimentos",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/aderezos-y-salsas",
+        "name": "Aderezos Y Salsas",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/cereales-avenas-y-barras",
+        "name": "Cereales Avenas Y Barras",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/conservas",
+        "name": "Conservas",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/fideos-pastas-y-salsas",
+        "name": "Fideos Pastas Y Salsas",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/harinas-postres-y-reposteria",
+        "name": "Harinas Postres Y Reposteria",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/te-infusiones-y-mate",
+        "name": "Te Infusiones Y Mate",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/cafe-y-cafeteras",
+        "name": "Cafe Y Cafeteras",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/mermeladas-miel-y-otros",
+        "name": "Mermeladas Miel Y Otros",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/sopas-cremas-e-instantaneos",
+        "name": "Sopas Cremas E Instantaneos",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/azucar-y-endulzantes",
+        "name": "Azucar Y Endulzantes",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/arroz-quinoa-cuscus",
+        "name": "Arroz Quinoa Cuscus",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/legumbres",
+        "name": "Legumbres",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/arroz-y-legumbres",
+        "name": "Arroz Y Legumbres",
+        "source": "script"
+      },
+      {
+        "slug": "despensa/coctel-y-snacks",
+        "name": "Coctel Y Snacks",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "licores-bebidas-y-aguas",
+    "url": "https://www.jumbo.cl/licores-bebidas-y-aguas",
+    "subcategories": []
+  },
+  {
+    "section": "limpieza",
+    "url": "https://www.jumbo.cl/limpieza",
+    "subcategories": [
+      {
+        "slug": "limpieza/accesorios-de-limpieza",
+        "name": "Accesorios De Limpieza",
+        "source": "link"
+      },
+      {
+        "slug": "limpieza/pisos-y-muebles",
+        "name": "Pisos Y Muebles",
+        "source": "link"
+      },
+      {
+        "slug": "limpieza/bano",
+        "name": "Bano",
+        "source": "link"
+      },
+      {
+        "slug": "limpieza/limpieza-de-ropa",
+        "name": "Limpieza De Ropa",
+        "source": "script"
+      },
+      {
+        "slug": "limpieza/aerosoles-y-aromatizantes",
+        "name": "Aerosoles Y Aromatizantes",
+        "source": "script"
+      },
+      {
+        "slug": "limpieza/papeles-hogar",
+        "name": "Papeles Hogar",
+        "source": "script"
+      },
+      {
+        "slug": "limpieza/cocina",
+        "name": "Cocina",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "quesos-y-fiambres",
+    "url": "https://www.jumbo.cl/quesos-y-fiambres",
+    "subcategories": [
+      {
+        "slug": "quesos-y-fiambres/quesos",
+        "name": "Quesos",
+        "source": "script"
+      },
+      {
+        "slug": "quesos-y-fiambres/fiambres",
+        "name": "Fiambres",
+        "source": "script"
+      },
+      {
+        "slug": "quesos-y-fiambres/salchichas-y-parrilleros",
+        "name": "Salchichas Y Parrilleros",
+        "source": "script"
+      },
+      {
+        "slug": "quesos-y-fiambres/aceitunas-pepinillos-y-otros",
+        "name": "Aceitunas Pepinillos Y Otros",
+        "source": "script"
+      },
+      {
+        "slug": "quesos-y-fiambres/encurtidos",
+        "name": "Encurtidos",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "lacteos-huevos-y-congelados",
+    "url": "https://www.jumbo.cl/lacteos-huevos-y-congelados",
+    "subcategories": [
+      {
+        "slug": "lacteos-huevos-y-congelados/leches",
+        "name": "Leches",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/huevos",
+        "name": "Huevos",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/hamburguesas",
+        "name": "Hamburguesas",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/helados-y-postres",
+        "name": "Helados Y Postres",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/comidas-congeladas",
+        "name": "Comidas Congeladas",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/mantequillas-y-margarinas",
+        "name": "Mantequillas Y Margarinas",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/yoghurt",
+        "name": "Yoghurt",
+        "source": "link"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/verduras-congeladas",
+        "name": "Verduras Congeladas",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/leches-cultivadas-y-bebidas-lacteas",
+        "name": "Leches Cultivadas Y Bebidas Lacteas",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/postres-refrigerados",
+        "name": "Postres Refrigerados",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/bebidas-vegetales",
+        "name": "Bebidas Vegetales",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/nuggets-apanados-y-embutidos",
+        "name": "Nuggets Apanados Y Embutidos",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/frutas-y-pulpas-congeladas",
+        "name": "Frutas Y Pulpas Congeladas",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/manjar-y-dulce-de-leche",
+        "name": "Manjar Y Dulce De Leche",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/churrascos-lomitos-y-otros",
+        "name": "Churrascos Lomitos Y Otros",
+        "source": "script"
+      },
+      {
+        "slug": "lacteos-huevos-y-congelados/hielo",
+        "name": "Hielo",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "carnes-y-pescados",
+    "url": "https://www.jumbo.cl/carnes-y-pescados",
+    "subcategories": []
+  },
+  {
+    "section": "chocolates-galletas-y-snacks",
+    "url": "https://www.jumbo.cl/chocolates-galletas-y-snacks",
+    "subcategories": []
+  },
+  {
+    "section": "cuidado-personal-y-bebe",
+    "url": "https://www.jumbo.cl/cuidado-personal-y-bebe",
+    "subcategories": [
+      {
+        "slug": "cuidado-personal-y-bebe/desodorantes",
+        "name": "Desodorantes",
+        "source": "link"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/cuidado-facial",
+        "name": "Cuidado Facial",
+        "source": "link"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/jabones",
+        "name": "Jabones",
+        "source": "link"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/cuidado-capilar",
+        "name": "Cuidado Capilar",
+        "source": "link"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/bebe",
+        "name": "Bebe",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/cuidado-corporal",
+        "name": "Cuidado Corporal",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/higiene-bucal",
+        "name": "Higiene Bucal",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/cuidado-masculino",
+        "name": "Cuidado Masculino",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/maquillaje",
+        "name": "Maquillaje",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/proteccion-femenina",
+        "name": "Proteccion Femenina",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/solares-y-autobronceantes",
+        "name": "Solares Y Autobronceantes",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/incontinencia-y-panales-adulto",
+        "name": "Incontinencia Y Panales Adulto",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/depilacion",
+        "name": "Depilacion",
+        "source": "script"
+      },
+      {
+        "slug": "cuidado-personal-y-bebe/packs-de-cuidado-y-belleza",
+        "name": "Packs De Cuidado Y Belleza",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "mascotas",
+    "url": "https://www.jumbo.cl/mascotas",
+    "subcategories": [
+      {
+        "slug": "mascotas/perros",
+        "name": "Perros",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/gatos",
+        "name": "Gatos",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/otras-mascotas",
+        "name": "Otras Mascotas",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/landing-corta",
+        "name": "Landing Corta",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/carrusel-desktop-3",
+        "name": "Carrusel Desktop 3",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/mundo-premium-mobile",
+        "name": "Mundo Premium Mobile",
+        "source": "script"
+      },
+      {
+        "slug": "mascotas/landing-corta-11",
+        "name": "Landing Corta 11",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "hogar-jugueteria-y-libreria",
+    "url": "https://www.jumbo.cl/hogar-jugueteria-y-libreria",
+    "subcategories": [
+      {
+        "slug": "hogar-jugueteria-y-libreria/hogar",
+        "name": "Hogar",
+        "source": "link"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/jugueteria",
+        "name": "Jugueteria",
+        "source": "link"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/libreria-y-escolares",
+        "name": "Libreria Y Escolares",
+        "source": "link"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/electro-y-tecnologia",
+        "name": "Electro Y Tecnologia",
+        "source": "link"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/automovil-ferreteria-y-jardin",
+        "name": "Automovil Ferreteria Y Jardin",
+        "source": "link"
+      },
+      {
+        "slug": "hogar-jugueteria-y-libreria/deportes",
+        "name": "Deportes",
+        "source": "link"
+      }
+    ]
+  },
+  {
+    "section": "farmacia",
+    "url": "https://www.jumbo.cl/farmacia",
+    "subcategories": [
+      {
+        "slug": "farmacia/dermocosmetica",
+        "name": "Dermocosmetica",
+        "source": "link"
+      },
+      {
+        "slug": "farmacia/primeros-auxilios",
+        "name": "Primeros Auxilios",
+        "source": "link"
+      },
+      {
+        "slug": "farmacia/suplementos-y-vitaminas",
+        "name": "Suplementos Y Vitaminas",
+        "source": "link"
+      },
+      {
+        "slug": "farmacia/accesorios-medicos",
+        "name": "Accesorios Medicos",
+        "source": "link"
+      },
+      {
+        "slug": "farmacia/bienestar-intimo",
+        "name": "Bienestar Intimo",
+        "source": "link"
+      },
+      {
+        "slug": "farmacia/higiene-bucal-especialidad",
+        "name": "Higiene Bucal Especialidad",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "panaderia-y-pasteleria",
+    "url": "https://www.jumbo.cl/panaderia-y-pasteleria",
+    "subcategories": [
+      {
+        "slug": "panaderia-y-pasteleria/pasteleria",
+        "name": "Pasteleria",
+        "source": "link"
+      },
+      {
+        "slug": "panaderia-y-pasteleria/panaderia-envasada",
+        "name": "Panaderia Envasada",
+        "source": "link"
+      },
+      {
+        "slug": "panaderia-y-pasteleria/masas-y-tortillas",
+        "name": "Masas Y Tortillas",
+        "source": "link"
+      },
+      {
+        "slug": "panaderia-y-pasteleria/panaderia-granel",
+        "name": "Panaderia Granel",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "frutas-y-verduras",
+    "url": "https://www.jumbo.cl/frutas-y-verduras",
+    "subcategories": [
+      {
+        "slug": "frutas-y-verduras/frutas",
+        "name": "Frutas",
+        "source": "link"
+      },
+      {
+        "slug": "frutas-y-verduras/verduras",
+        "name": "Verduras",
+        "source": "link"
+      },
+      {
+        "slug": "frutas-y-verduras/frutas-y-verduras-organicas",
+        "name": "Frutas Y Verduras Organicas",
+        "source": "link"
+      },
+      {
+        "slug": "frutas-y-verduras/frutos-secos-y-semillas",
+        "name": "Frutos Secos Y Semillas",
+        "source": "link"
+      },
+      {
+        "slug": "frutas-y-verduras/landing-corta-ffvv",
+        "name": "Landing Corta Ffvv",
+        "source": "script"
+      }
+    ]
+  },
+  {
+    "section": "experiencias-jumbo",
+    "url": "https://www.jumbo.cl/experiencias-jumbo",
+    "subcategories": [
+      {
+        "slug": "experiencias-jumbo/productos-importados",
+        "name": "Productos Importados",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/marcas-exclusivas",
+        "name": "Marcas Exclusivas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/mundo-bio-natura",
+        "name": "Mundo Bio Natura",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/comidas-preparadas",
+        "name": "Comidas Preparadas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/desktop-carrusel-landing-experiencias-jumbo-sabores-del-mundo",
+        "name": "Desktop Carrusel Landing Experiencias Jumbo Sabores Del Mundo",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/mobile-carrusel-landing-experiencias-jumbo-sabores-del-mundo",
+        "name": "Mobile Carrusel Landing Experiencias Jumbo Sabores Del Mundo",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/desktop-carrusel-landing-experiencias-jumbo-marcas-exclusivas",
+        "name": "Desktop Carrusel Landing Experiencias Jumbo Marcas Exclusivas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/mobile-carrusel-landing-experiencias-jumbo-marcas-exclusivas",
+        "name": "Mobile Carrusel Landing Experiencias Jumbo Marcas Exclusivas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/desktop-carrusel-landing-experiencias-jumbo-comidas-preparadas",
+        "name": "Desktop Carrusel Landing Experiencias Jumbo Comidas Preparadas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/mobile-carrusel-landing-experiencias-jumbo-comidas-preparadas",
+        "name": "Mobile Carrusel Landing Experiencias Jumbo Comidas Preparadas",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/desktop-carrusel-landing-experiencias-jumbo-mundo-bio-natura",
+        "name": "Desktop Carrusel Landing Experiencias Jumbo Mundo Bio Natura",
+        "source": "script"
+      },
+      {
+        "slug": "experiencias-jumbo/mobile-carrusel-landing-experiencias-jumbo-mundo-bio-natura",
+        "name": "Mobile Carrusel Landing Experiencias Jumbo Mundo Bio Natura",
+        "source": "script"
+      }
+    ]
+  }
+]

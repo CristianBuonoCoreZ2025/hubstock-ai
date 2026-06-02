@@ -1,0 +1,79 @@
+[
+  {
+    "section": "despensa",
+    "subcategories": []
+  },
+  {
+    "section": "licores-bebidas-y-aguas",
+    "subcategories": []
+  },
+  {
+    "section": "limpieza",
+    "subcategories": []
+  },
+  {
+    "section": "quesos-y-fiambres",
+    "subcategories": []
+  },
+  {
+    "section": "lacteos-huevos-y-congelados",
+    "subcategories": []
+  },
+  {
+    "section": "carnes-y-pescados",
+    "subcategories": []
+  },
+  {
+    "section": "chocolates-galletas-y-snacks",
+    "subcategories": []
+  },
+  {
+    "section": "cuidado-personal-y-bebe",
+    "subcategories": []
+  },
+  {
+    "section": "mascotas",
+    "subcategories": []
+  },
+  {
+    "section": "hogar-jugueteria-y-libreria",
+    "subcategories": []
+  },
+  {
+    "section": "farmacia",
+    "subcategories": []
+  },
+  {
+    "section": "panaderia-y-pasteleria",
+    "subcategories": []
+  },
+  {
+    "section": "frutas-y-verduras",
+    "subcategories": []
+  },
+  {
+    "section": "experiencias-jumbo",
+    "subcategories": [
+      {
+        "slug": "experiencias-jumbo/marcas-exclusivas",
+        "name": "Marcas Exclusivas",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/marcas-exclusivas"
+      },
+      {
+        "slug": "experiencias-jumbo/productos-importados",
+        "name": "Productos Importados",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/productos-importados"
+      },
+      {
+        "slug": "experiencias-jumbo/comidas-preparadas",
+        "name": "Comidas Preparadas",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/comidas-preparadas"
+      },
+      {
+        "slug": "experiencias-jumbo/mundo-bio-natura",
+        "name": "Mundo Bio Natura",
+        "url": "https://www.jumbo.cl/experiencias-jumbo/mundo-bio-natura"
+      }
+    ]
+  }
+]
