@@ -257,8 +257,6 @@ export function CapturaCadenas2Client() {
   const [retailMaxProducts, setRetailMaxProducts] = useState(0)
   const [sweepDiagnostic, setSweepDiagnostic] = useState<CapturaCadenas2SweepDiagnostic | null>(null)
 
-  const [liderAgentDetected, setLiderAgentDetected] = useState<'unknown' | 'detected' | 'not-detected'>('unknown')
-  const liderAgentPollingRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const [barridoPlanOpen, setBarridoPlanOpen] = useState(false)
   const [barridoPlanLoading, setBarridoPlanLoading] = useState(false)
@@ -413,16 +411,6 @@ export function CapturaCadenas2Client() {
     })
   }, []) // Solo ejecutar una vez al montar - funciones son estables
 
-  // Detectar agente local de Lider cuando cambia el retail seleccionado
-  useEffect(() => {
-    const name = selectedRetailName.toLowerCase()
-    if (name.includes('lider')) {
-      setLiderAgentDetected('unknown')
-      void detectLiderAgent()
-    } else {
-      setLiderAgentDetected('unknown')
-    }
-  }, [selectedRetailId])
 
   // Polling del contexto del modal: recarga cada 5s SOLO si hay una corrida running.
   // Se detiene automáticamente cuando el contexto indica que no hay nada corriendo.
@@ -512,19 +500,6 @@ export function CapturaCadenas2Client() {
     if (!canStopScrapping || stopBusy || stopInFlightRef.current) return
     stopInFlightRef.current = true
     setStopBusy(true)
-    
-    // Caso especial: Lider via agente local
-    if (fullSweepBusy && currentRetailLabel.toLowerCase().includes('lider') && liderAgentPollingRef.current) {
-      stopLiderAgentPolling()
-      resetMetricBoxesOnly()
-      setFullSweepBusy(false)
-      setSweepStartedAt(null)
-      setCurrentRetailLabel('')
-      toast.success('Captura local detenida.')
-      setStopBusy(false)
-      stopInFlightRef.current = false
-      return
-    }
     
     // 1. Abortar llamadas HTTP en curso y detener workers
     if (syncRef.current) {
@@ -726,86 +701,6 @@ export function CapturaCadenas2Client() {
     }
   }
 
-  async function detectLiderAgent(): Promise<boolean> {
-    try {
-      const res = await fetch('http://localhost:8765/health', { method: 'GET', mode: 'cors', signal: AbortSignal.timeout(3000) })
-      if (res.ok) {
-        setLiderAgentDetected('detected')
-        return true
-      }
-    } catch {
-      // ignore
-    }
-    setLiderAgentDetected('not-detected')
-    return false
-  }
-
-  function stopLiderAgentPolling() {
-    if (liderAgentPollingRef.current) {
-      clearInterval(liderAgentPollingRef.current)
-      liderAgentPollingRef.current = null
-    }
-  }
-
-  async function startLiderAgentScrape(
-    prepared: BarridoPreparedOkLocal,
-    retailLabelAtStart: string,
-  ) {
-    setFullSweepBusy(true)
-    setSweepStartedAt(new Date().toISOString())
-    setCurrentRetailLabel(retailLabelAtStart)
-    setQueuePagesTotal(0)
-    setQueuePagesProcessed(0)
-    setQueuePagesOk(0)
-    setQueuePagesFailed(0)
-    setScraperRowsTotal(0)
-    toast.message('Iniciando captura local para ' + retailLabelAtStart + '…')
-
-    try {
-      const agentRes = await fetch('http://localhost:8765/scrape', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        mode: 'cors',
-        body: JSON.stringify({ runId: prepared.runId, retailId: prepared.retailId }),
-      })
-      if (!agentRes.ok) {
-        const data = await agentRes.json().catch(() => ({ ok: false, error: 'Agente respondió con error' }))
-        toast.error(data.error || 'El agente local no pudo iniciar la captura.')
-        setFullSweepBusy(false)
-        return
-      }
-    } catch (e) {
-      toast.error('No se pudo conectar con el agente local. Asegurate de que esté corriendo: python lider/scraper_agent.py')
-      setFullSweepBusy(false)
-      return
-    }
-
-    liderAgentPollingRef.current = setInterval(async () => {
-      try {
-        const runsRes = await barridoApiListRuns()
-        if (!runsRes.ok) return
-        const run = runsRes.runs.find((r) => r.id === prepared.runId)
-        if (!run) return
-
-        setQueuePagesTotal(run.total_pages ?? 0)
-        setQueuePagesProcessed(run.pages_done ?? 0)
-        setQueuePagesOk(run.pages_ok ?? 0)
-        setQueuePagesFailed(run.pages_failed ?? 0)
-        setScraperRowsTotal(typeof run.rows_inserted === 'string' ? Number.parseInt(run.rows_inserted, 10) : (run.rows_inserted ?? 0))
-
-        if (run.status === 'completed' || run.status === 'cancelled') {
-          stopLiderAgentPolling()
-          setFullSweepBusy(false)
-          if (run.status === 'completed') {
-            toast.success('Captura completada · ' + (run.rows_inserted ?? 0) + ' productos.')
-          }
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 5000)
-  }
-
   async function startBarridoFreshFromModal() {
     const effectiveRetailId = modalRetailId || selectedRetailId
     if (!effectiveRetailId) {
@@ -818,15 +713,6 @@ export function CapturaCadenas2Client() {
       const prepared = await barridoApiPrepareRun(effectiveRetailId)
       if (!prepared.ok) {
         toast.error(prepared.error)
-        return
-      }
-      if (retailLabelAtStart.toLowerCase().includes('lider')) {
-        const detected = await detectLiderAgent()
-        if (!detected) {
-          toast.error('Agente local no detectado. Corré: python lider/scraper_agent.py')
-          return
-        }
-        await startLiderAgentScrape(prepared, retailLabelAtStart)
         return
       }
       await executeBarridoWithPrepared(prepared, retailLabelAtStart, true)
@@ -1867,62 +1753,6 @@ export function CapturaCadenas2Client() {
           </Button>
         </div>
 
-        {/* Panel especial para Lider: agente local */}
-        {selectedRetailName.toLowerCase().includes('lider') && !fullSweepBusy && (
-          <div className="mt-4 rounded-md border border-blue-200 bg-blue-50/60 p-4 dark:border-blue-900 dark:bg-blue-950/30">
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 shrink-0">
-                {liderAgentDetected === 'detected' ? (
-                  <svg className="h-5 w-5 text-green-600 dark:text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                  </svg>
-                ) : (
-                  <svg className="h-5 w-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                )}
-              </div>
-              <div className="space-y-2 text-sm text-blue-900 dark:text-blue-100">
-                {liderAgentDetected === 'detected' ? (
-                  <>
-                    <p className="font-medium">Agente local detectado</p>
-                    <p className="text-blue-800/80 dark:text-blue-200/80">
-                      El agente de Lider está corriendo en tu PC. Tocá <span className="font-medium">Barrido</span> para iniciar la captura.
-                    </p>
-                  </>
-                ) : liderAgentDetected === 'not-detected' ? (
-                  <>
-                    <p className="font-medium">Lider requiere captura desde tu PC</p>
-                    <p className="text-blue-800/80 dark:text-blue-200/80">
-                      Lider bloquea peticiones desde servidores (anti-bot). El barrido desde la app funciona a través de un agente local.
-                    </p>
-                    <ol className="ml-4 list-decimal space-y-1 text-xs text-blue-800/70 dark:text-blue-200/70">
-                      <li>Abrí una terminal en tu PC</li>
-                      <li>Andá a la carpeta <code className="rounded bg-blue-100 px-1 py-0.5 font-mono dark:bg-blue-900">lider/</code></li>
-                      <li>Configurá las credenciales de Supabase (una sola vez)</li>
-                      <li>Corré: <code className="rounded bg-blue-100 px-1 py-0.5 font-mono dark:bg-blue-900">python scraper_agent.py</code></li>
-                    </ol>
-                    <p className="text-xs text-blue-800/60 dark:text-blue-200/60">
-                      Una vez que el agente esté corriendo, la app detectará automáticamente que está activo.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void detectLiderAgent()}
-                      className="mt-1 rounded bg-blue-200 px-2 py-1 text-xs font-medium text-blue-900 hover:bg-blue-300 dark:bg-blue-800 dark:text-blue-100 dark:hover:bg-blue-700"
-                    >
-                      Verificar agente
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <p className="font-medium">Verificando agente local…</p>
-                    <p className="text-blue-800/80 dark:text-blue-200/80">Detectando si el agente de Lider está corriendo en tu PC.</p>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
 
       </div>
 
