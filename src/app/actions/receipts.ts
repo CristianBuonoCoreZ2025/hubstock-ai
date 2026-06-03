@@ -2,10 +2,8 @@
 
 import { revalidatePath } from 'next/cache'
 import type { Json } from '@/types/database'
-import { getProfileContext } from '@/lib/profile/context'
-import { assertProfileMembership } from '@/lib/profile/membership'
+import { getActionContext, getActionContextWithGate } from '@/lib/action-context'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
-import { createClient } from '@/lib/supabase/server'
 
 /** Marca en `stock_movements.note` para idempotencia por línea de boleta (Etapa 4). */
 const PURCHASE_RECEIPT_ITEM_NOTE_PREFIX = 'purchase_receipt_item:' as const
@@ -23,12 +21,11 @@ function receiptLineQuantity(value: unknown): number {
 }
 
 export async function getPurchaseReceipts() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [] as const, error: null as string | null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('purchase_receipts')
     .select('id, store_name, purchased_at, total, status, created_at')
@@ -56,18 +53,11 @@ type ReceiptAnalysisShape = {
 export async function savePurchaseReceiptDraft(
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; receiptId?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil activo' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
@@ -178,12 +168,11 @@ export type ReceiptDetailItem = {
 }
 
 export async function getReceiptDetail(receiptId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { receipt: null as null, items: [] as ReceiptDetailItem[], error: 'Sin perfil' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: receipt, error: rErr } = await supabase
     .from('purchase_receipts')
     .select('id, store_name, purchased_at, total, status, created_at')
@@ -219,15 +208,14 @@ export type ProductPickerRow = {
 }
 
 export async function listProductsPicker() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return {
       data: [] as ProductPickerRow[],
       error: null as string | null,
     }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('products')
     .select('id, name, brand, format, unit, last_price')
@@ -243,18 +231,11 @@ export async function setReceiptLineProduct(
   lineId: string,
   productId: string | null
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: line, error: lineErr } = await supabase
     .from('purchase_receipt_items')
@@ -305,18 +286,11 @@ export async function setReceiptLineProduct(
 export async function confirmPurchaseReceipt(
   receiptId: string
 ): Promise<{ ok: boolean; error?: string; linesApplied?: number }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {

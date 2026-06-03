@@ -1,8 +1,8 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { getActionContext, getActionContextWithGate } from '@/lib/action-context'
 import { createClient } from '@/lib/supabase/server'
-import { getProfileContext } from '@/lib/profile/context'
 import { assertProfileMembership } from '@/lib/profile/membership'
 import type { ProfileMemberRole } from '@/types/database'
 
@@ -17,8 +17,8 @@ export type TeamInvitationRow = {
 }
 
 export async function getTeamData() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return {
       members: [],
       invitations: [] as TeamInvitationRow[],
@@ -27,8 +27,7 @@ export async function getTeamData() {
       isAdmin: false,
     }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -98,18 +97,14 @@ export async function createInvitation(formData: FormData) {
     return { error: 'Correo inválido' }
   }
 
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'Selecciona un perfil activo' }
-
-  const supabase = await createClient()
+  const ctx = await getActionContextWithGate('admin')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const {
     data: { user },
   } = await supabase.auth.getUser()
   if (!user) return { error: 'Sesión inválida' }
-
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'admin' })
-  if (!gate.ok) return { error: 'Solo administradores pueden invitar' }
 
   const normalizedRole: ProfileMemberRole = ['admin', 'editor', 'viewer'].includes(role) ? role : 'viewer'
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
@@ -208,12 +203,9 @@ export async function revokeInvitation(invitationId: string) {
 }
 
 export async function updateMemberRole(memberRowId: string, role: ProfileMemberRole) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'admin' })
-  if (!gate.ok) return { error: 'Solo administradores' }
+  const ctx = await getActionContextWithGate('admin')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const r = ['admin', 'editor', 'viewer'].includes(role) ? role : 'viewer'
 
@@ -230,12 +222,9 @@ export async function updateMemberRole(memberRowId: string, role: ProfileMemberR
 }
 
 export async function deactivateMember(memberRowId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'admin' })
-  if (!gate.ok) return { error: 'Solo administradores' }
+  const ctx = await getActionContextWithGate('admin')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const {
     data: { user },

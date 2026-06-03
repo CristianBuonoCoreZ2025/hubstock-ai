@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { submitLiderPageHtmlAction } from '@/app/actions/retail-scrapping'
+import { parseJsonBody, extractBodyString, apiError, apiCatchError } from '@/lib/api-route-helpers'
 
 /**
  * Recibe HTML de una página Lider capturada desde el navegador del usuario.
@@ -8,38 +9,25 @@ import { submitLiderPageHtmlAction } from '@/app/actions/retail-scrapping'
 export const maxDuration = 60
 
 export async function POST(request: Request) {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ ok: false as const, error: 'Solicitud invalida.' }, { status: 400 })
-  }
+  const body = await parseJsonBody(request)
+  if (body === null) return apiError('Solicitud invalida.', 400)
 
-  const payload =
-    typeof body === 'object' && body !== null ?
-      (body as { runId?: unknown; pageId?: unknown; pageUrl?: unknown; html?: unknown })
-    : {}
-
-  const runId = String(payload.runId ?? '').trim()
-  const pageId = String(payload.pageId ?? '').trim()
-  const pageUrl = String(payload.pageUrl ?? '').trim()
-  const html = String(payload.html ?? '')
+  const runId = extractBodyString(body, 'runId')
+  const pageId = extractBodyString(body, 'pageId')
+  const pageUrl = extractBodyString(body, 'pageUrl')
+  const html =
+    typeof body === 'object' && body !== null
+      ? String((body as Record<string, unknown>).html ?? '')
+      : ''
 
   if (!runId || !pageId || !pageUrl) {
-    return NextResponse.json(
-      { ok: false as const, error: 'Faltan parametros requeridos (runId, pageId, pageUrl).' },
-      { status: 400 },
-    )
+    return apiError('Faltan parametros requeridos (runId, pageId, pageUrl).', 400)
   }
 
   try {
     const result = await submitLiderPageHtmlAction({ runId, pageId, pageUrl, html })
     return NextResponse.json(result)
   } catch (e) {
-    console.error('[api/retail-scrapping/submit-page-html]', e)
-    return NextResponse.json(
-      { ok: false as const, error: 'No logramos completar la accion. Intenta nuevamente.' },
-      { status: 500 },
-    )
+    return apiCatchError('api/retail-scrapping/submit-page-html', e, 500)
   }
 }

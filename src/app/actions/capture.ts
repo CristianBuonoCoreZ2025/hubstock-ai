@@ -8,9 +8,7 @@ import {
 } from '@/app/actions/catalog'
 import { captureTrace } from '@/lib/capture-trace'
 import { revalidatePath } from 'next/cache'
-import { getProfileContext } from '@/lib/profile/context'
-import { assertProfileMembership } from '@/lib/profile/membership'
-import { createClient } from '@/lib/supabase/server'
+import { getActionContextWithGate } from '@/lib/action-context'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 
 export type CaptureProductResult =
@@ -20,18 +18,11 @@ export type CaptureProductResult =
 export async function addProductFromCapture(
   formData: FormData
 ): Promise<CaptureProductResult> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin ubicación activa' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso para crear productos' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {

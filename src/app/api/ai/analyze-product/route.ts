@@ -9,15 +9,12 @@ import {
   mergeProductImageWithOff,
 } from '@/server/product-enrichment'
 import { normalizeMultiProductVisionJson } from '@/server/vision-product-multi'
+import { parseJsonBody, apiError } from '@/lib/api-route-helpers'
 
 export async function POST(request: Request) {
   try {
-    let json: unknown
-    try {
-      json = await request.json()
-    } catch {
-      return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
-    }
+    const json = await parseJsonBody(request)
+    if (json === null) return apiError('invalid_json', 400)
 
     const parsed = profileScopedVisionImageBodySchema.safeParse(json)
     if (!parsed.success) {
