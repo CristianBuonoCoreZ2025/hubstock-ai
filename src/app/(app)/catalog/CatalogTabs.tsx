@@ -555,30 +555,37 @@ export function CatalogTabs(props: {
   const [productFilterOptionsLoading, setProductFilterOptionsLoading] = useState(false)
 
   const productsFetchSeq = useRef(0)
+  const isReloadingRef = useRef(false)
 
   const reloadProducts = useCallback(async () => {
+    if (isReloadingRef.current) return
+    isReloadingRef.current = true
     return await requestLogger.traceAsyncMethod('reloadProducts', async () => {
-      const seq = ++productsFetchSeq.current
-      setProductsLoading(true)
-      const res = await fetchCatalogProductsPage({
-      page: productPage,
-      includeInactive: showInactiveProducts,
-      sectionId: sectionFilter,
-      categoryId: categoryFilter,
-      brandId: brandFilter,
-      search: productSearchSubmitted,
-    })
-    if (seq !== productsFetchSeq.current) return
-    setProductsLoading(false)
-    if (!res.ok) {
-      toast.error(res.error ?? 'No logramos cargar los productos. Intenta nuevamente.')
-      setProductRows([])
-      return
-    }
-    setProductRows(res.items)
-    setProductsTotal(res.total)
-    setProductsHasNext(res.hasNextPage)
-    setProductsTruncated(Boolean(res.truncated))
+      try {
+        const seq = ++productsFetchSeq.current
+        setProductsLoading(true)
+        const res = await fetchCatalogProductsPage({
+          page: productPage,
+          includeInactive: showInactiveProducts,
+          sectionId: sectionFilter,
+          categoryId: categoryFilter,
+          brandId: brandFilter,
+          search: productSearchSubmitted,
+        })
+        if (seq !== productsFetchSeq.current) return
+        setProductsLoading(false)
+        if (!res.ok) {
+          toast.error(res.error ?? 'No logramos cargar los productos. Intenta nuevamente.')
+          setProductRows([])
+          return
+        }
+        setProductRows(res.items)
+        setProductsTotal(res.total)
+        setProductsHasNext(res.hasNextPage)
+        setProductsTruncated(Boolean(res.truncated))
+      } finally {
+        isReloadingRef.current = false
+      }
     })
   }, [
     brandFilter,
@@ -589,24 +596,31 @@ export function CatalogTabs(props: {
     showInactiveProducts,
   ])
 
+  const isLoadingOptsRef = useRef(false)
   useEffect(() => {
     if (tab !== 'products') return
+    if (isLoadingOptsRef.current) return
+    isLoadingOptsRef.current = true
     let cancelled = false
     async function loadOpts() {
       return await requestLogger.traceAsyncMethod('loadOpts', async () => {
-        setProductFilterOptionsLoading(true)
-        const res = await fetchCatalogProductFilterOptions({
-        search: productSearchSubmitted,
-        sectionId: sectionFilter,
-        categoryId: categoryFilter,
-        brandId: brandFilter,
-        includeInactive: showInactiveProducts,
-      })
-      if (!cancelled) setProductFilterOptionsLoading(false)
-      if (cancelled || !res.ok) return
-      setProductFilterSections(res.sections)
-      setProductFilterCategories(res.categories)
-      setProductFilterBrands(res.brands)
+        try {
+          setProductFilterOptionsLoading(true)
+          const res = await fetchCatalogProductFilterOptions({
+            search: productSearchSubmitted,
+            sectionId: sectionFilter,
+            categoryId: categoryFilter,
+            brandId: brandFilter,
+            includeInactive: showInactiveProducts,
+          })
+          if (!cancelled) setProductFilterOptionsLoading(false)
+          if (cancelled || !res.ok) return
+          setProductFilterSections(res.sections)
+          setProductFilterCategories(res.categories)
+          setProductFilterBrands(res.brands)
+        } finally {
+          if (!cancelled) isLoadingOptsRef.current = false
+        }
       })
     }
     void loadOpts()
@@ -667,6 +681,7 @@ export function CatalogTabs(props: {
     })
     if (key === lastProductsFetchKey.current) return
     lastProductsFetchKey.current = key
+    if (isReloadingRef.current) return
     void reloadProducts()
   }, [reloadProducts, productPage, showInactiveProducts, sectionFilter, categoryFilter, brandFilter, productSearchSubmitted])
 

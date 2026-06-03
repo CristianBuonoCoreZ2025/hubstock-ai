@@ -1,17 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { stopLiderScrappingAction } from '@/app/actions/retail-scrapping'
+import { apiCatchError, apiOkWithDiagnostic } from '@/lib/api-route-helpers'
 
-export async function POST(request: NextRequest) {
-  const diagEnabled = request.headers.get('x-app-diagnostic-log') === '1'
+export async function POST(request: Request) {
   const start = Date.now()
   try {
     const result = await stopLiderScrappingAction()
-    if (diagEnabled) {
-      (result as any).__diagnostic = { durationMs: Date.now() - start, operation: 'stopLiderScrappingAction' }
-    }
-    return NextResponse.json(result)
+    return apiOkWithDiagnostic(request, result, 'stopLiderScrappingAction', start)
   } catch (e) {
-    console.error('[api/retail-scrapping/stop]', e)
-    return NextResponse.json({ ok: false as const, error: 'No logramos completar la acción. Intenta nuevamente.' })
+    return apiCatchError('api/retail-scrapping/stop', e)
   }
 }

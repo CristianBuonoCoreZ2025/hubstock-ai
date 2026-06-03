@@ -1,8 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { getProfileContext } from '@/lib/profile/context'
-import { assertProfileMembership } from '@/lib/profile/membership'
+import { getActionContext, getActionContextWithGate } from '@/lib/action-context'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import { createClient } from '@/lib/supabase/server'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
@@ -34,12 +33,11 @@ const ALLOWED_ZONES = new Set([
 ])
 
 export async function getStockChecksList() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [] as const, error: null as string | null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('stock_checks')
     .select('id, zone, status, created_at, ai_meta')
@@ -173,18 +171,11 @@ function buildStockCheckAiMeta(
 export async function saveStockCheckFromAnalysis(
   formData: FormData
 ): Promise<{ ok: boolean; error?: string; checkId?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil activo' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
@@ -309,12 +300,11 @@ export async function listProfileBrands(): Promise<{
   data: ProfileBrandRow[]
   error: string | null
 }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [], error: null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('profile_brands')
     .select('id, name')
@@ -332,23 +322,16 @@ export async function listProfileBrands(): Promise<{
 export async function saveProfileBrand(
   name: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
-  }
-
   const trimmed = name.trim()
   if (trimmed.length < 1) {
     return { ok: false, error: 'Nombre vacío' }
   }
 
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
+  const { supabase, activeProfileId } = ctx
 
   const { error } = await supabase.from('profile_brands').insert({
     profile_id: activeProfileId,
@@ -432,12 +415,11 @@ export async function listProfileProductTypes(): Promise<{
   data: ProfileCatalogRow[]
   error: string | null
 }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [], error: null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('profile_product_types')
     .select('id, name')
@@ -452,12 +434,11 @@ export async function listProfilePresentations(): Promise<{
   data: ProfileCatalogRow[]
   error: string | null
 }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [], error: null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('profile_presentations')
     .select('id, name')
@@ -471,23 +452,16 @@ export async function listProfilePresentations(): Promise<{
 export async function saveProfileProductType(
   name: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
-  }
-
   const trimmed = name.trim()
   if (trimmed.length < 1) {
     return { ok: false, error: 'Nombre vacío' }
   }
 
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
+  const { supabase, activeProfileId } = ctx
 
   const { error } = await supabase.from('profile_product_types').insert({
     profile_id: activeProfileId,
@@ -509,23 +483,16 @@ export async function saveProfileProductType(
 export async function saveProfilePresentation(
   name: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
-  }
-
   const trimmed = name.trim()
   if (trimmed.length < 1) {
     return { ok: false, error: 'Nombre vacío' }
   }
 
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
+  const { supabase, activeProfileId } = ctx
 
   const { error } = await supabase.from('profile_presentations').insert({
     profile_id: activeProfileId,
@@ -553,16 +520,15 @@ export type StockCheckDetailHeader = {
 }
 
 export async function getStockCheckDetail(checkId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return {
       check: null as StockCheckDetailHeader | null,
       items: [] as StockCheckDetailItem[],
       error: 'Sin perfil',
     }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: check, error: cErr } = await supabase
     .from('stock_checks')
     .select('id, zone, status, created_at, ai_meta')
@@ -611,18 +577,11 @@ export async function updateStockCheckDetectedItem(
   itemId: string,
   input: UpdateStockCheckDetectedInput
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: row, error: rowErr } = await supabase
     .from('stock_check_detected_items')
@@ -702,18 +661,11 @@ export async function updateStockCheckDetectedItem(
 export async function deleteStockCheckDetectedItem(
   itemId: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: row, error: rowErr } = await supabase
     .from('stock_check_detected_items')
@@ -758,18 +710,11 @@ export async function deleteStockCheckDetectedItem(
 export async function applyStockCheckToInventory(
   checkId: string
 ): Promise<{ ok: boolean; error?: string; rowsApplied?: number }> {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { ok: false, error: 'Sin perfil' }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { ok: false, error: ctx.error }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, {
-    minRole: 'editor',
-  })
-  if (!gate.ok) {
-    return { ok: false, error: 'Sin permiso' }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {

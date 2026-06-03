@@ -6,31 +6,27 @@ Lider bloquea peticiones desde servidores (anti-bot PerimeterX). Estos scripts c
 
 | Script | Descripción | Cuándo usar |
 |--------|-------------|-------------|
-| `scraper.py` | Scraper original. Guarda en SQLite local y JSON. | Si querés datos locales |
-| `scraper_to_supabase.py` | Scraper que inserta directo en Supabase. | **Recomendado**. Inserta directo en la app |
-| `upload_to_app.py` | Sube un JSON ya generado a la app via API. | Si ya tenés un JSON de scraper.py |
+| `lider-scraper.js` | **NUEVO** Scraper con Puppeteer + stealth. Pasa PerimeterX. | **Recomendado**. Inserta directo en la app con paginación completa |
+| `scraper_to_supabase.py` | Scraper Python legacy con `requests`. | **NO FUNCIONA** — Lider bloquea con PX |
+| `scraper.py` | Scraper original. Guarda en SQLite local. | **NO FUNCIONA** — Lider bloquea con PX |
+| `upload_to_app.py` | Sube un JSON ya generado a la app via API. | Si ya tenés un JSON viejo |
 
-## Requisitos
+## Script recomendado: lider-scraper.js
+
+Este script usa **Puppeteer con stealth plugin** para abrir Chrome como un navegador real, pasar el anti-bot de PerimeterX, y extraer productos directamente del `__NEXT_DATA__` de Lider. Captura **todas las páginas** de cada categoría (paginación completa).
+
+### Requisitos
 
 ```bash
-pip install requests
+# Ya instalados en el proyecto
+npm install puppeteer puppeteer-extra puppeteer-extra-plugin-stealth
 ```
 
-Para `scraper_to_supabase.py` también necesitás configurar credenciales (ver abajo).
-
-## Uso recomendado: scraper_to_supabase.py
-
-### 1. Configurar credenciales (una sola vez)
+### Configurar credenciales (una sola vez)
 
 Obtener desde el dashboard de Supabase:
 - **URL**: Settings → API → URL (`https://xxxxx.supabase.co`)
 - **Service Role Key**: Settings → API → `service_role key` (¡no compartir!)
-
-En Linux/Mac:
-```bash
-export SUPABASE_URL="https://tu-proyecto.supabase.co"
-export SUPABASE_SERVICE_ROLE_KEY="eyJ..."
-```
 
 En Windows (PowerShell):
 ```powershell
@@ -38,37 +34,60 @@ $env:SUPABASE_URL="https://tu-proyecto.supabase.co"
 $env:SUPABASE_SERVICE_ROLE_KEY="eyJ..."
 ```
 
-### 2. Correr el scraper
-
+En Linux/Mac:
 ```bash
-cd lider
-python scraper_to_supabase.py
+export SUPABASE_URL="https://tu-proyecto.supabase.co"
+export SUPABASE_SERVICE_ROLE_KEY="eyJ..."
 ```
 
-El script:
-1. Lee las categorías de `raw_categories.json`
-2. Scrapea cada subcategoría desde tu PC
-3. Inserta productos directamente en la tabla `scrapping`
-4. Crea un run en `scrapping_runs`
-5. Inserta snapshots en `catalog_retail_snapshots`
-
-Los productos aparecen automáticamente en la app en **Captura Cadenas → Homologación**.
-
-## Uso alternativo: scraper.py + upload_to_app.py
-
-Si preferís el flujo de dos pasos:
+### Uso
 
 ```bash
-# Paso 1: Scrapear a JSON
-python scraper.py
+# Scrapear TODAS las categorías (puede tardar ~30-60 min)
+node lider/lider-scraper.js
 
-# Paso 2: Subir a la app
-python upload_to_app.py --json productos_lider.json --url https://tu-app.vercel.app
+# Scrapear solo 5 categorías (prueba rápida)
+node lider/lider-scraper.js --max-categories=5
+
+# Scrapear una categoría específica
+node lider/lider-scraper.js --category-url="https://super.lider.cl/browse/..."
 ```
 
-## Notas importantes
+### ¿Qué hace el script?
 
+1. **Abre Chrome visible** con perfil persistente (las cookies se guardan)
+2. **Va a la home de Lider** y detecta automáticamente si PX muestra el challenge "Soy humano"
+3. **Si aparece el challenge**: el script PAUSA y muestra instrucciones en la consola. Vos resolvés el desafío manualmente en el navegador (presioná y mantené el botón ~5 segundos). El script detecta automáticamente cuando pasó y **sigue solo**.
+4. **Navega cada categoría** de `raw_categories.json` paginando automáticamente (`?page=1`, `?page=2`...) hasta agotar los productos
+5. **Inserta productos** directamente en:
+   - `scrapping` — productos scrapeados para homologación
+   - `scrapping_runs` — registro de la corrida
+   - `catalog_retail_snapshots` — historial de precios
+
+### Notas importantes sobre PerimeterX
+
+- **La primera ejecución** probablemente pida el challenge "Soy humano". Resolvelo una vez y las cookies quedan guardadas en el perfil persistente.
+- **Las siguientes ejecuciones** probablemente pasen automáticamente sin pedir challenge (las cookies persisten).
+- Si tu IP queda marcada por muchos intentos fallidos, PX puede volver a pedir el challenge. En ese caso, resolvelo de nuevo.
 - **Nunca subas el `SUPABASE_SERVICE_ROLE_KEY` a GitHub**. Usalo solo en tu PC local.
-- El script tiene delays entre requests para no sobrecargar el servidor de Lider.
-- Si Lider cambia su HTML, puede fallar la extracción de `__NEXT_DATA__`. En ese caso, revisar el log de errores.
-- Los productos insertados se deduplican por `run_id + retailer + external_ref`.
+
+## Scripts legacy (NO funcionan con PX)
+
+Estos scripts usan `requests` (Python) que PerimeterX bloquea inmediatamente. Quedan documentados por compatibilidad pero **no sirven** para Lider actual:
+
+```bash
+# NO FUNCIONA — PX bloquea
+python lider/scraper_to_supabase.py
+
+# NO FUNCIONA — PX bloquea
+python lider/scraper.py
+```
+
+## Solución de problemas
+
+| Problema | Solución |
+|----------|----------|
+| "Homepage blocked by PerimeterX" | Borrá el perfil: `rmdir /s /q %LOCALAPPDATA%\lider-puppeteer-profile` y probá de nuevo |
+| "No __NEXT_DATA__ found" | Lider cambió su estructura. Revisar el HTML con el navegador abierto |
+| "Execution context was destroyed" | Navegación durante challenge. El script ya maneja esto automáticamente |
+| Snapshots no se insertan | Verificar que `catalog_retail_snapshots` existe en Supabase |
