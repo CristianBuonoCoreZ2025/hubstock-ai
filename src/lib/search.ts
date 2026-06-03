@@ -1,4 +1,4 @@
-const DIACRITIC_MARK = /\p{M}/gu
+export const DIACRITIC_MARK = /\p{M}/gu
 const NON_SEARCH_CHAR = /[^\p{L}\p{N}\s]/gu
 const MULTI_SPACE = /\s+/g
 const REPEATED_LETTERS = /(\p{L})\1+/gu

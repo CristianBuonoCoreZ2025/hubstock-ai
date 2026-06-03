@@ -1,4 +1,5 @@
-const DIACRITIC_MARK = /\p{M}/gu
+import { DIACRITIC_MARK } from '@/lib/search'
+
 const NON_LETTER_NUM_SPACE = /[^\p{L}\p{N}\s]/gu
 
 /**

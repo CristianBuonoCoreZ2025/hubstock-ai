@@ -1,25 +1,18 @@
 import { NextResponse } from 'next/server'
 import { requeueFailedPagesOnLatestRunForRetailAction } from '@/app/actions/retail-scrapping'
+import { parseJsonBody, extractBodyString, apiError, apiCatchError } from '@/lib/api-route-helpers'
 
 export async function POST(request: Request) {
-  let body: unknown
-  try {
-    body = await request.json()
-  } catch {
-    return NextResponse.json({ ok: false as const, error: 'Solicitud inválida.' }, { status: 400 })
-  }
-  const retailId =
-    typeof body === 'object' && body !== null && 'retailId' in body ?
-      String((body as { retailId?: unknown }).retailId ?? '').trim()
-    : ''
-  if (!retailId) {
-    return NextResponse.json({ ok: false as const, error: 'Falta el retail.' }, { status: 400 })
-  }
+  const body = await parseJsonBody(request)
+  if (body === null) return apiError('Solicitud inválida.', 400)
+
+  const retailId = extractBodyString(body, 'retailId')
+  if (!retailId) return apiError('Falta el retail.', 400)
+
   try {
     const result = await requeueFailedPagesOnLatestRunForRetailAction({ retailId })
     return NextResponse.json(result)
   } catch (e) {
-    console.error('[api/retail-scrapping/requeue-failed-latest]', e)
-    return NextResponse.json({ ok: false as const, error: 'No logramos completar la acción. Intenta nuevamente.' })
+    return apiCatchError('api/retail-scrapping/requeue-failed-latest', e)
   }
 }
