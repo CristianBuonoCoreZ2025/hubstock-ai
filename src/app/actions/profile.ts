@@ -127,24 +127,24 @@ export async function setActiveProfileId(profileId: string) {
   return { ok: true as const }
 }
 
-export async function updateActiveProfileSettings(formData: FormData): Promise<void> {
+export async function updateActiveProfileSettings(formData: FormData): Promise<{ ok: boolean; error?: string }> {
   const name = String(formData.get('name') ?? '').trim()
   const description = String(formData.get('description') ?? '').trim()
 
   if (name.length < 2) {
-    return
+    return { ok: false, error: 'El nombre debe tener al menos 2 caracteres.' }
   }
 
   const { activeProfileId } = await getProfileContext()
   if (!activeProfileId) {
-    return
+    return { ok: false, error: 'Sin perfil activo.' }
   }
 
   const supabase = await createClient()
   const { assertProfileMembership } = await import('@/lib/profile/membership')
   const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'admin' })
   if (!gate.ok) {
-    return
+    return { ok: false, error: 'Solo administradores pueden editar el perfil.' }
   }
 
   const { error } = await supabase
@@ -156,9 +156,11 @@ export async function updateActiveProfileSettings(formData: FormData): Promise<v
     .eq('id', activeProfileId)
 
   if (error) {
-    return
+    console.error('Error actualizando perfil:', error)
+    return { ok: false, error: 'No se pudo guardar el perfil. Intenta nuevamente.' }
   }
 
   revalidatePath('/settings')
   revalidatePath('/', 'layout')
+  return { ok: true }
 }

@@ -115,7 +115,9 @@ export async function savePurchaseReceiptDraft(
         contentType: image.type || 'image/jpeg',
         upsert: false,
       })
-    if (!upErr) {
+    if (upErr) {
+      console.error('savePurchaseReceiptDraft: falló subida de imagen:', upErr.message)
+    } else {
       image_storage_path = path
     }
   }
@@ -140,7 +142,8 @@ export async function savePurchaseReceiptDraft(
     .single()
 
   if (rErr || !receipt) {
-    return { ok: false, error: rErr?.message ?? 'No se pudo guardar la boleta' }
+    if (rErr) console.error('savePurchaseReceiptDraft: falló inserción de boleta:', rErr)
+    return { ok: false, error: 'No se pudo guardar la boleta. Intenta nuevamente.' }
   }
 
   const items = Array.isArray(analysis.items) ? analysis.items : []
@@ -159,7 +162,8 @@ export async function savePurchaseReceiptDraft(
       .from('purchase_receipt_items')
       .insert(rows)
     if (iErr) {
-      return { ok: false, error: iErr.message }
+      console.error('savePurchaseReceiptDraft: falló inserción de líneas:', iErr)
+      return { ok: false, error: 'Se creó la boleta pero no se pudieron guardar las líneas. Intenta agregar los ítems manualmente.' }
     }
   }
 
@@ -435,12 +439,12 @@ export async function confirmPurchaseReceipt(
         console.error('Revertir stock tras fallo de movimiento (boleta):', revErr)
         return {
           ok: false,
-          error: `No se registró el movimiento de compra y no se pudo revertir el stock: ${revErr.message} (movimiento: ${mErr.message})`,
+          error: 'No se registró el movimiento de compra y no se pudo revertir el stock. Intenta de nuevo.',
         }
       }
       return {
         ok: false,
-        error: `No se pudo registrar el movimiento de compra; el stock quedó como antes de esta línea. ${mErr.message}`,
+        error: 'No se pudo registrar el movimiento de compra; el stock quedó como antes de esta línea.',
       }
     }
   }
