@@ -66,7 +66,7 @@ function surfaceFetchSignal(globalSignal: AbortSignal): AbortSignal {
 }
 
 /** Semillas internas amplias (solo si el descubrimiento no devolvió suficiente). No requieren configuración del usuario. */
-const INTERNAL_FALLBACK_PATHS = ['/', '/browse', '/search']
+const INTERNAL_FALLBACK_PATHS = ['/', '/search']
 
 function trimBase(url: string): string {
   return url.replace(/\/+$/, '')

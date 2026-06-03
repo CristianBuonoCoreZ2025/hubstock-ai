@@ -1795,6 +1795,22 @@ export async function submitPageHtmlAction(input: {
       rows_written: rows.length,
     })
 
+    // Actualizar contadores de la corrida para mantener estado consistente
+    const t2 = await countScrappingPages(editor.admin, input.runId)
+    const completed = t2.done + t2.failed
+    const rowsCountForRun =
+      (await selectScrappingRowCountForRun(editor.admin, input.runId)) ?? 0
+    await editor.admin
+      .from('scrapping_runs')
+      .update({
+        pages_done: completed,
+        pages_ok: t2.done,
+        pages_failed: t2.failed,
+        rows_inserted: rowsCountForRun,
+      } as never)
+      .eq('id', input.runId)
+      .eq('status', 'running' as never)
+
     return { ok: true, productsFound: rawProductCount, rowsWritten: rows.length }
   } catch (e) {
     await finalizeScrappingPage(editor.admin, input.pageId, {

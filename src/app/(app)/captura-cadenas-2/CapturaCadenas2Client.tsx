@@ -245,7 +245,15 @@ export function CapturaCadenas2Client() {
   const [stopBusy, setStopBusy] = useState(false)
   const [sweepStartedAt, setSweepStartedAt] = useState<string | null>(null)
   const [currentRetailLabel, setCurrentRetailLabel] = useState<string>('')
-  const syncRef = useRef<{ stop: boolean; abortController: AbortController } | null>(null)
+  const syncRef = useRef<{
+    stop: boolean
+    abortController: AbortController
+    antiBotGate: {
+      active: boolean
+      resolve: (() => void) | null
+      promise: Promise<void> | null
+    }
+  } | null>(null)
   const stopInFlightRef = useRef(false)
 
   const [queuePagesTotal, setQueuePagesTotal] = useState(0)
@@ -257,6 +265,15 @@ export function CapturaCadenas2Client() {
   const [retailMaxProducts, setRetailMaxProducts] = useState(0)
   const [sweepDiagnostic, setSweepDiagnostic] = useState<CapturaCadenas2SweepDiagnostic | null>(null)
 
+  /** Panel visible cuando el retail bloquea con anti-bot y el navegador del usuario debe resolverlo. */
+  const [humanAntiBotPanel, setHumanAntiBotPanel] = useState<{
+    open: boolean
+    runId: string
+    pageId: string
+    pageUrl: string
+    error: string
+    attempts: number
+  } | null>(null)
 
   const [barridoPlanOpen, setBarridoPlanOpen] = useState(false)
   const [barridoPlanLoading, setBarridoPlanLoading] = useState(false)
@@ -721,6 +738,48 @@ export function CapturaCadenas2Client() {
     }
   }
 
+  async function retryHumanAntiBotPage() {
+    if (!humanAntiBotPanel?.open) return
+    const { runId, pageId, pageUrl } = humanAntiBotPanel
+    try {
+      requestLogger.logUI('[Browser fallback] Reintentando desde navegador del usuario')
+      const browserRes = await fetch(pageUrl, { credentials: 'include' })
+      if (browserRes.ok) {
+        const html = await browserRes.text()
+        if (html.length > 500) {
+          const submit = await barridoApiSubmitPageHtml({ runId, pageId, pageUrl, html })
+          if (submit.ok) {
+            requestLogger.logUI('[Browser fallback] OK tras intervencion humana')
+            setHumanAntiBotPanel(null)
+            toast.success('Pagina capturada desde el navegador. Reanudando barrido...')
+            if (syncRef.current && syncRef.current.antiBotGate.active && syncRef.current.antiBotGate.resolve) {
+              syncRef.current.antiBotGate.active = false
+              syncRef.current.antiBotGate.resolve()
+              syncRef.current.antiBotGate.resolve = null
+              syncRef.current.antiBotGate.promise = null
+            }
+            return
+          }
+        }
+      }
+      toast.error('La pagina sigue bloqueada. Abrila en una pestaña nueva, resolve el desafio, y volve a Reintentar.')
+    } catch (e) {
+      toast.error('Error al reintentar. Proba abrir la URL manualmente en tu navegador.')
+    }
+  }
+
+  async function skipHumanAntiBotPage() {
+    if (!humanAntiBotPanel?.open) return
+    setHumanAntiBotPanel(null)
+    toast.message('Pagina omitida. Continuando con el barrido...')
+    if (syncRef.current && syncRef.current.antiBotGate.active && syncRef.current.antiBotGate.resolve) {
+      syncRef.current.antiBotGate.active = false
+      syncRef.current.antiBotGate.resolve()
+      syncRef.current.antiBotGate.resolve = null
+      syncRef.current.antiBotGate.promise = null
+    }
+  }
+
   async function resumeBarridoFromModal(runId: string) {
     const effectiveRetailId = modalRetailId || selectedRetailId
     if (!effectiveRetailId) {
@@ -862,6 +921,12 @@ export function CapturaCadenas2Client() {
         finishedUi: false,
         lastOk: undefined as ProcessPageOk | undefined,
         abortController,
+        /** Gate que bloquea workers cuando hay anti-bot, hasta que el usuario actue. */
+        antiBotGate: {
+          active: false,
+          resolve: null as (() => void) | null,
+          promise: null as Promise<void> | null,
+        },
       }
       syncRef.current = sync
 
@@ -907,24 +972,28 @@ export function CapturaCadenas2Client() {
           setRetailMaxProducts(okRes.retailMaxProducts)
 
           // Browser fallback: si el servidor detecto anti-bot, intentamos desde el navegador del usuario
-          if (okRes.error && okRes.pageUrl && okRes.pageId &&
-              (okRes.error.toLowerCase().includes('anti-bot') || okRes.error.toLowerCase().includes('akamai') ||
-               (okRes.pageUrl?.toLowerCase().includes('jumbo.cl') && okRes.error.toLowerCase().includes('no se encontraron productos')))) {
+          const isAntiBotError = okRes.error && okRes.pageUrl && okRes.pageId &&
+            (okRes.error.toLowerCase().includes('anti-bot') || okRes.error.toLowerCase().includes('akamai') ||
+             okRes.error.toLowerCase().includes('perimeter') || okRes.error.toLowerCase().includes('robot or human') ||
+             okRes.error.toLowerCase().includes('bloqueo') || okRes.error.toLowerCase().includes('blocked') ||
+             (okRes.pageUrl?.toLowerCase().includes('jumbo.cl') && okRes.error.toLowerCase().includes('no se encontraron productos')))
+
+          if (isAntiBotError) {
             try {
               requestLogger.logUI("[Browser fallback] Capturando desde navegador")
-              const browserRes = await fetch(okRes.pageUrl, { credentials: 'omit' })
+              const browserRes = await fetch(okRes.pageUrl!, { credentials: 'omit' })
               if (browserRes.ok) {
                 const html = await browserRes.text()
                 if (html.length > 500) {
                   const submit = await barridoApiSubmitPageHtml({
                     runId: prepared.runId,
-                    pageId: okRes.pageId,
-                    pageUrl: okRes.pageUrl,
+                    pageId: okRes.pageId!,
+                    pageUrl: okRes.pageUrl!,
                     html,
                   })
                   if (submit.ok) {
                     requestLogger.logUI("[Browser fallback] OK: productos guardados")
-                    // Reintentamos la misma pagina para obtener los contadores actualizados
+                    setHumanAntiBotPanel(null)
                     continue
                   }
                 }
@@ -932,6 +1001,24 @@ export function CapturaCadenas2Client() {
             } catch (e) {
               requestLogger.logUI("[Browser fallback] Error en fetch")
             }
+            // Fetch automatico fallo. Activar gate y bloquear workers hasta intervencion humana.
+            if (!sync.antiBotGate.active) {
+              sync.antiBotGate.active = true
+              sync.antiBotGate.promise = new Promise<void>(r => { sync.antiBotGate.resolve = r })
+              if (!humanAntiBotPanel?.open) {
+                setHumanAntiBotPanel({
+                  open: true,
+                  runId: prepared.runId,
+                  pageId: okRes.pageId!,
+                  pageUrl: okRes.pageUrl!,
+                  error: okRes.error || '',
+                  attempts: (humanAntiBotPanel?.attempts ?? 0) + 1,
+                })
+              }
+              toast.error('Lider bloqueo la peticion. Abrila en tu navegador, resolve el desafio, y toca Reintentar.')
+            }
+            await sync.antiBotGate.promise
+            continue
           }
 
           if (okRes.error && !sync.warnedListings) {
@@ -1755,6 +1842,57 @@ export function CapturaCadenas2Client() {
 
 
       </div>
+
+      {/* Panel de anti-bot humano: cuando el retail bloquea el servidor, el usuario resuelve desde su navegador */}
+      {humanAntiBotPanel?.open && (
+        <div className="rounded-md border border-amber-300 bg-amber-50/70 p-4 dark:border-amber-800 dark:bg-amber-950/30">
+          <div className="flex items-start gap-3">
+            <div className="mt-0.5 shrink-0">
+              <svg className="h-5 w-5 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <div className="flex-1 space-y-3 text-sm text-amber-900 dark:text-amber-100">
+              <p className="font-medium">Lider bloqueo la captura automatica</p>
+              <p className="text-amber-800/80 dark:text-amber-200/80">
+                La tienda detecto que la peticion viene de un servidor. Abrila en tu navegador, resolve el desafio de seguridad (captcha / "Press & Hold"), y volve aca para continuar.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.open(humanAntiBotPanel.pageUrl, '_blank', 'noopener,noreferrer')}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-100 px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-200 dark:bg-amber-800 dark:text-amber-100 dark:hover:bg-amber-700"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  Abrir URL en nueva pestaña
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void retryHumanAntiBotPage()}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 dark:bg-amber-500 dark:hover:bg-amber-600"
+                >
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Reintentar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void skipHumanAntiBotPage()}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-amber-300 px-3 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:text-amber-200 dark:hover:bg-amber-800"
+                >
+                  Omitir pagina
+                </button>
+              </div>
+              <p className="text-xs text-amber-700/70 dark:text-amber-300/70">
+                {humanAntiBotPanel.error} · Intentos: {humanAntiBotPanel.attempts}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <p className="text-sm font-medium text-foreground">Corridas recientes</p>
