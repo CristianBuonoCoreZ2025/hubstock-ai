@@ -36,11 +36,35 @@ const MIN_SCRAPPING_SEED_URLS = 2000
 
 /** Landings `/content/{slug}/{id}` (hubs comerciales) siempre en el plan de URLs. */
 const LIDER_CONTENT_HUB_REL_PATHS: readonly string[] = [
-  '/content/la-boti/60338008',
+  '/content/belleza/70159643',
+  '/content/higiene-y-cuidado-personal/72387472',
+  '/content/mascotas/07089592',
+  '/content/tecno-y-electro/38052117',
   '/content/marcas-propias/69507955',
   '/content/marcas-americanas/27359988',
-  '/content/soy-pyme/52660800',
+  '/content/la-boti/60338008',
+  '/content/carnes-y-pescados/21856785',
+  '/content/despensa/46589040',
+  '/content/frutas-y-verduras/22884697',
+  '/content/bebidas-y-snack/13901022',
+  '/content/lacteos,fiambreria-y-huevos/45669105',
+  '/content/panaderia-y-pasteleria/73535247',
+  '/content/congelados/13010356',
+  '/content/desayunos-y-dulces/23483116',
+  '/content/limpieza-y-aseo/43390617',
+  '/content/mundo-bebe-y-jugueteria/11780484',
+  '/content/chocolates/29989562',
+  '/content/colaciones/49858221',
+  '/content/platos-preparados/17061702',
+  '/content/hogar/24339485',
+  '/content/parrillas-y-jardin/94001531',
+  '/content/deporte-y-aire-libre/24575391',
+  '/content/libreria-y-cumpleanos/34941056',
+  '/content/ferreteria/65208759',
+  '/content/automovil/27137192',
+  '/content/salud-y-estilos-de-vida/60967524',
   '/content/campanas/31828696',
+  '/content/soy-pyme/52660800',
 ]
 
 function liderContentHubSeedUrls(origin: string): string[] {
@@ -66,7 +90,7 @@ function surfaceFetchSignal(globalSignal: AbortSignal): AbortSignal {
 }
 
 /** Semillas internas amplias (solo si el descubrimiento no devolvió suficiente). No requieren configuración del usuario. */
-const INTERNAL_FALLBACK_PATHS = ['/', '/search']
+const INTERNAL_FALLBACK_PATHS = ['/', '/inicio', '/search']
 
 function trimBase(url: string): string {
   return url.replace(/\/+$/, '')
