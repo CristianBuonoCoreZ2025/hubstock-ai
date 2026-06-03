@@ -1,9 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { createClient } from '@/lib/supabase/server'
-import { getProfileContext } from '@/lib/profile/context'
-import { assertProfileMembership } from '@/lib/profile/membership'
+import { getActionContextWithGate } from '@/lib/action-context'
 import { TRIP_PHASE_DRAFT, TRIP_PHASE_SHOPPING } from '@/lib/shopping-phase'
 
 function parsePhase(notes: string | null): 'draft' | 'shopping' {
@@ -11,16 +9,11 @@ function parsePhase(notes: string | null): 'draft' | 'shopping' {
 }
 
 export async function getOrCreateActiveShoppingTrip() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
-    return { data: null, error: 'No active profile', phase: null as 'draft' | 'shopping' | null }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) {
+    return { data: null, error: ctx.error, phase: null as 'draft' | 'shopping' | null }
   }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) {
-    return { data: null, error: gate.reason, phase: null }
-  }
+  const { supabase, activeProfileId } = ctx
 
   const { data: existing } = await supabase
     .from('shopping_trips')
@@ -64,12 +57,9 @@ export async function getOrCreateActiveShoppingTrip() {
 }
 
 export async function generateAutoList() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const tripRes = await getOrCreateActiveShoppingTrip()
   if (tripRes.error || !tripRes.data) return { error: tripRes.error ?? 'Trip error' }
@@ -114,12 +104,9 @@ export async function generateAutoList() {
 }
 
 export async function addItemToList(productId: string, quantity: number) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase } = ctx
 
   const tripRes = await getOrCreateActiveShoppingTrip()
   if (tripRes.error || !tripRes.data) return { error: tripRes.error ?? 'Trip error' }
@@ -140,12 +127,9 @@ export async function addItemToList(productId: string, quantity: number) {
 }
 
 export async function updateListItemPlanned(itemId: string, quantityPlanned: number) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase } = ctx
 
   const q = Math.max(0, quantityPlanned)
   const { error } = await supabase
@@ -160,12 +144,9 @@ export async function updateListItemPlanned(itemId: string, quantityPlanned: num
 }
 
 export async function removeListItem(itemId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const { data: row } = await supabase.from('shopping_trip_items').select('trip_id').eq('id', itemId).single()
   if (!row) return { error: 'Ítem no encontrado' }
@@ -184,12 +165,9 @@ export async function removeListItem(itemId: string) {
 }
 
 export async function startShoppingTrip(tripId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const { error } = await supabase
     .from('shopping_trips')
@@ -209,12 +187,9 @@ export async function checkShoppingItem(
   isChecked: boolean,
   unitPricePaid?: number | null
 ) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const { data: row, error: fetchErr } = await supabase
     .from('shopping_trip_items')
@@ -257,12 +232,9 @@ export async function checkShoppingItem(
 }
 
 export async function updateItemBoughtQuantity(itemId: string, quantityBought: number) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase } = ctx
 
   const q = Math.max(0, quantityBought)
   const { error } = await supabase
@@ -276,12 +248,9 @@ export async function updateItemBoughtQuantity(itemId: string, quantityBought: n
 }
 
 export async function finishShoppingTrip(tripId: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) return { error: 'No active profile' }
-
-  const supabase = await createClient()
-  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
-  if (!gate.ok) return { error: gate.reason }
+  const ctx = await getActionContextWithGate('editor')
+  if (!ctx.ok) return { error: ctx.error }
+  const { supabase, activeProfileId } = ctx
 
   const {
     data: { user },

@@ -5,6 +5,7 @@ import { assertProfileMembership } from '@/lib/profile/membership'
 import { createClient } from '@/lib/supabase/server'
 import { createServiceRoleClient } from '@/server/supabase-admin'
 import { downloadAndUploadProductImage } from '@/lib/catalog-image-download'
+import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import { resolveLiderStoreBaseUrl } from '@/server/retail/capture/lider-catalog-plan'
 import { fetchLiderRetailProducts } from '@/server/retail-capture/fetch-lider-retail'
@@ -136,6 +137,37 @@ async function fetchImageByNameForRetailer(
  *   - searchUrlSamples: primeras 5 URLs de busqueda construidas para verificacion manual
  *   - metricas de cada etapa
  */
+/**
+ * Health-check rapido para retailer. Evita lanzar 48+ requests si la API esta bloqueada.
+ */
+async function isRetailerSearchHealthy(retailer: string, base: string): Promise<boolean> {
+  const testName = 'test'
+  if (retailer === 'lider') {
+    try {
+      const result = await fetchLiderRetailProducts(base, testName, 1)
+      return result.ok
+    } catch {
+      return false
+    }
+  }
+  // Jumbo / Central Mayorista: API VTEX ft=
+  const searchUrl = `${base.replace(/\/+$/, '')}/api/catalog_system/pub/products/search?_from=0&_to=0&ft=${encodeURIComponent(testName)}`
+  try {
+    const res = await fetch(searchUrl, {
+      signal: AbortSignal.timeout(5_000),
+      headers: { Accept: 'application/json', 'User-Agent': 'Mozilla/5.0 (compatible; HubStockAI/1.0)' },
+      cache: 'no-store',
+    })
+    if (!res.ok) return false
+    const text = await res.text()
+    if (text.trim().startsWith('<')) return false
+    JSON.parse(text) // validar que es JSON
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function fetchMissingCatalogImagesAction(
   input?: { batchSize?: number }
 ): Promise<FetchMissingImagesResult> {
@@ -165,6 +197,20 @@ export async function fetchMissingCatalogImagesAction(
 
     const admin = createServiceRoleClient()
     const batchSize = Math.min(Math.max(input?.batchSize ?? 50, 1), 100)
+
+    // Verificar bucket de storage antes de intentar descargas
+    const bucketName = getPublicUploadBucket()
+    const { data: buckets } = await admin.storage.listBuckets()
+    const bucketExists = buckets?.some((b) => b.name === bucketName)
+    if (!bucketExists) {
+      diag.step = 'bucket_missing'
+      diag.bucketName = bucketName
+      return {
+        ok: false,
+        error: `El bucket "${bucketName}" no existe en Supabase Storage. Crealo antes de recuperar imagenes.`,
+        __diagnostic: diag,
+      }
+    }
     diag.batchSize = batchSize
 
     // 1) Contar total productos scrapping
@@ -172,6 +218,7 @@ export async function fetchMissingCatalogImagesAction(
       .from('catalog_products')
       .select('id', { count: 'exact', head: true })
       .in('source_system', ['scrapping_homologation', 'scrapping_homologation_v2'])
+      .order('created_at', { ascending: true })
 
     if (countErr) {
       diag.step = 'count_error'
@@ -224,9 +271,15 @@ export async function fetchMissingCatalogImagesAction(
     diag.withInternalMediaCount = withInternalMedia.size
     diag.withExternalMediaCount = externalUrlByProduct.size
 
-    // 4) Filtrar SIN thumbnail interno, tomar batch
+    // 4) Filtrar SIN thumbnail interno, mezclar aleatoriamente y tomar batch
     const allProducts = (products ?? []) as Array<{ id: string; name: string; source_system: string }>
-    const needImage = allProducts.filter((p) => !withInternalMedia.has(p.id)).slice(0, batchSize)
+    const withoutInternal = allProducts.filter((p) => !withInternalMedia.has(p.id))
+    // Mezclar para evitar procesar siempre los mismos productos (ej: todos Jumbo bloqueado)
+    for (let i = withoutInternal.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[withoutInternal[i], withoutInternal[j]] = [withoutInternal[j], withoutInternal[i]]
+    }
+    const needImage = withoutInternal.slice(0, batchSize)
     const nameByProduct = new Map<string, string>(allProducts.map((p) => [p.id, p.name]))
 
     diag.needImageCount = needImage.length
@@ -379,6 +432,14 @@ export async function fetchMissingCatalogImagesAction(
           let searchHit = 0
           let searchMiss = 0
 
+          // Health-check rapido: si Jumbo o Central devuelven HTML/410, saltarlas todas
+          const needsJumbo = stillMissing.some((l) => l.retailer === 'jumbo')
+          const needsCentral = stillMissing.some((l) => l.retailer === 'central_mayorista')
+          const jumboHealthy = needsJumbo ? await isRetailerSearchHealthy('jumbo', 'https://www.jumbo.cl') : true
+          const centralHealthy = needsCentral ? await isRetailerSearchHealthy('central_mayorista', 'https://www.centralmayor.cl') : true
+          diag.jumboHealthy = jumboHealthy
+          diag.centralHealthy = centralHealthy
+
           for (const link of stillMissing) {
             const apiBase =
               link.retailer === 'lider' ? liderBase
@@ -392,6 +453,27 @@ export async function fetchMissingCatalogImagesAction(
                 productName: nameByProduct.get(link.catalog_product_id),
                 stage: 'no_snapshot_image',
                 detail: `retailer desconocido: "${link.retailer}"`,
+              })
+              searchMiss++
+              continue
+            }
+
+            if (link.retailer === 'jumbo' && !jumboHealthy) {
+              addFail({
+                productId: link.catalog_product_id,
+                productName: nameByProduct.get(link.catalog_product_id),
+                stage: 'search_api',
+                detail: 'Jumbo API no disponible (bloqueada). Se omite busqueda.',
+              })
+              searchMiss++
+              continue
+            }
+            if (link.retailer === 'central_mayorista' && !centralHealthy) {
+              addFail({
+                productId: link.catalog_product_id,
+                productName: nameByProduct.get(link.catalog_product_id),
+                stage: 'search_api',
+                detail: 'Central Mayorista API no disponible (bloqueada). Se omite busqueda.',
               })
               searchMiss++
               continue

@@ -7,15 +7,12 @@ import { analyzeReceiptFromImage } from '@/server/image-analysis'
 import { analyzeReceiptFromExtractedText } from '@/server/receipt-text-analysis'
 import { mapVisionFailure } from '@/server/vision-error-map'
 import { enrichReceiptAnalysisPayload } from '@/server/product-enrichment'
+import { parseJsonBody, apiError } from '@/lib/api-route-helpers'
 
 export async function POST(request: Request) {
   try {
-    let json: unknown
-    try {
-      json = await request.json()
-    } catch {
-      return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
-    }
+    const json = await parseJsonBody(request)
+    if (json === null) return apiError('invalid_json', 400)
 
     const parsed = analyzeReceiptBodySchema.safeParse(json)
     if (!parsed.success) {

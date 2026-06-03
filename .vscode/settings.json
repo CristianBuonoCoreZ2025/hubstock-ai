@@ -1,0 +1,9 @@
+{
+  "workbench.iconTheme": "material-icon-theme",
+  "peacock.surpriseMeOnStartup": false,
+  "peacock.affectActivityBar": false,
+  "peacock.affectStatusBar": false,
+  "peacock.affectTitleBar": false,
+  "files.autoSave": "afterDelay",
+  "files.autoSaveDelay": 1000
+}

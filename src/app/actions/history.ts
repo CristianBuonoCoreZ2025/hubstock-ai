@@ -1,15 +1,13 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { getProfileContext } from '@/lib/profile/context'
+import { getActionContext } from '@/lib/action-context'
 
 export async function getStockMovements(limit = 150) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: [], error: null as string | null }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('stock_movements')
     .select(

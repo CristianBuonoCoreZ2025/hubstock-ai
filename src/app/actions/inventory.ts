@@ -1,19 +1,16 @@
 'use server'
 
-import { createClient } from '@/lib/supabase/server'
-import { getProfileContext } from '@/lib/profile/context'
 import { revalidatePath } from 'next/cache'
+import { getActionContext } from '@/lib/action-context'
 import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
-import { withServerActionDiagnostic } from '@/lib/server-action-diagnostic'
 import { createCatalogProductRow, type CatalogProductInput } from '@/app/actions/catalog'
 
 export async function getProducts() {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { data: null, error: new Error('No active profile') }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data, error } = await supabase
     .from('products')
     .select(`
@@ -29,7 +26,11 @@ export async function getProducts() {
 }
 
 export async function getCategoriesAndSections() {
-  const supabase = await createClient()
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
+    return { categories: [], sections: [], error: null }
+  }
+  const { supabase } = ctx
   
   const [categoriesRes, sectionsRes] = await Promise.all([
     supabase.from('categories').select('id, name, section_id, sort_order').order('sort_order'),
@@ -44,12 +45,11 @@ export async function getCategoriesAndSections() {
 }
 
 export async function addProduct(formData: FormData) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { error: 'Necesitas un perfil activo para agregar productos al inventario.' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
     return { error: 'No tienes sesión activa.' }
@@ -153,12 +153,11 @@ export async function addProduct(formData: FormData) {
  * Un solo nombre estándar; requiere los mismos permisos que crear en catálogo (editor en el perfil).
  */
 export async function addProductCreatingCatalogMaster(formData: FormData) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { error: 'Necesitas un perfil activo para agregar productos al inventario.' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
     return { error: 'No tienes sesión activa.' }
@@ -264,12 +263,11 @@ export async function addProductCreatingCatalogMaster(formData: FormData) {
 }
 
 export async function updateProduct(id: string, formData: FormData) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { error: 'Necesitas un perfil activo para editar productos.' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
     return { error: 'No tienes sesión activa.' }
@@ -381,12 +379,11 @@ export async function updateProduct(id: string, formData: FormData) {
 }
 
 export async function deleteProduct(id: string) {
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { error: 'Necesitas un perfil activo para desactivar productos.' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   
   const { error } = await supabase
     .from('products')
@@ -405,12 +402,11 @@ export async function deleteProduct(id: string) {
 
 export async function consumeProduct(productId: string, quantity: number) {
   const startMs = Date.now()
-  const { activeProfileId } = await getProfileContext()
-  if (!activeProfileId) {
+  const ctx = await getActionContext()
+  if (!ctx.ok) {
     return { error: 'Necesitas un perfil activo para descontar stock.' }
   }
-
-  const supabase = await createClient()
+  const { supabase, activeProfileId } = ctx
   const { data: userData } = await supabase.auth.getUser()
   if (!userData.user) {
     return { error: 'No tienes sesión activa.' }
