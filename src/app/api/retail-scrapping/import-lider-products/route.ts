@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
 import { createServiceRoleClient } from '@/server/supabase-admin'
 import { insertScrappingRun } from '@/server/retail/scrapping/lider-scrapping-service'
+import { getProfileContext } from '@/lib/profile/context'
+import { createClient } from '@/lib/supabase/server'
+import { assertProfileMembership } from '@/lib/profile/membership'
 
 export const maxDuration = 120
 
@@ -45,6 +48,17 @@ export async function POST(request: Request) {
   const products = Array.isArray(payload.products) ? payload.products : []
   if (products.length === 0) {
     return NextResponse.json({ ok: false as const, error: 'No se recibieron productos.' })
+  }
+
+  // Auth gate: require authenticated user with editor role
+  const { activeProfileId } = await getProfileContext()
+  if (!activeProfileId) {
+    return NextResponse.json({ ok: false as const, error: 'Sin perfil activo.' }, { status: 401 })
+  }
+  const supabase = await createClient()
+  const gate = await assertProfileMembership(supabase, activeProfileId, { minRole: 'editor' })
+  if (!gate.ok) {
+    return NextResponse.json({ ok: false as const, error: 'Se requiere rol editor o administrador.' }, { status: 403 })
   }
 
   try {

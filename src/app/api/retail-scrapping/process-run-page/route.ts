@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   // Detectar si el cliente aborta la conexión
   const abortSignal = request.signal
-  const diagEnabled = request.headers.get('x-app-diagnostic-log') === '1'
+  const diagEnabled = process.env.NODE_ENV !== 'production' && request.headers.get('x-app-diagnostic-log') === '1'
   const start = Date.now()
 
   try {

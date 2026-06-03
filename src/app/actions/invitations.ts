@@ -20,7 +20,7 @@ export async function inviteUserToProfile(
       // 2. Si no existe, crear usuario con password genérica
       const { error: createError } = await supabase.auth.admin.createUser({
         email,
-        password: 'PasswordGenerica123!',
+        password: `${crypto.randomUUID()}-Aa1!`,
         email_confirm: true,
       })
       if (createError) throw createError

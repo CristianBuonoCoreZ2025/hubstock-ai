@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getScrappingInitAction } from '@/app/actions/retail-scrapping'
 
 export async function GET(request: NextRequest) {
-  const diagEnabled = request.headers.get('x-app-diagnostic-log') === '1'
+  const diagEnabled = process.env.NODE_ENV !== 'production' && request.headers.get('x-app-diagnostic-log') === '1'
   const start = Date.now()
   try {
     const result = await getScrappingInitAction()
