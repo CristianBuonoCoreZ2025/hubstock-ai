@@ -301,6 +301,30 @@ La funcion SQL generaba un UUID diferente para cada fila de scrapping `pending_n
 
 ## Regla: No asumir infraestructura de hosting
 
+## 2026-06-04 - Anti-bot Lider: deteccion masiva + panel + scraper local
+
+### Objetivo
+Resolver el bloqueo masivo de Lider por Akamai/PerimeterX durante el barrido. Implementar 3 lineas de defensa simultaneas (A, B, C).
+
+### Opcion C: Detener barrido ante falla masiva
+- Contador de fallas consecutivas por anti-bot (`antiBotFailCountRef`, limite = 5).
+- Al llegar a 5: detiene el worker, muestra toast.error, abre panel de bloqueo.
+
+### Opcion A: Browser fallback mejorado
+- Intenta fetch desde el navegador. Si falla, abre URL en pestana nueva para captcha manual.
+
+### Opcion B: Deteccion de scraper local
+- useEffect consulta `localhost:8765/health`. Muestra mensaje condicional.
+
+### Archivos modificados
+- `src/app/(app)/captura-cadenas-2/CapturaCadenas2Client.tsx`
+- `lider/lider-scraper.js` (carga `.env.local` automaticamente)
+
+### Validacion
+- `npm run build`: exitoso.
+
+---
+
 El usuario corre la app localmente (`npm run dev` en su PC).  
 **Nunca** asumir Vercel, producción, deploy, o servidor remoto a menos que el usuario lo mencione explícitamente.  
 El scraping de cadenas (Jumbo, Lider) corre desde la máquina del usuario, no desde un servidor en la nube.  

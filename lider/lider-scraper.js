@@ -30,9 +30,52 @@ puppeteer.use(StealthPlugin())
 const fs = require('fs')
 const path = require('path')
 
+/**
+ * Carga variables desde un archivo .env (sin dependencias externas).
+ * Soporta: KEY=valor, KEY="valor", comentarios (#), líneas vacías.
+ */
+function loadEnvFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8')
+    const lines = content.split(/\r?\n/)
+    for (const raw of lines) {
+      const line = raw.trim()
+      if (!line || line.startsWith('#')) continue
+      const idx = line.indexOf('=')
+      if (idx === -1) continue
+      const key = line.slice(0, idx).trim()
+      let value = line.slice(idx + 1).trim()
+      // Quitar comillas envolventes
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1)
+      }
+      if (key && process.env[key] == null) {
+        process.env[key] = value
+      }
+    }
+  } catch {
+    // Si no existe el archivo, ignorar silenciosamente
+  }
+}
+
+// Cargar .env.local desde la raíz del proyecto (1 nivel arriba de lider/)
+const envPath = path.join(__dirname, '..', '.env.local')
+loadEnvFile(envPath)
+
 // ─── CONFIG ───
-const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/$/, '')
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+const SUPABASE_URL = (
+  process.env.SUPABASE_URL ||
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  process.env.VITE_SUPABASE_URL ||
+  process.env.PUBLIC_SUPABASE_URL ||
+  ''
+).replace(/\/$/, '')
+const SUPABASE_KEY = (
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_ANON_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  ''
+)
 const BASE_URL = 'https://super.lider.cl'
 const CATEGORIES_FILE = path.join(__dirname, 'raw_categories.json')
 const USER_DATA_DIR = path.join(process.env.LOCALAPPDATA || process.env.TMP || '/tmp', 'lider-puppeteer-profile')

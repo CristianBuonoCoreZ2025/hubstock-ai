@@ -906,34 +906,6 @@ export function CapturaCadenas2Client() {
           setRetailMaxPages(okRes.retailMaxPages)
           setRetailMaxProducts(okRes.retailMaxProducts)
 
-          // Browser fallback: si el servidor detecto anti-bot, intentamos desde el navegador del usuario
-          if (okRes.error && okRes.pageUrl && okRes.pageId &&
-              (okRes.error.toLowerCase().includes('anti-bot') || okRes.error.toLowerCase().includes('akamai') ||
-               (okRes.pageUrl?.toLowerCase().includes('jumbo.cl') && okRes.error.toLowerCase().includes('no se encontraron productos')))) {
-            try {
-              requestLogger.logUI("[Browser fallback] Capturando desde navegador")
-              const browserRes = await fetch(okRes.pageUrl, { credentials: 'omit' })
-              if (browserRes.ok) {
-                const html = await browserRes.text()
-                if (html.length > 500) {
-                  const submit = await barridoApiSubmitPageHtml({
-                    runId: prepared.runId,
-                    pageId: okRes.pageId,
-                    pageUrl: okRes.pageUrl,
-                    html,
-                  })
-                  if (submit.ok) {
-                    requestLogger.logUI("[Browser fallback] OK: productos guardados")
-                    // Reintentamos la misma pagina para obtener los contadores actualizados
-                    continue
-                  }
-                }
-              }
-            } catch (e) {
-              requestLogger.logUI("[Browser fallback] Error en fetch")
-            }
-          }
-
           if (okRes.error && !sync.warnedListings) {
             sync.warnedListings = true
             toast.warning(
@@ -1186,6 +1158,35 @@ export function CapturaCadenas2Client() {
                     : 0
                   return (
                     <div className="space-y-4">
+                    {(() => {
+                      const retail = retails.find((r) => r.id === modalRetailId)
+                      const isLider = retail?.name?.toLowerCase().includes('lider') || retail?.base_url?.includes('lider.cl')
+                      return isLider ? (
+                        <div className="rounded-lg border-2 border-amber-400 bg-amber-50 p-4 dark:border-amber-600 dark:bg-amber-950/50">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5 shrink-0">
+                              <AlertTriangle className="h-5 w-5 text-amber-600 dark:text-amber-400" aria-hidden />
+                            </div>
+                            <div className="flex-1 space-y-2">
+                              <p className="font-medium text-amber-900 dark:text-amber-100">
+                                Lider requiere el scraper local
+                              </p>
+                              <p className="text-sm text-amber-800 dark:text-amber-200">
+                                La tienda Lider bloquea la captura automatica con Akamai/PerimeterX.
+                                Use el scraper local con Chrome real.
+                              </p>
+                              <code className="block rounded bg-slate-100 p-2 font-mono text-xs text-slate-800 dark:bg-slate-900 dark:text-slate-200">
+                                node lider/lider-scraper.js
+                              </code>
+                              <p className="text-xs text-amber-700 dark:text-amber-300">
+                                Ejecutelo en la terminal y siga las instrucciones.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null
+                    })()}
+
                       <div className="scrapping-state-header scrapping-state-header--active">
                         <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
                         Barrido en ejecución · {currentRetailLabel || 'Cargando…'}
@@ -1418,7 +1419,8 @@ export function CapturaCadenas2Client() {
                           className="btn-new btn-lg-block"
                           disabled={
                             barridoPlanActionBusy ||
-                            (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail)
+                            (barridoPlanCtx.anyRunningGlobally && !barridoPlanCtx.runningForRetail) ||
+                            retails.find((r) => r.id === modalRetailId)?.name?.toLowerCase().includes('lider')
                           }
                           onClick={() => void startBarridoFreshFromModal()}
                         >

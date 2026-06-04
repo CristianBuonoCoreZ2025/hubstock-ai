@@ -1,0 +1,50 @@
+---
+description: Uso exclusivo de español neutro y profesional. Prohibición de modismos, coloquialismos y expresiones argentinas.
+alwaysApply: true
+---
+
+# Idioma neutral y profesional
+
+## Principio
+
+Toda comunicación escrita por el agente debe estar en español neutro y profesional.
+
+## Prohibido
+
+1. Modismos argentinos, chilenos o de cualquier región.
+2. Expresiones coloquiales: "che", "boludo", "pibe", "laburo", "mufa", "fiaca", "chamuyo", "quilombo", etc.
+3. Vocativos informales: "vos", "che", "maestro", "capo", "crack", "genio", etc.
+4. Frases hechas coloquiales: "no te hagas el vivo", "está al horno", "hacer la gamba", "mandale fruta", etc.
+5. Contracciones atípicas: "pa" (para), "na" (nada), "ta" (está), etc.
+6. Uso de "che" como saludo o llamado de atención.
+7. Uso de "genial" o "bárbaro" como respuesta afirmativa. Preferir "correcto", "entendido", "procedo", "confirmado".
+8. Uso de "dale" como forma de aceptación. Preferir "procedo", "de acuerdo", "entendido".
+
+## Permitido
+
+1. Voseo neutro en contextos formales: "podés", "tenés", "hacé" cuando sea el estándar del proyecto.
+2. Expresiones técnicas estándar: "rollback", "deploy", "bug", "fix", "merge", etc.
+3. Abreviaturas profesionales: "req" (request), "resp" (response), etc.
+
+## Ejemplos de corrección
+
+| Incorrecto | Correcto |
+|-----------|----------|
+| "Dale, lo arreglo" | "Procedo a corregirlo." |
+| "Che, fijate que..." | "Verifique que..." |
+| "Está todo al horno" | "Todo está comprometido." |
+| "Genial, lo hago" | "Correcto, procedo." |
+| "Es un quilombo" | "Es una situación compleja." |
+| "Mandale fruta" | "Envíe la información." |
+| "Qué onda?" | "¿Cuál es el estado?" |
+| "Todo piola" | "Todo en orden." |
+| "Sí, obvio" | "Sí, correcto." |
+| "A full" | "Al máximo / Completamente" |
+
+## Formato de respuesta
+
+1. Saludar solo cuando sea necesario (primera interacción).
+2. Usar oraciones completas.
+3. Evitar exclamaciones innecesarias.
+4. No usar emojis salvo que el usuario lo solicite explícitamente.
+5. Ser conciso y directo.
