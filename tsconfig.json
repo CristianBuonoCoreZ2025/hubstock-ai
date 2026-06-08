@@ -35,6 +35,7 @@
     "_legacy",
     ".next",
     "app",
-    "ui"
+    "ui",
+    "supabase/functions"
   ]
 }

@@ -88,6 +88,16 @@ export async function processHomologationGrayIaBatch(
     summary.errors += singleResult.errors
   }
 
+  // Confirmar matches auto-tentativos acumulados despues de este batch
+  try {
+    await admin.rpc(
+      'scrapping_confirm_auto_tentative_matches',
+      { p_chunk_size: 3000 } as never
+    )
+  } catch {
+    // Silencioso: no bloquear el progreso del wizard si la confirmacion falla
+  }
+
   return {
     ok: true,
     result: {

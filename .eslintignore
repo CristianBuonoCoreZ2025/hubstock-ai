@@ -1,0 +1,3 @@
+# Edge Functions usan runtime Deno (imports de URL, global Deno, etc.)
+# No deben lintear con el parser de Node.js/Next.js
+supabase/functions/

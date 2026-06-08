@@ -1889,7 +1889,8 @@ export function CapturaCadenas2Client() {
               </div>
             </div>
             <p className="homolog-step-card__body">
-              Quita de scrapping lo que ya está en tu catálogo y homologa por nombre + marca exactos al maestro.
+              Quita de scrapping lo que ya está en tu catálogo: primero por nombre + marca exactos,
+              luego por marca coincidente + similitud de nombre (fuzzy).
             </p>
             <Button
               type="button"
@@ -2097,9 +2098,20 @@ export function CapturaCadenas2Client() {
             {exactMatchLast.scrappingDuplicatesPurged > 0 ?
               `${exactMatchLast.scrappingDuplicatesPurged.toLocaleString('es-CL')} ya en catálogo · `
             : null}
-            {exactMatchLast.scrappingRowsRemoved.toLocaleString('es-CL')} por nombre exacto ·{' '}
-            {exactMatchLast.distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) · quedaron{' '}
-            {exactMatchLast.pendingScrappingRemaining.toLocaleString('es-CL')} pending
+            {exactMatchLast.exactRemoved !== undefined && exactMatchLast.fuzzyRemoved !== undefined ? (
+              <>
+                {exactMatchLast.exactRemoved.toLocaleString('es-CL')} exacto
+                {exactMatchLast.fuzzyRemoved > 0 ? ` + ${exactMatchLast.fuzzyRemoved.toLocaleString('es-CL')} fuzzy` : ''} ·{' '}
+                {exactMatchLast.distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) · quedaron{' '}
+                {exactMatchLast.pendingScrappingRemaining.toLocaleString('es-CL')} pending
+              </>
+            ) : (
+              <>
+                {exactMatchLast.scrappingRowsRemoved.toLocaleString('es-CL')} homologados ·{' '}
+                {exactMatchLast.distinctCatalogProducts.toLocaleString('es-CL')} maestro(s) · quedaron{' '}
+                {exactMatchLast.pendingScrappingRemaining.toLocaleString('es-CL')} pending
+              </>
+            )}
           </p>
         : null}
 

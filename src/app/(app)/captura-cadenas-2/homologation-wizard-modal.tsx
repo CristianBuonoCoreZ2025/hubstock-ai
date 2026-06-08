@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   CheckCircle2,
   Loader2,
@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dialog'
 import {
   runScrappingHomologationStep2DbMotorAction,
+
   runScrappingHomologationGrayIaBatchAction,
   runScrappingHomologationCreateNewBatchAction,
 } from '@/app/actions/retail-scrapping'
@@ -114,6 +115,23 @@ function StepIndicator({ status, stepNumber }: { status: StepStatus; stepNumber:
   }
 }
 
+/** Borde lateral + fondo sutil para distinguir estado del paso */
+function stepCardClass(status: StepStatus): string {
+  const base = 'relative rounded-xl border-l-4 p-3 transition-all duration-500'
+  switch (status) {
+    case 'running':
+      return `${base} border-l-primary bg-primary/[0.03]`
+    case 'done':
+      return `${base} border-l-emerald-500 bg-emerald-500/[0.03]`
+    case 'error':
+      return `${base} border-l-destructive bg-destructive/[0.05]`
+    case 'skipped':
+      return `${base} border-l-muted-foreground/20 bg-muted/20`
+    default:
+      return `${base} border-l-transparent`
+  }
+}
+
 const SHIMMER_COLORS = {
   primary: { from: 'hsl(var(--primary))', mid: 'hsl(var(--primary) / 0.3)' },
   violet: { from: '#7c3aed', mid: 'rgba(124,58,237,0.3)' },
@@ -161,6 +179,53 @@ function StepIcon({ step, status }: { step: 1 | 2 | 3; status: StepStatus }) {
 
 /* ────────── Modal principal ────────── */
 
+const WIZARD_STORAGE_KEY = 'stockcasa-homolog-wizard'
+const WIZARD_TTL_MS = 2 * 60 * 60 * 1000 // 2 horas
+
+interface PersistedWizardState {
+  step1Status: StepStatus
+  step1Result: Step1Result | null
+  step1Error: string | null
+  step2Status: StepStatus
+  step2Result: Step2Result | null
+  step2Error: string | null
+  step3Status: StepStatus
+  step3Result: Step3Result | null
+  step3Error: string | null
+  timestamp: number
+}
+
+function readPersistedState(): PersistedWizardState | null {
+  try {
+    const raw = localStorage.getItem(WIZARD_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PersistedWizardState
+    if (Date.now() - parsed.timestamp > WIZARD_TTL_MS) {
+      localStorage.removeItem(WIZARD_STORAGE_KEY)
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function writePersistedState(state: Omit<PersistedWizardState, 'timestamp'>) {
+  try {
+    localStorage.setItem(WIZARD_STORAGE_KEY, JSON.stringify({ ...state, timestamp: Date.now() }))
+  } catch {
+    // silencioso
+  }
+}
+
+function clearPersistedState() {
+  try {
+    localStorage.removeItem(WIZARD_STORAGE_KEY)
+  } catch {
+    // silencioso
+  }
+}
+
 function HomologationWizardInner({
   onOpenChange,
   pendingCount,
@@ -168,16 +233,28 @@ function HomologationWizardInner({
   onFinished,
   onOpenReview,
 }: Omit<HomologationWizardModalProps, 'open'>) {
-  const [step1Status, setStep1Status] = useState<StepStatus>('pending')
-  const [step2Status, setStep2Status] = useState<StepStatus>('pending')
-  const [step3Status, setStep3Status] = useState<StepStatus>('pending')
+  const persisted = readPersistedState()
+  const [step1Status, setStep1Status] = useState<StepStatus>(persisted?.step1Status ?? 'pending')
+  const [step2Status, setStep2Status] = useState<StepStatus>(persisted?.step2Status ?? 'pending')
+  const [step3Status, setStep3Status] = useState<StepStatus>(persisted?.step3Status ?? 'pending')
 
-  const [step1Result, setStep1Result] = useState<Step1Result | null>(null)
-  const [step2Result, setStep2Result] = useState<Step2Result | null>(null)
-  const [step3Result, setStep3Result] = useState<Step3Result | null>(null)
-  const [step1Error, setStep1Error] = useState<string | null>(null)
-  const [step2Error, setStep2Error] = useState<string | null>(null)
-  const [step3Error, setStep3Error] = useState<string | null>(null)
+  const [step1Result, setStep1Result] = useState<Step1Result | null>(persisted?.step1Result ?? null)
+  const [step2Result, setStep2Result] = useState<Step2Result | null>(persisted?.step2Result ?? null)
+  const [step3Result, setStep3Result] = useState<Step3Result | null>(persisted?.step3Result ?? null)
+  const [step1Error, setStep1Error] = useState<string | null>(persisted?.step1Error ?? null)
+  const [step2Error, setStep2Error] = useState<string | null>(persisted?.step2Error ?? null)
+  const [step3Error, setStep3Error] = useState<string | null>(persisted?.step3Error ?? null)
+
+  const isRunningRef = useRef(false)
+
+  // Persistir estado cada vez que cambia
+  useEffect(() => {
+    writePersistedState({
+      step1Status, step1Result, step1Error,
+      step2Status, step2Result, step2Error,
+      step3Status, step3Result, step3Error,
+    })
+  }, [step1Status, step1Result, step1Error, step2Status, step2Result, step2Error, step3Status, step3Result, step3Error])
 
   const [autoMode, setAutoMode] = useState(false)
 
@@ -189,7 +266,8 @@ function HomologationWizardInner({
       const out = await withLogging('api', 'runScrappingHomologationStep2DbMotorAction', () => runScrappingHomologationStep2DbMotorAction())
       if (!out.ok) {
         setStep1Status('error')
-        setStep1Error(out.error)
+        const tech = (out as Record<string, unknown>).__technical
+        setStep1Error(tech ? `${out.error} (${String(tech).slice(0, 200)})` : out.error)
         return null
       }
       const r: Step1Result = {
@@ -217,28 +295,30 @@ function HomologationWizardInner({
     setStep2Status('running')
     setStep2Error(null)
 
-    const acc: Step2Result = { processed: 0, total: grayCount, userReview: 0, tentativeAi: 0, rejected: 0, errors: 0 }
+    const MAX_STEP2_PER_RUN = 500
+    const target = Math.min(grayCount, MAX_STEP2_PER_RUN)
+    const acc: Step2Result = { processed: 0, total: target, userReview: 0, tentativeAi: 0, rejected: 0, errors: 0 }
     setStep2Result({ ...acc })
 
     let afterId: string | null = null
     try {
       for (;;) {
-        const out = await withLogging('api', 'runScrappingHomologationGrayIaBatchAction', () => runScrappingHomologationGrayIaBatchAction({ afterId, batchSize: 10 }))
+        const out = await withLogging('api', 'runScrappingHomologationGrayIaBatchAction', () => runScrappingHomologationGrayIaBatchAction({ afterId, batchSize: 50 }))
         if (!out.ok) {
           setStep2Status('error')
           setStep2Error(out.error)
           return null
         }
-        const { stats, hasMore, lastId, total } = out.result
+        const { stats, hasMore, lastId } = out.result
         acc.processed += stats.processed
         acc.userReview += stats.userReview
         acc.tentativeAi += stats.tentativeAi
         acc.rejected += stats.rejected
         acc.errors += stats.errors
-        acc.total = Math.max(acc.total, total + acc.processed)
         setStep2Result({ ...acc })
 
         if (!hasMore || !lastId) break
+        if (acc.processed >= target) break
         afterId = lastId
       }
       setStep2Status('done')
@@ -304,6 +384,7 @@ function HomologationWizardInner({
     const pendingNewTotal = s1.pendingNew + s2.rejected
     const ok3 = await runStep3(pendingNewTotal)
     if (ok3) {
+      clearPersistedState()
       onFinished()
     }
   }, [runStep1, runStep2, runStep3, onFinished])
@@ -378,7 +459,7 @@ function HomologationWizardInner({
 
         {/* ── PASO 1 ── */}
         <div
-          className="flex items-start gap-3.5"
+          className={`flex items-start gap-3.5 ${stepCardClass(step1Status)}`}
           style={{ animation: 'homolog-fade-up 0.35s ease-out both' }}
         >
           <div className="flex flex-col items-center">
@@ -420,7 +501,7 @@ function HomologationWizardInner({
             )}
 
             {step1Status === 'error' && (
-              <div className="mt-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm font-medium text-destructive">
                 {step1Error}
               </div>
             )}
@@ -429,7 +510,7 @@ function HomologationWizardInner({
 
         {/* ── PASO 2 ── */}
         <div
-          className="flex items-start gap-3.5"
+          className={`flex items-start gap-3.5 ${stepCardClass(step2Status)}`}
           style={{ animation: 'homolog-fade-up 0.35s ease-out 0.08s both' }}
         >
           <div className="flex flex-col items-center">
@@ -510,7 +591,7 @@ function HomologationWizardInner({
             )}
 
             {step2Status === 'error' && (
-              <div className="mt-2 rounded-lg border border-destructive/20 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2.5 text-sm font-medium text-destructive">
                 {step2Error}
               </div>
             )}
@@ -519,7 +600,7 @@ function HomologationWizardInner({
 
         {/* ── PASO 3 (crear productos nuevos) ── */}
         <div
-          className="flex items-start gap-3.5"
+          className={`flex items-start gap-3.5 ${stepCardClass(step3Status)}`}
           style={{ animation: 'homolog-fade-up 0.35s ease-out 0.16s both' }}
         >
           <div className="flex flex-col items-center">
@@ -696,7 +777,7 @@ export function HomologationWizardModal({
 }: HomologationWizardModalProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="modal-lg">
+      <DialogContent className="modal-lg bg-background">
         {open && (
           <HomologationWizardInner
             onOpenChange={onOpenChange}

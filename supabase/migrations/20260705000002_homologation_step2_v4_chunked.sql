@@ -1,0 +1,309 @@
+-- ============================================================================
+-- HOMOLOGACION PASO 2 - MOTOR v4: JOIN GIN con procesamiento por chunks
+-- ============================================================================
+-- Problema de v3:
+--   Procesa TODAS las filas pending en una sola pasada. Con 18k+ filas,
+--   el JOIN genera ~900k filas intermedias y supera cualquier timeout.
+--
+-- Solucion v4:
+--   Acepta parametro p_limit (default 3000). Solo procesa ese numero de
+--   filas pending por llamada. El server action llama en loop automatico.
+--   Todo sigue 100% en SQL; el frontend solo hace una sola llamada y espera.
+--
+-- Requisitos:
+--   - Extension pg_trgm instalada
+--   - Indice: idx_catalog_products_name_search_norm_trgm
+--   - Funcion: homologation_weight ya existente
+-- ============================================================================
+
+create or replace function public.scrapping_homologation_step2_compute_all_pending_v4(
+  p_limit integer default 3000
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public
+as $$
+declare
+  v_processed int := 0;
+  v_auto int := 0;
+  v_gray int := 0;
+  v_new int := 0;
+  v_remaining int := 0;
+  v_batch_min_created_at timestamptz;
+  v_batch_max_created_at timestamptz;
+begin
+  -- Guarda rapida: si el catalogo esta vacio, todo pending va directo a pending_new.
+  if not exists (select 1 from public.catalog_products cp where coalesce(cp.active, true)) then
+    update public.scrapping
+    set
+      base_score = 0,
+      base_decision = 'NO_CATALOG',
+      base_best_product_id = null,
+      base_second_product_id = null,
+      base_gap = 0,
+      base_result = jsonb_build_object('reason', 'catalog_empty'),
+      ai_required = false,
+      homolog_final_status = 'PENDING_NEW',
+      catalog_match_status = 'pending_new',
+      matched_catalog_product_id = null,
+      homolog_step2_computed_at = now()
+    where catalog_match_status = 'pending';
+
+    get diagnostics v_new = row_count;
+
+    return jsonb_build_object(
+      'processed', v_new,
+      'auto_tentative_base', 0,
+      'gray_ia_queued', 0,
+      'pending_new', v_new,
+      'remaining', 0
+    );
+  end if;
+
+  -- ========================================================================
+  -- PASO 1: Identificar el lote de filas a procesar (las mas antiguas)
+  -- ========================================================================
+
+  select min(s.created_at), max(s.created_at)
+  into v_batch_min_created_at, v_batch_max_created_at
+  from (
+    select created_at
+    from public.scrapping
+    where catalog_match_status = 'pending'
+    order by created_at asc, id asc
+    limit p_limit
+  ) s;
+
+  -- Si no hay filas pending, devolver vacio
+  if v_batch_min_created_at is null then
+    return jsonb_build_object(
+      'processed', 0,
+      'auto_tentative_base', 0,
+      'gray_ia_queued', 0,
+      'pending_new', 0,
+      'remaining', 0
+    );
+  end if;
+
+  -- ========================================================================
+  -- PASO 2: JOIN GIN + window functions solo sobre el lote
+  -- ========================================================================
+
+  with
+  -- Subset de scrapping a procesar en este batch
+  pending_subset as (
+    select s.id, s.product_name, s.brand, s.price, s.retailer, s.external_ref
+    from public.scrapping s
+    where s.catalog_match_status = 'pending'
+      and s.created_at between v_batch_min_created_at and v_batch_max_created_at
+  ),
+  -- Candidatos usando indice GIN (operador '%')
+  candidates as (
+    select
+      s.id as sid,
+      cp.id as cpid,
+      cp.name as cpname,
+      cp.brand as cpbrand,
+      cp.category_id,
+      cp.default_reference_price,
+      cat.name as cat_name,
+      greatest(0, least(1, similarity(
+        public.catalog_text_search_norm(s.product_name),
+        public.catalog_text_search_norm(cp.name)
+      )::numeric)) as name_score,
+      greatest(0, least(1, similarity(
+        public.catalog_text_search_norm(coalesce(s.brand, '')),
+        public.catalog_text_search_norm(coalesce(cp.brand, ''))
+      )::numeric)) as brand_score,
+      case
+        when cp.default_reference_price is not null and coalesce(s.price, 0) > 0 then
+          greatest(0, least(1,
+            (0.25::numeric - abs(cp.default_reference_price - s.price::numeric) / greatest(s.price::numeric, 1::numeric) * 0.25::numeric)
+            / 0.25::numeric
+          ))
+        else 0.35::numeric
+      end as price_score
+    from pending_subset s
+    join public.catalog_products cp
+      on cp.active = true
+      and public.catalog_text_search_norm(cp.name) % public.catalog_text_search_norm(s.product_name)
+    left join public.categories cat on cat.id = cp.category_id
+  ),
+  -- Score compuesto + rankeo por fila (top 2)
+  scored as (
+    select
+      sid, cpid, cpname, brand_score, cat_name,
+      name_score,
+      greatest(0, least(1, name_score * 0.95::numeric)) as variant_score,
+      greatest(0, least(1, name_score * 0.90::numeric)) as format_score,
+      price_score,
+      greatest(0, least(1,
+        public.homologation_weight('name') * name_score
+        + public.homologation_weight('variant') * greatest(0, least(1, name_score * 0.95::numeric))
+        + public.homologation_weight('format') * greatest(0, least(1, name_score * 0.90::numeric))
+        + public.homologation_weight('brand') * brand_score
+        + public.homologation_weight('category') * 0.35::numeric
+        + public.homologation_weight('price') * price_score
+      )) as composite_score,
+      row_number() over (
+        partition by sid
+        order by
+          public.homologation_weight('name') * name_score
+          + public.homologation_weight('variant') * greatest(0, least(1, name_score * 0.95::numeric))
+          + public.homologation_weight('format') * greatest(0, least(1, name_score * 0.90::numeric))
+          + public.homologation_weight('brand') * brand_score
+          + public.homologation_weight('category') * 0.35::numeric
+          + public.homologation_weight('price') * price_score
+          desc
+      ) as rn
+    from candidates
+  ),
+  -- Top 1
+  best as (
+    select sid, cpid as best_id, name_score, brand_score, variant_score, format_score, price_score, composite_score as score1
+    from scored where rn = 1
+  ),
+  -- Top 2
+  second as (
+    select sid, cpid as second_id, composite_score as score2
+    from scored where rn = 2
+  ),
+  -- Feedback de usuario (solo para el subset)
+  fb as (
+    select
+      ps.id as sid,
+      coalesce(sum(f.penalty_delta), 0::numeric) as adj
+    from pending_subset ps
+    left join public.homologation_user_feedback f
+      on f.fingerprint = public.catalog_text_search_norm(trim(lower(ps.product_name)))
+    group by ps.id
+  ),
+  -- Link boost
+  lb as (
+    select
+      ps.id as sid,
+      case when exists (
+        select 1 from public.catalog_retail_links lk
+        where lower(trim(lk.retailer)) = lower(trim(ps.retailer))
+          and lk.external_ref = ps.external_ref
+          and lk.catalog_product_id = b.best_id
+      ) then public.homologation_weight('LINK_BOOST') else 0::numeric end as link_boost
+    from pending_subset ps
+    join best b on b.sid = ps.id
+  ),
+  -- Scores finales
+  final_scores as (
+    select
+      b.sid,
+      b.best_id,
+      s.second_id,
+      b.name_score, b.brand_score, b.variant_score, b.format_score, b.price_score,
+      b.score1 + coalesce(lb.link_boost, 0) + public.homologation_weight('feedback') *
+        greatest(0, least(1, 0.5::numeric + least(0.5::numeric, greatest(-0.5::numeric, coalesce(fb.adj, 0) / 20.0::numeric)))) as final_score1,
+      coalesce(s.score2, 0::numeric) as final_score2,
+      coalesce(lb.link_boost, 0) as link_boost_val,
+      greatest(0, least(1, 0.5::numeric + least(0.5::numeric, greatest(-0.5::numeric, coalesce(fb.adj, 0) / 20.0::numeric)))) as feedback_val
+    from best b
+    left join second s on s.sid = b.sid
+    left join fb on fb.sid = b.sid
+    left join lb on lb.sid = b.sid
+  ),
+  -- Decisiones finales
+  decisions as (
+    select
+      fs.*,
+      greatest(0, fs.final_score1 - fs.final_score2) as gap,
+      case
+        when fs.name_score > 0.82::numeric and fs.brand_score < 0.12::numeric then 'HARD_CONFLICT'::text
+        when (not (fs.name_score > 0.82::numeric and fs.brand_score < 0.12::numeric))
+          and fs.final_score1 >= 0.90::numeric and greatest(0, fs.final_score1 - fs.final_score2) >= 0.08::numeric
+        then 'AUTO_TENTATIVE'::text
+        when fs.final_score1 < 0.70::numeric then 'PENDING_NEW_SCORE'::text
+        when fs.final_score1 >= 0.70::numeric and fs.final_score1 < 0.90::numeric then 'GRAY_IA'::text
+        else 'AMBIGUOUS_GAP'::text
+      end as decision,
+      case
+        when fs.name_score > 0.82::numeric and fs.brand_score < 0.12::numeric then 'USER_REVIEW'::text
+        when (not (fs.name_score > 0.82::numeric and fs.brand_score < 0.12::numeric))
+          and fs.final_score1 >= 0.90::numeric and greatest(0, fs.final_score1 - fs.final_score2) >= 0.08::numeric
+        then 'ACTIVE_TENTATIVE_BASE'::text
+        when fs.final_score1 < 0.70::numeric then 'PENDING_NEW'::text
+        else 'GRAY_IA_QUEUED'::text
+      end as final_status
+    from final_scores fs
+  )
+  -- UPDATE masivo SOLO sobre el lote
+  update public.scrapping sc
+  set
+    base_score = d.final_score1,
+    base_decision = d.decision,
+    base_best_product_id = d.best_id,
+    base_second_product_id = d.second_id,
+    base_gap = d.gap,
+    base_result = jsonb_build_object(
+      'name_score', d.name_score,
+      'variant_score', d.variant_score,
+      'format_score', d.format_score,
+      'brand_score', d.brand_score,
+      'category_score', 0.35,
+      'price_score', d.price_score,
+      'feedback_score', d.feedback_val,
+      'link_boost', d.link_boost_val,
+      'hard_conflict', (d.name_score > 0.82::numeric and d.brand_score < 0.12::numeric)
+    ),
+    ai_required = (d.decision in ('GRAY_IA', 'AMBIGUOUS_GAP')),
+    ai_score = null, ai_decision = null, ai_result = null,
+    homolog_user_decision = null, homolog_reviewed_at = null,
+    homolog_final_status = d.final_status,
+    catalog_match_status = case
+      when d.final_status = 'PENDING_NEW' then 'pending_new'
+      when d.final_status = 'ACTIVE_TENTATIVE_BASE' then 'pending_homolog'
+      when d.final_status = 'USER_REVIEW' then 'pending'
+      when d.final_status = 'GRAY_IA_QUEUED' then 'pending'
+      else sc.catalog_match_status
+    end,
+    matched_catalog_product_id = case
+      when d.final_status = 'ACTIVE_TENTATIVE_BASE' then d.best_id
+      when d.final_status = 'PENDING_NEW' then null
+      else sc.matched_catalog_product_id
+    end,
+    homolog_step2_computed_at = now()
+  from decisions d
+  where sc.id = d.sid;
+
+  -- Contar resultados de ESTE batch
+  get diagnostics v_processed = row_count;
+
+  select count(*) into v_auto from public.scrapping
+  where homolog_final_status = 'ACTIVE_TENTATIVE_BASE'
+    and homolog_step2_computed_at > now() - interval '1 minute';
+
+  select count(*) into v_gray from public.scrapping
+  where homolog_final_status = 'GRAY_IA_QUEUED'
+    and homolog_step2_computed_at > now() - interval '1 minute';
+
+  select count(*) into v_new from public.scrapping
+  where homolog_final_status = 'PENDING_NEW'
+    and homolog_step2_computed_at > now() - interval '1 minute';
+
+  -- Contar cuantas filas pending quedan sin procesar
+  select count(*) into v_remaining
+  from public.scrapping
+  where catalog_match_status = 'pending';
+
+  return jsonb_build_object(
+    'processed', v_processed,
+    'auto_tentative_base', v_auto,
+    'gray_ia_queued', v_gray,
+    'pending_new', v_new,
+    'remaining', v_remaining
+  );
+end;
+$$;
+
+comment on function public.scrapping_homologation_step2_compute_all_pending_v4(integer) is
+  'Paso 2 motor DB v4: JOIN GIN con procesamiento por chunks de p_limit filas.';
+
+revoke all on function public.scrapping_homologation_step2_compute_all_pending_v4(integer) from public;
+grant execute on function public.scrapping_homologation_step2_compute_all_pending_v4(integer) to service_role;

@@ -40,6 +40,7 @@ import {
 import {
   recordHomologationUserFeedbackRpc,
   runHomologationStep2ComputeAllPending,
+  runExactCatalogMatchesStep1,
   type HomologationStep2RpcSummary,
 } from '@/server/retail/scrapping/scrapping-homologation-db'
 import {
@@ -1978,6 +1979,12 @@ export type ScrappingExactCatalogMatchStats = {
   distinctCatalogProducts: number
   /** Filas que siguen en `pending` para pasos siguientes (similitud, altas). */
   pendingScrappingRemaining: number
+  /** Detalle de pasada exacta (opcional, v2). */
+  exactRemoved?: number
+  /** Detalle de pasada fuzzy (opcional, v2). */
+  fuzzyRemoved?: number
+  fuzzyUpdated?: number
+  fuzzyMasters?: number
 }
 
 /** Conteo global de filas scrapping aún `pending` para la tubería de homologación. */
@@ -2026,26 +2033,22 @@ export async function applyScrappingExactCatalogMatchesAction(): Promise<
       return { ok: false, error: getUserFriendlyErrorMessage(purgeRes.error, 'generic'), __technical: tech }
     }
 
-    const { data, error } = await editor.admin.rpc('scrapping_apply_exact_catalog_matches')
-    if (error) {
-      const tech = error instanceof Error ? error.message : JSON.stringify(error)
-      return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic'), __technical: tech }
+    const ef = await runExactCatalogMatchesStep1()
+    if (!ef.ok) {
+      return { ok: false, error: ef.error, __technical: ef.__technical }
     }
-    const raw = data as unknown
-    if (raw == null || typeof raw !== 'object') {
-      const tech = JSON.stringify({ raw: String(raw), type: typeof raw })
-      console.error('[applyScrappingExactCatalogMatchesAction] RPC retornó valor inesperado:', tech)
-      return { ok: false, error: 'No se pudo completar la acción. Intenta nuevamente.', __technical: tech }
-    }
-    // Supabase puede envolver jsonb en array de 1 elemento
-    const o: Record<string, unknown> = Array.isArray(raw) && raw.length > 0 && raw[0] != null && typeof raw[0] === 'object' ? (raw[0] as Record<string, unknown>) : (raw as Record<string, unknown>)
+
     const pendingN = await countScrappingProductRowsPendingHomologation(editor.admin)
     const result: ScrappingExactCatalogMatchStats = {
       scrappingDuplicatesPurged: purgeRes.deleted,
-      scrappingRowsRemoved: Number(o.scrappingRowsRemoved ?? o.scrappingRowsMatched ?? 0),
-      catalogProductsUpdated: Number(o.catalogProductsUpdated ?? 0),
-      distinctCatalogProducts: Number(o.distinctCatalogProducts ?? 0),
+      scrappingRowsRemoved: ef.result.scrappingRowsRemoved,
+      catalogProductsUpdated: ef.result.catalogProductsUpdated,
+      distinctCatalogProducts: ef.result.distinctCatalogProducts,
       pendingScrappingRemaining: pendingN >= 0 ? pendingN : 0,
+      exactRemoved: ef.result.exactRemoved,
+      fuzzyRemoved: ef.result.fuzzyRemoved,
+      fuzzyUpdated: ef.result.fuzzyUpdated,
+      fuzzyMasters: ef.result.fuzzyMasters,
     }
     revalidatePath('/captura-cadenas-2')
     revalidatePath('/catalogo')
@@ -2108,6 +2111,17 @@ export async function runScrappingHomologationStep2DbMotorAction(): Promise<
   if (!gate.ok) return { ok: false, error: gate.error }
   const r = await runHomologationStep2ComputeAllPending(gate.admin)
   if (!r.ok) return r
+
+  // Confirmar matches auto-tentativos (vinculos + alias + snapshots + imagen)
+  try {
+    await gate.admin.rpc(
+      'scrapping_confirm_auto_tentative_matches',
+      { p_chunk_size: 3000 } as never
+    )
+  } catch (confirmErr) {
+    console.warn('[runScrappingHomologationStep2DbMotorAction] Confirmacion auto-tentativa fallo:', confirmErr)
+  }
+
   revalidatePath('/captura-cadenas-2')
   revalidatePath('/catalogo')
   return r
