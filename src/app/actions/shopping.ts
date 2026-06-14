@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { getActionContextWithGate } from '@/lib/action-context'
+import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import { TRIP_PHASE_DRAFT, TRIP_PHASE_SHOPPING } from '@/lib/shopping-phase'
 
 function parsePhase(notes: string | null): 'draft' | 'shopping' {
@@ -50,7 +51,7 @@ export async function getOrCreateActiveShoppingTrip() {
     .single()
 
   if (error) {
-    return { data: null, error: error.message, phase: null }
+    return { data: null, error: getUserFriendlyErrorMessage(error, 'generic'), phase: null }
   }
 
   return { data: created, error: null, phase: 'draft' as const }
@@ -76,7 +77,7 @@ export async function generateAutoList() {
     .eq('active', true)
     .not('stock_min', 'is', null)
 
-  if (prodErr) return { error: prodErr.message }
+  if (prodErr) return { error: getUserFriendlyErrorMessage(prodErr, 'generic') }
 
   let added = 0
   for (const p of lowStock ?? []) {
@@ -96,7 +97,11 @@ export async function generateAutoList() {
       },
       { onConflict: 'trip_id,product_id' }
     )
-    if (!upsertErr) added += 1
+    if (upsertErr) {
+      console.error('generateAutoList: falló upsert de ítem:', p.id, upsertErr)
+    } else {
+      added += 1
+    }
   }
 
   revalidatePath('/shopping-list')
@@ -275,6 +280,7 @@ export async function finishShoppingTrip(tripId: string) {
 
   if (ie) return { error: ie.message }
 
+  const failedItems: string[] = []
   for (const item of items ?? []) {
     const planned = Number(item.quantity_planned)
     let bought = item.quantity_bought != null ? Number(item.quantity_bought) : 0
@@ -290,7 +296,11 @@ export async function finishShoppingTrip(tripId: string) {
       .eq('profile_id', activeProfileId)
       .single()
 
-    if (pe || !product) continue
+    if (pe || !product) {
+      console.error('finishShoppingTrip: producto no encontrado:', item.product_id, pe)
+      failedItems.push(item.product_id)
+      continue
+    }
 
     const prev = Number(product.stock_current)
     const newStock = prev + bought
@@ -301,9 +311,13 @@ export async function finishShoppingTrip(tripId: string) {
       .eq('id', item.product_id)
       .eq('profile_id', activeProfileId)
 
-    if (ue) continue
+    if (ue) {
+      console.error('finishShoppingTrip: falló update de stock:', item.product_id, ue)
+      failedItems.push(item.product_id)
+      continue
+    }
 
-    await supabase.from('stock_movements').insert({
+    const { error: movErr } = await supabase.from('stock_movements').insert({
       profile_id: activeProfileId,
       product_id: item.product_id,
       delta: bought,
@@ -312,6 +326,15 @@ export async function finishShoppingTrip(tripId: string) {
       reference_id: tripId,
       created_by: user.id,
     })
+    if (movErr) {
+      console.error('finishShoppingTrip: falló stock_movements, revirtiendo stock:', item.product_id, movErr)
+      await supabase
+        .from('products')
+        .update({ stock_current: prev })
+        .eq('id', item.product_id)
+        .eq('profile_id', activeProfileId)
+      failedItems.push(item.product_id)
+    }
   }
 
   const { error: ce } = await supabase
@@ -329,5 +352,12 @@ export async function finishShoppingTrip(tripId: string) {
   revalidatePath('/inventory')
   revalidatePath('/history')
   revalidatePath('/dashboard')
+
+  if (failedItems.length > 0) {
+    return {
+      success: true,
+      warning: `Se cerró el viaje, pero ${failedItems.length} producto(s) no se actualizaron correctamente en el inventario.`,
+    }
+  }
   return { success: true }
 }

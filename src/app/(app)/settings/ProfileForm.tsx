@@ -1,6 +1,10 @@
+'use client'
+
+import { useRef, useState } from 'react'
 import { updateActiveProfileSettings } from '@/app/actions/profile'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { toast } from 'sonner'
 
 type Props = {
   name: string
@@ -9,6 +13,9 @@ type Props = {
 }
 
 export function ProfileForm({ name, description, canEdit }: Props) {
+  const formRef = useRef<HTMLFormElement>(null)
+  const [saving, setSaving] = useState(false)
+
   if (!canEdit) {
     return (
       <Card>
@@ -24,13 +31,29 @@ export function ProfileForm({ name, description, canEdit }: Props) {
     )
   }
 
+  async function handleSubmit(formData: FormData) {
+    setSaving(true)
+    try {
+      const result = await updateActiveProfileSettings(formData)
+      if (result.ok) {
+        toast.success('Perfil actualizado')
+      } else {
+        toast.error(result.error ?? 'No se pudo guardar el perfil.')
+      }
+    } catch {
+      toast.error('Ocurrió un error inesperado')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Datos de la ubicación</CardTitle>
       </CardHeader>
       <CardContent>
-        <form action={updateActiveProfileSettings} className="flex max-w-lg flex-col gap-4">
+        <form ref={formRef} action={handleSubmit} className="flex max-w-lg flex-col gap-4">
           <div>
             <label className="app-field-label" htmlFor="name">
               Nombre
@@ -57,7 +80,9 @@ export function ProfileForm({ name, description, canEdit }: Props) {
             />
           </div>
           <div className="app-form-actions">
-            <Button type="submit">Guardar</Button>
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Guardando…' : 'Guardar'}
+            </Button>
           </div>
         </form>
       </CardContent>

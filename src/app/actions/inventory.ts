@@ -134,11 +134,11 @@ export async function addProduct(formData: FormData) {
       if (revertErr) {
         console.error('Revertir stock tras fallo de movimiento (alta):', revertErr)
         return {
-          error: 'No se pudo completar la acción. Intenta nuevamente.',
+          error: 'No se registró el movimiento de stock y no se pudo revertir el inventario. Intenta de nuevo.',
         }
       }
       return {
-        error: 'No se pudo completar la acción. Intenta nuevamente.',
+        error: 'No se pudo registrar el movimiento de stock. El producto se creó con stock en 0.',
       }
     }
   }
@@ -239,19 +239,20 @@ export async function addProductCreatingCatalogMaster(formData: FormData) {
       created_by: userData.user.id,
     })
     if (movErr) {
-      console.error('stock_movements tras alta de producto:', movErr)
+      console.error('stock_movements tras alta de producto (catálogo nuevo):', movErr)
       const { error: revertErr } = await supabase
         .from('products')
         .update({ stock_current: 0 })
         .eq('id', data.id)
         .eq('profile_id', activeProfileId)
       if (revertErr) {
+        console.error('Revertir stock tras fallo de movimiento (alta, catálogo nuevo):', revertErr)
         return {
-          error: 'No se pudo completar la acción. Intenta nuevamente.',
+          error: 'No se registró el movimiento de stock y no se pudo revertir el inventario. Intenta de nuevo.',
         }
       }
       return {
-        error: 'No se pudo completar la acción. Intenta nuevamente.',
+        error: 'No se pudo registrar el movimiento de stock. El producto se creó con stock en 0.',
       }
     }
   }
@@ -364,11 +365,11 @@ export async function updateProduct(id: string, formData: FormData) {
       if (revertErr) {
         console.error('Revertir stock tras fallo de movimiento (edición):', revertErr)
         return {
-          error: 'No se pudo completar la acción. Intenta nuevamente.',
+          error: 'No se registró el movimiento de stock y no se pudo revertir el inventario. Intenta de nuevo.',
         }
       }
       return {
-        error: 'No se pudo completar la acción. Intenta nuevamente.',
+        error: 'No se pudo registrar el movimiento de ajuste. El stock se revirtió al valor anterior.',
       }
     }
   }
@@ -454,7 +455,21 @@ export async function consumeProduct(productId: string, quantity: number) {
   })
 
   if (movementError) {
-    return { error: getUserFriendlyErrorMessage(movementError, 'generic') }
+    console.error('stock_movements tras consumo de producto:', movementError)
+    const { error: revertErr } = await supabase
+      .from('products')
+      .update({ stock_current: prev })
+      .eq('id', productId)
+      .eq('profile_id', activeProfileId)
+    if (revertErr) {
+      console.error('Revertir stock tras fallo de movimiento (consumo):', revertErr)
+      return {
+        error: 'No se registró el movimiento de consumo y no se pudo revertir el inventario. Intenta de nuevo.',
+      }
+    }
+    return {
+      error: 'No se pudo registrar el movimiento de consumo. El stock se revirtió al valor anterior.',
+    }
   }
 
   revalidatePath('/consumption')

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { getActionContext, getActionContextWithGate } from '@/lib/action-context'
 import { createClient } from '@/lib/supabase/server'
 import { assertProfileMembership } from '@/lib/profile/membership'
+import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import type { ProfileMemberRole } from '@/types/database'
 
 export type TeamInvitationRow = {
@@ -118,7 +119,10 @@ export async function createInvitation(formData: FormData) {
     invited_by: user.id,
     status: 'pending',
   })
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('createInvitation: falló inserción:', error)
+    return { error: getUserFriendlyErrorMessage(error, 'generic') }
+  }
 
   revalidatePath('/users')
   return { success: true as const, inserted: 1 }
@@ -158,7 +162,10 @@ export async function syncInvitationExtraProfiles(invitationId: string, extraPro
     .from('invitation_targets')
     .delete()
     .eq('invitation_id', invitationId)
-  if (delErr) return { error: delErr.message }
+  if (delErr) {
+    console.error('syncInvitationExtraProfiles: falló eliminación de targets:', delErr)
+    return { error: 'No se pudieron actualizar los hogares de la invitación.' }
+  }
 
   if (extras.length > 0) {
     const { error: insErr } = await supabase.from('invitation_targets').insert(
@@ -167,7 +174,10 @@ export async function syncInvitationExtraProfiles(invitationId: string, extraPro
         profile_id,
       }))
     )
-    if (insErr) return { error: insErr.message }
+    if (insErr) {
+      console.error('syncInvitationExtraProfiles: falló inserción de targets:', insErr)
+      return { error: 'No se pudieron enlazar los hogares adicionales.' }
+    }
   }
 
   revalidatePath('/users')
@@ -196,7 +206,10 @@ export async function revokeInvitation(invitationId: string) {
     .eq('id', invitationId)
     .eq('status', 'pending')
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('revokeInvitation: falló actualización:', error)
+    return { error: 'No se pudo revocar la invitación. Intenta nuevamente.' }
+  }
 
   revalidatePath('/users')
   return { success: true as const }
@@ -215,7 +228,10 @@ export async function updateMemberRole(memberRowId: string, role: ProfileMemberR
     .eq('id', memberRowId)
     .eq('profile_id', activeProfileId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('updateMemberRole: falló actualización:', error)
+    return { error: 'No se pudo cambiar el rol del miembro.' }
+  }
   revalidatePath('/users')
   revalidatePath('/', 'layout')
   return { success: true }
@@ -248,7 +264,10 @@ export async function deactivateMember(memberRowId: string) {
     .eq('id', memberRowId)
     .eq('profile_id', activeProfileId)
 
-  if (error) return { error: error.message }
+  if (error) {
+    console.error('deactivateMember: falló desactivación:', error)
+    return { error: 'No se pudo desactivar el miembro.' }
+  }
   revalidatePath('/users')
   revalidatePath('/', 'layout')
   return { success: true }

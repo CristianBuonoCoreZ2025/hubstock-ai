@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { getActionContext, getActionContextWithGate } from '@/lib/action-context'
 import { getPublicUploadBucket } from '@/lib/storage-bucket'
 import { createClient } from '@/lib/supabase/server'
+import { getUserFriendlyErrorMessage } from '@/lib/user-friendly-errors'
 import type { Json, StockCheckStatus } from '@/types/database'
 import type { StockCheckAiMeta } from '@/types/stock-check-ai-meta'
 import type { VisionAnalysisMeta } from '@/types/vision-meta'
@@ -341,7 +342,8 @@ export async function saveProfileBrand(
     if (/duplicate key|unique constraint/i.test(error.message)) {
       return { ok: true }
     }
-    return { ok: false, error: error.message }
+    console.error('saveProfileBrand: falló inserción:', error)
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'brand') }
   }
 
   revalidatePath('/stock-checks')
@@ -470,7 +472,8 @@ export async function saveProfileProductType(
     if (/duplicate key|unique constraint/i.test(error.message)) {
       return { ok: true }
     }
-    return { ok: false, error: error.message }
+    console.error('saveProfileProductType: falló inserción:', error)
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   }
 
   revalidatePath('/stock-checks')
@@ -500,7 +503,8 @@ export async function saveProfilePresentation(
     if (/duplicate key|unique constraint/i.test(error.message)) {
       return { ok: true }
     }
-    return { ok: false, error: error.message }
+    console.error('saveProfilePresentation: falló inserción:', error)
+    return { ok: false, error: getUserFriendlyErrorMessage(error, 'generic') }
   }
 
   revalidatePath('/stock-checks')

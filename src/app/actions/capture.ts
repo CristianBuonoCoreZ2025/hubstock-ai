@@ -142,6 +142,7 @@ export async function addProductFromCapture(
         created_by: userData.user.id,
       })
       if (movErr) {
+        console.error('stock_movements tras captura (merge):', movErr)
         const { error: revertErr } = await supabase
           .from('products')
           .update({ stock_current: prev })
@@ -202,6 +203,7 @@ export async function addProductFromCapture(
         created_by: userData.user.id,
       })
       if (movErr) {
+        console.error('stock_movements tras captura (nuevo):', movErr)
         const { error: revertErr } = await supabase
           .from('products')
           .update({ stock_current: 0 })
