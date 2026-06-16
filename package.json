@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "db:push": "node scripts/supabase-db-push.mjs",
-    "db:push:debug": "node scripts/supabase-db-push.mjs --debug"
+    "db:push:debug": "node scripts/supabase-db-push.mjs --debug",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@google/genai": "^1.51.0",
@@ -38,11 +40,13 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.2",
     "eslint": "^9",
     "eslint-config-next": "^16.2.6",
     "supabase": "^2.105.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.8"
   },
   "overrides": {
     "postcss": "^8.5.10"
