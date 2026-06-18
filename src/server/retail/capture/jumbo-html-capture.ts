@@ -57,7 +57,7 @@ export type JumboProductSnapshot = {
 
 // ===== Constantes del API BFF de Jumbo =====
 const JUMBO_BFF_URL = 'https://bff.jumbo.cl/catalog/plp'
-const JUMBO_BFF_APIKEY = 'be-reg-groceries-jumbo-catalog-w54byfvkmju5'
+const JUMBO_BFF_APIKEY = process.env.JUMBO_BFF_APIKEY ?? ''
 const JUMBO_BFF_STORE = 'jumboclj512'
 const JUMBO_BFF_CLIENT_VERSION = '3.3.84'
 /** Productos por bloque (la web usa 40). */

@@ -8,7 +8,17 @@ const protectedRoutes = [
   '/supermarket',
   '/receipts',
   '/stock-checks',
-  '/profiles'
+  '/profiles',
+  '/catalog',
+  '/capture',
+  '/consumption',
+  '/history',
+  '/users',
+  '/settings',
+  '/menu',
+  '/captura-cadenas-2',
+  '/precios-cadenas',
+  '/style-lab',
 ]
 
 const authRoutes = ['/login', '/register']

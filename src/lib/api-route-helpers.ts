@@ -55,7 +55,7 @@ export function apiOkWithDiagnostic<T>(
   startMs: number,
   extra?: Record<string, unknown>,
 ): NextResponse<T> {
-  const diagEnabled = request.headers.get('x-app-diagnostic-log') === '1'
+  const diagEnabled = process.env.NODE_ENV !== 'production' && request.headers.get('x-app-diagnostic-log') === '1'
   if (diagEnabled) {
     const diag: Record<string, unknown> = { durationMs: Date.now() - startMs, operation, ...extra }
     const prev = (result as Record<string, unknown>).__diagnostic
